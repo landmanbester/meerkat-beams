@@ -1,0 +1,56 @@
+[version]
+current = "0.0.0"
+
+# Version format: semantic versioning
+regex = '''
+  (?P<major>\d+)
+  \.
+  (?P<minor>\d+)
+  \.
+  (?P<patch>\d+)
+  '''
+
+[git]
+message_template = "Bump version to {new_version}"
+tag_template = "v{new_version}"
+
+# before_commit hooks run before tbump's version-bump commit.
+# Update container image tag and regenerate cabs with the release version.
+[[before_commit]]
+name = "Update container image tag to release version"
+cmd = "python -c \"import re; p = 'src/meerkat_beams/_container_image.py'; t = open(p).read(); t = re.sub(r'(CONTAINER_IMAGE\\s*=\\s*\\\".*:)[^\\\"]+', r'\\g<1>{new_version}', t); open(p, 'w').write(t)\""
+
+[[before_commit]]
+name = "Regenerate cab definitions with release version"
+cmd = "mbeams generate-cabs --module 'src/meerkat_beams/cli/*.py' --output-dir src/meerkat_beams/cabs"
+
+[[before_commit]]
+name = "Stage updated cab definitions"
+cmd = "git add src/meerkat_beams/cabs/*.yml"
+
+[[before_commit]]
+name = "Stage _container_image.py with updated container image tag"
+cmd = "git add src/meerkat_beams/_container_image.py"
+
+[[before_commit]]
+name = "Update uv.lock"
+cmd = "uv lock"
+
+[[before_commit]]
+name = "Stage uv.lock"
+cmd = "git add uv.lock"
+
+# No before_push hooks needed — sentinel file workflow removed
+
+# Files to update with the new version
+[[file]]
+src = "pyproject.toml"
+search = 'version = "{current_version}"'
+
+[[file]]
+src = "src/meerkat_beams/__init__.py"
+search = '__version__ = "{current_version}"'
+
+[[file]]
+src = "src/meerkat_beams/_container_image.py"
+search = 'CONTAINER_IMAGE = "ghcr.io/landmanbester/meerkat-beams:{current_version}"'

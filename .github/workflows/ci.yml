@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  schedule:
+    - cron: '30 2 * * 1,4' # Every Monday and Thursday @ 2h30am UTC
+  workflow_dispatch:
+
+jobs:
+  quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for skip checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          MSG=$(gh api repos/${{ github.repository }}/commits/$COMMIT_SHA --jq '.commit.message')
+          if echo "$MSG" | grep -qF '[skip checks]'; then
+            echo "SKIP_CHECKS=true" >> "$GITHUB_ENV"
+            echo "Skipping checks because [skip checks] was found in the commit message."
+          fi
+
+      - name: Check out code
+        if: env.SKIP_CHECKS != 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: env.SKIP_CHECKS != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Set up uv
+        if: env.SKIP_CHECKS != 'true'
+        uses: astral-sh/setup-uv@v5
+
+      - name: Cache uv dependencies
+        if: env.SKIP_CHECKS != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      - name: Install dependencies
+        if: env.SKIP_CHECKS != 'true'
+        run: uv sync --group dev
+
+      - name: Check code formatting
+        if: env.SKIP_CHECKS != 'true'
+        run: uv run ruff format --check .
+
+      - name: Lint code
+        if: env.SKIP_CHECKS != 'true'
+        run: uv run ruff check .
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Check for skip checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          MSG=$(gh api repos/${{ github.repository }}/commits/$COMMIT_SHA --jq '.commit.message')
+          if echo "$MSG" | grep -qF '[skip checks]'; then
+            echo "SKIP_CHECKS=true" >> "$GITHUB_ENV"
+            echo "Skipping checks because [skip checks] was found in the commit message."
+          fi
+
+      - name: Check out code
+        if: env.SKIP_CHECKS != 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        if: env.SKIP_CHECKS != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up uv
+        if: env.SKIP_CHECKS != 'true'
+        uses: astral-sh/setup-uv@v5
+
+      - name: Cache uv dependencies
+        if: env.SKIP_CHECKS != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-py${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-py${{ matrix.python-version }}-
+            ${{ runner.os }}-uv-
+
+      - name: Install dependencies
+        if: env.SKIP_CHECKS != 'true'
+        run: uv sync --group test
+
+      - name: Smoke test CLI
+        if: env.SKIP_CHECKS != 'true'
+        run: |
+          uv run mbeams --help
+          uv run mbeams onboard --help
+
+      - name: Run tests
+        if: env.SKIP_CHECKS != 'true'
+        run: uv run pytest -v
