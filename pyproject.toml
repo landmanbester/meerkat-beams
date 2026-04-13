@@ -17,6 +17,16 @@ classifiers = [
 ]
 dependencies = [
     "hip-cargo == 0.2.0rc2",
+    "stimela>=2.0",
+    "xarray",
+    "xarray-fits",
+    "zarr<3",
+    "numcodecs",
+    "astropy",
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "wget",
 ]
 
 [project.urls]
