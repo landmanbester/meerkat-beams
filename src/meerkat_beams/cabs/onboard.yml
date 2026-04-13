@@ -1,9 +1,0 @@
-cabs:
-  onboard:
-    flavour: python
-    command: meerkat_beams.core.onboard.onboard
-    name: onboard
-    info:
-      Print setup instructions for CI/CD, PyPI publishing, and GitHub configuration.
-    inputs: {}
-    outputs: {}

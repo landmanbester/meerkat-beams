@@ -16,10 +16,6 @@ def callback() -> None:
 
 
 # Register subcommands below. Imports go here (bottom) to avoid circular imports.
-from meerkat_beams.cli.onboard import onboard  # noqa: E402
-
-app.command(name="onboard")(onboard)
-
 from meerkat_beams.cli.download_mdv_beams import download_mdv_beams  # noqa: E402
 
 app.command(name="download-mdv-beams")(download_mdv_beams)
