@@ -56,10 +56,9 @@ def mdv_beams_to_bds(
     """
     Converts MdV-format primary beams to a beam dataset (BDS)
     """
-    # Lazy import the core implementation
-    from meerkat_beams.core.beams import mdv_beams_to_bds as mdv_beams_to_bds_core
+    from meerkat_beams.core.mdv_beams_to_bds import mdv_beams_to_bds as _impl
 
-    mdv_beams_to_bds_core(
+    _impl(
         str(mdv_beams),
         str(bds),
         compress=compress,

@@ -1,26 +1,11 @@
-"""Core implementations for meerkat-beams."""
+"""Core implementations for meerkat-beams.
 
-import logging
-import sys
+Each module in this package corresponds 1:1 to a CLI command and cab definition:
 
-CONSOLE = None
+    core/download_mdv_beams.py  <->  cli/download_mdv_beams.py  <->  cabs/download_mdv_beams.yml
+    core/mdv_beams_to_bds.py    <->  cli/mdv_beams_to_bds.py    <->  cabs/mdv_beams_to_bds.yml
+    core/bds_to_xradio.py       <->  cli/bds_to_xradio.py       <->  cabs/bds_to_xradio.yml
+    core/mdv_to_xradio.py       <->  cli/mdv_to_xradio.py       <->  cabs/mdv_to_xradio.yml
 
-
-def create_logger():
-    """Create a console logger"""
-    log = logging.getLogger("meerkat_beams")
-    cfmt = logging.Formatter("%(name)s - %(asctime)s %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    log.setLevel(logging.DEBUG)
-    global CONSOLE
-    CONSOLE = logging.StreamHandler(sys.stdout)
-    CONSOLE.setLevel(logging.INFO)
-    CONSOLE.setFormatter(cfmt)
-    log.addHandler(CONSOLE)
-    return log
-
-
-def set_console_logging_level(level: int):
-    CONSOLE.setLevel(level)
-
-
-log = LOGGER = create_logger()
+Shared utilities (BeamWizard, logging, etc.) live in meerkat_beams.utils.
+"""

@@ -136,14 +136,12 @@ def bds_to_xradio(
     """
     Renders a beam dataset (BDS) to an xradio-compatible zarr image
     """
-    # Lazy import the core implementation
-    from meerkat_beams.core.xradio_util import bds_to_xradio as bds_to_xradio_core
+    from meerkat_beams.core.bds_to_xradio import bds_to_xradio as _impl
 
-    # Convert ListStr to list
     elements_list = elements.split(",") if isinstance(elements, str) else (list(elements) if elements else [])
     output_pol_list = output_pol.split(",") if isinstance(output_pol, str) else (list(output_pol) if output_pol else [])
 
-    bds_to_xradio_core(
+    _impl(
         str(bds_path),
         str(image_path),
         str(output),

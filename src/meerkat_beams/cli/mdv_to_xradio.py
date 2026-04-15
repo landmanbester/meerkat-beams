@@ -98,10 +98,9 @@ def mdv_to_xradio(
     """
     Converts raw MdV beam npz to an xradio-compatible zarr image
     """
-    # Lazy import the core implementation
-    from meerkat_beams.core.xradio_util import mdv_to_xradio as mdv_to_xradio_core
+    from meerkat_beams.core.mdv_to_xradio import mdv_to_xradio as _impl
 
-    mdv_to_xradio_core(
+    _impl(
         str(npz_path),
         str(output),
         antenna=antenna,

@@ -58,12 +58,10 @@ def download_mdv_beams(
     """
     Downloads MdV-format primary beams from SARAO archive
     """
-    # Lazy import the core implementation
-    from meerkat_beams.core.beams import download_mdv_beams as download_mdv_beams_core
+    from meerkat_beams.core.download_mdv_beams import download_mdv_beams as _impl
 
-    # Convert ListStr to list
     url_list = base_url.split(",") if isinstance(base_url, str) else list(base_url)
-    download_mdv_beams_core(
+    _impl(
         source,
         dest=str(dest) if dest is not None else None,
         base_url=url_list,

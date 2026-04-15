@@ -1,0 +1,31 @@
+cabs:
+  download-mdv-beams:
+    _use: lib.misc.suricat.cabs
+    info: Downloads MdV-format primary beams from SARAO archive
+    command: suricat.beams.download_mdv_beams
+    flavour: python
+    inputs:
+      source:
+        dtype: str
+        info: full URL, or filename (e.g. MeerKAT_U_band_primary_beam.npz), or band (e.g. U)
+        required: true
+        policies:
+          positional: true
+        metavar: BAND
+      base-url:
+        info: download locations (mirrors), multiple may be given
+        dtype: List[str]
+        default:
+          - https://ratt-public-data.s3.af-south-1.amazonaws.com/MeerKATbeams/
+          - https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/data/
+        policies:
+          repeat: repeat
+        metavar: URL
+    outputs:
+      dest:
+        dtype: File
+        info: destination file, default uses filename from URL
+        required: false
+        policies:
+          positional: true
+        metavar: "[DESTINATION]"

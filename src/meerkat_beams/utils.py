@@ -1,21 +1,69 @@
-import os.path
+"""
+Shared utilities for meerkat-beams.
+
+Contains:
+- Logging setup (log, LOGGER, set_console_logging_level)
+- PowerBeam dataclass
+- BeamWizard class for beam interpolation
+- beamplots utilities
+- xradio zarr enrichment helpers
+- Zarr compression defaults
+"""
+
+import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
-from urllib.error import HTTPError
 
 import astropy.units as u
 import numpy as np
 import numpy.linalg
 import scipy.interpolate
-import wget
 import xarray
 from astropy.coordinates import AltAz, EarthLocation, SkyCoord
 from astropy.io import fits
 from astropy.time import Time
 from astropy.wcs import WCS
+from numcodecs import Blosc, Delta
 from scipy.ndimage import map_coordinates, spline_filter
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+CONSOLE = None
+
+
+def create_logger():
+    """Create a console logger"""
+    log = logging.getLogger("meerkat_beams")
+    cfmt = logging.Formatter("%(name)s - %(asctime)s %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    log.setLevel(logging.DEBUG)
+    global CONSOLE
+    CONSOLE = logging.StreamHandler(sys.stdout)
+    CONSOLE.setLevel(logging.INFO)
+    CONSOLE.setFormatter(cfmt)
+    log.addHandler(CONSOLE)
+    return log
+
+
+def set_console_logging_level(level: int):
+    CONSOLE.setLevel(level)
+
+
+log = LOGGER = create_logger()
+
+# ---------------------------------------------------------------------------
+# Zarr compression defaults
+# ---------------------------------------------------------------------------
+
+ZARR_COMPRESSOR = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
+ZARR_FILTERS = [Delta(dtype="float32")]
+
+# ---------------------------------------------------------------------------
+# PowerBeam dataclass
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -27,147 +75,9 @@ class PowerBeam(object):
     freq: np.ndarray  # frequencies
 
 
-def download_mdv_beams(
-    source: str,
-    dest: Optional[str] = None,
-    base_url: List[str] = ["https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/data/"],
-    exit_on_error: Optional[int] = 1,
-):
-    """Downloads MdV beams from SARAO archive
-
-    Args:
-        source (str): Full URL, or filename (e.g. MeerKAT_U_band_primary_beam.npz), or band (e.g. U)
-        dest (Optional[str], optional): destination file, defaults to basename of filename
-    """
-    from meerkat_beams.core import log
-
-    urls = []
-    if "://" in source:
-        urls = [source]
-    elif source.endswith(".npz"):
-        urls = [f"{url.rstrip('/')}/{source}" for url in base_url]
-    elif source in ("L", "U", "S0", "S1", "S2", "S3", "S4"):
-        urls = [f"{url.rstrip('/')}/MeerKAT_{source}_band_primary_beam.npz" for url in base_url]
-    else:
-        raise RuntimeError(f"unrecognized source argument: {source}")
-
-    if not urls:
-        raise RuntimeError("no download paths -- did you specify base_url?")
-
-    if dest is None:
-        dest = os.path.basename(urls[0])
-
-    for url in urls:
-        log.info(f"downloading {url} to {dest}")
-        try:
-            wget.download(url, out=dest)
-            log.info("download complete")
-            return 0
-        except HTTPError as exc:
-            log.warning(f"download failed: {exc}")
-
-    # if we got here, all downloads failed
-    log.error("all download atempts failed")
-    if exit_on_error is not None:
-        sys.exit(exit_on_error)
-    else:
-        raise RuntimeError("all download atempts failed")
-
-
-def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
-    """
-    Converts MdV's npz beamset into a Stokes I power beam
-    """
-    from meerkat_beams.core import LOGGER
-
-    LOGGER.info(f"loading MdV beams from {mdv_beams}")
-    mdv = np.load(mdv_beams)
-    bm = mdv["beam"]
-    degs = mdv["margin_deg"]
-    freqs = mdv["freq_MHz"] * 1e6
-    delta = degs[1] - degs[0]
-    i0 = len(degs) // 2
-
-    # form up fits header
-    hdr = {}
-    hdr["SIMPLE"] = "T"
-    hdr["NAXIS1"] = len(degs)
-    hdr["NAXIS2"] = len(degs)
-    hdr["NAXIS3"] = len(freqs)
-    hdr["CRPIX1"] = i0 + 1
-    hdr["CRPIX2"] = i0 + 1
-    hdr["CRPIX3"] = 1
-    hdr["CRVAL1"] = 0
-    hdr["CRVAL2"] = 0
-    hdr["CRVAL3"] = freqs[0]
-    hdr["CDELT1"] = delta
-    hdr["CDELT2"] = delta
-    hdr["CDELT3"] = freqs[1] - freqs[0]
-    hdr["CTYPE1"] = "X"
-    hdr["CTYPE2"] = "Y"
-    hdr["CTYPE3"] = "FREQ"
-    hdr["CUNIT1"] = "deg"
-    hdr["CUNIT2"] = "deg"
-    hdr["CUNIT3"] = "Hz"
-
-    # See also https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/beam_orientation_diagram.pdf
-    # MdV pols are HH, HV, VH, VV, so I think that corresponds to [[HH, HV],[VH,VV]] in the Jones matrix
-
-    LOGGER.info("computing normalized beams")
-    bm = bm[:, -1]  # select average beam (last antenna index)
-    jj = bm.reshape([2, 2] + list(bm.shape[1:]))  # reshape to 2x2 to get Jones matrix
-    # MdV axes are FREQ,Y,X (probably worth double-checking), so now ROW,COL,FREQ,Y,X
-    jjt = jj.transpose((2, 3, 4, 0, 1))  # now FREQ,Y,X,ROW,COLUMN
-    jj0 = jjt[:, i0, i0, :, :]  # centre beam: FREQ,ROW,COLUMN
-    # linalg.inv() wants last two axes to be matrix row and column, so transpose
-    jj0inv = numpy.linalg.inv(jj0)
-    # normalized Jones matrix (Jnorm.J)
-    jnorm = jj0inv[:, np.newaxis, np.newaxis, :, :] @ jjt
-
-    LOGGER.info("computing Stokes beams")
-    # S converts Stokes to coherency
-    S = np.array([[1, 1, 0, 0], [0, 0, 1, 1j], [0, 0, 1, -1j], [1, -1, 0, 0]])
-    # Sinv converts coherency to Stokes
-    Sinv = numpy.linalg.inv(S)
-
-    # compute Stokes matrices from FREQ,Y,X,ROW,COLUMN Jones matrices
-    def stokes(jones):
-        mshape = list(jones.shape[:-2]) + [4, 4]
-        mueller = np.einsum("fyxij,fyxkl->fyxikjl", jones, np.conj(jones)).reshape(mshape)
-        return Sinv @ mueller @ S
-
-    # compute Stokes and normalized Stokes
-    st = stokes(jjt).transpose((3, 4, 0, 1, 2)).astype(np.float32)
-    stnorm = stokes(jnorm).transpose((3, 4, 0, 1, 2)).astype(np.float32)
-    jnorm = jnorm.transpose((3, 4, 0, 1, 2))  # back to ROW,COLUMN,FREQ,Y,X
-
-    LOGGER.info(f"saving output dataset {bds}")
-    # write to dataset
-    # Jones and Stokes have different matrix sizes (2x2 vs 4x4), so use
-    # separate dimension names to avoid xarray coordinate conflicts
-    jcoords = dict(receptor_i=[0, 1], receptor_j=[0, 1], X=degs, Y=degs, FREQ=freqs)
-    scoords = dict(stokes_i=list("IQUV"), stokes_j=list("IQUV"), X=degs, Y=degs, FREQ=freqs)
-
-    xds = xarray.Dataset(
-        dict(
-            jones=xarray.DataArray(jj, dims=("receptor_i", "receptor_j", "FREQ", "Y", "X"), coords=jcoords),
-            njones=xarray.DataArray(jnorm, dims=["receptor_i", "receptor_j", "FREQ", "Y", "X"], coords=jcoords),
-            stokes=xarray.DataArray(st, dims=["stokes_i", "stokes_j", "FREQ", "Y", "X"], coords=scoords),
-            nstokes=xarray.DataArray(stnorm, dims=["stokes_i", "stokes_j", "FREQ", "Y", "X"], coords=scoords),
-        )
-    )
-    xds.attrs["fits_header"] = hdr
-    xds.attrs.update(x0=i0, y0=i0, dx=delta, dy=delta, freqs=freqs)
-
-    encoding = {}
-    if compress:
-        from numcodecs import Blosc, Delta
-
-        compressor = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
-        filters = [Delta(dtype="float32")]
-        for var in ["jones", "njones", "stokes", "nstokes"]:
-            encoding[var] = dict(compressor=compressor, filters=filters)
-    xds.to_zarr(bds, mode="w", encoding=encoding)
+# ---------------------------------------------------------------------------
+# BeamWizard
+# ---------------------------------------------------------------------------
 
 
 class BeamWizard(object):
@@ -184,8 +94,6 @@ class BeamWizard(object):
     dec0: float
 
     def __init__(self, bds_name: str, image_name: str):
-        from meerkat_beams.core import log
-
         self.log = log
         log.info(f"opening BDS {bds_name}")
         self.bds = xarray.open_zarr(bds_name)
@@ -574,8 +482,6 @@ class BeamWizard(object):
 
         # Interpolate back to full resolution if pixel_stepping was applied
         if pixel_stepping > 1 and shape != full_shape:
-            from scipy.ndimage import map_coordinates
-
             # Fractional coarse-grid coordinates for each full-resolution pixel
             fi = np.arange(full_shape[0]) / pixel_stepping
             fj = np.arange(full_shape[1]) / pixel_stepping
@@ -840,3 +746,128 @@ class BeamWizard(object):
                 done_count += 1
                 if done_count % max(1, total // 10) == 0 or done_count == total:
                     self.log.info(f"  written {done_count}/{total} planes")
+
+
+# ---------------------------------------------------------------------------
+# xradio zarr enrichment helper
+# ---------------------------------------------------------------------------
+
+
+def enrich_bds_xradio(zarr_path: str, bw: BeamWizard, output_var: str, polarizations: List[str]):
+    """Post-process zarr store for xradio compatibility.
+
+    - Converts l/m from degrees to radians
+    - Fixes polarization labels
+    - Reorders dimensions to (time, frequency, polarization, l, m)
+    - Adds direction attributes matching xradio schema
+    """
+    import zarr
+
+    store = zarr.open(zarr_path, mode="r+")
+
+    # Convert l/m from degrees to radians (xradio convention)
+    l_deg = store["l"][:]
+    m_deg = store["m"][:]
+    store["l"][:] = np.deg2rad(l_deg)
+    store["m"][:] = np.deg2rad(m_deg)
+
+    # Fix polarization labels: get_time_freq_beam writes "II", "QQ", etc.
+    # xradio expects single-letter Stokes labels "I", "Q", "U", "V"
+    pol_arr = store.create_dataset("polarization", data=np.array(polarizations), overwrite=True)
+    pol_arr.attrs["_ARRAY_DIMENSIONS"] = ["polarization"]
+
+    # Dimensions are already in xradio order (time, frequency, polarization, l, m)
+    # from get_time_freq_beam, just ensure attrs are set correctly
+    store[output_var].attrs["_ARRAY_DIMENSIONS"] = ["time", "frequency", "polarization", "l", "m"]
+
+    # Dataset-level attributes: direction block matching reference schema
+    ra0 = float(bw.centre.ra.rad)
+    dec0 = float(bw.centre.dec.rad)
+
+    existing_attrs = dict(store.attrs)
+    existing_attrs["direction"] = {
+        "reference": {
+            "attrs": {"frame": "icrs", "type": "sky_coord", "units": "rad"},
+            "data": [ra0, dec0],
+            "dims": ["l", "m"],
+        },
+        "latpole": {
+            "attrs": {"type": "quantity", "units": "rad"},
+            "data": dec0,
+            "dims": ["l", "m"],
+        },
+        "lonpole": {
+            "attrs": {"type": "quantity", "units": "rad"},
+            "data": float(np.pi),
+            "dims": ["l", "m"],
+        },
+        "projection": "SIN",
+        "projection_parameters": {
+            "_dtype": "float64",
+            "_type": "numpy.ndarray",
+            "_value": [0.0, 0.0],
+        },
+        "pc": {
+            "_dtype": "float64",
+            "_type": "numpy.ndarray",
+            "_value": [[1.0, 0.0], [0.0, 1.0]],
+        },
+    }
+    store.attrs.put(existing_attrs)
+
+    # Variable-level attributes
+    store[output_var].attrs.update(
+        {
+            "image_type": "primary_beam",
+            "units": "dimensionless",
+        }
+    )
+
+    # Re-consolidate metadata so open_zarr works without consolidated=False
+    zarr.consolidate_metadata(zarr_path)
+
+
+# ---------------------------------------------------------------------------
+# beamplots utilities
+# ---------------------------------------------------------------------------
+
+
+def collect_beam_gain_to_source(
+    bds_name,
+    image_name,
+    coord: Union[SkyCoord, str],
+    freq: Union[float, str, List[float], List[str]],
+    time: Optional[Union[str, Time]] = None,
+):
+    from astropy.units import Quantity
+
+    bw = BeamWizard(bds_name, image_name)
+    if type(coord) is str:
+        coord = SkyCoord(coord)
+    log.info(f"computing beam gain towards {coord}")
+    if time is not None:
+        if type(time) is str:
+            time = Time(time)
+        log.info(f"explicit time specified as {time}")
+    # compute freqs
+    if isinstance(freq, (list, tuple)):
+        freq = [Quantity(f).to_value(u.Hz) if type(f) is str else f for f in freq]
+    elif isinstance(freq, str):
+        freq = [Quantity(freq).to_value(u.Hz)]
+    else:
+        freq = [freq]
+    log.info(f"{len(freq)} channels from {min(freq)} to {max(freq)}")
+
+    xpyp, seps, angles = bw.get_source_coordinates(coord, time)
+    log.info(f"coordinates are {xpyp}")
+    log.info(f"distances are {seps}")
+    log.info(f"angles are {angles}")
+
+    beams = {}
+    beams["I beam"] = bw.interpolate_beam(xpyp, freq, i="I", j="I")
+    beams["V beam"] = bw.interpolate_beam(xpyp, freq, i="V", j="V")
+    beams["I->Q leakage"] = bw.interpolate_beam(xpyp, freq, i="Q", j="I")
+    beams["I->U leakage"] = bw.interpolate_beam(xpyp, freq, i="U", j="I")
+    beams["I->V leakage"] = bw.interpolate_beam(xpyp, freq, i="V", j="I")
+
+    return beams
