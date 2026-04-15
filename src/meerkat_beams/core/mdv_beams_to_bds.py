@@ -25,9 +25,10 @@ def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
         bm = mdv["beam"]
         degs = mdv["margin_deg"]
         freqs = mdv["freq_MHz"] * 1e6
+        bm = bm[:, -1]  # select average beam (last antenna index)
     elif (Path(mdv_beams) / ".zgroup").exists():
         xds = xarray.open_zarr(mdv_beams, chunks=None)
-        bm = xds.BEAM.values
+        bm = xds.BEAM.values  # already mean beam: [4, NFREQ, NY, NX]
         degs = xds.l_beam.values
         freqs = xds.chan.values
     else:
@@ -62,7 +63,6 @@ def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
     # MdV pols are HH, HV, VH, VV, so I think that corresponds to [[HH, HV],[VH,VV]] in the Jones matrix
 
     LOGGER.info("computing normalized beams")
-    bm = bm[:, -1]  # select average beam (last antenna index)
     jj = bm.reshape([2, 2] + list(bm.shape[1:]))  # reshape to 2x2 to get Jones matrix
     # MdV axes are FREQ,Y,X (probably worth double-checking), so now ROW,COL,FREQ,Y,X
     jjt = jj.transpose((2, 3, 4, 0, 1))  # now FREQ,Y,X,ROW,COLUMN
