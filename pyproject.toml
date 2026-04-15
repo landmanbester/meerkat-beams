@@ -27,6 +27,8 @@ dependencies = [
     "scipy",
     "matplotlib",
     "wget",
+    "requests>=2.33.1",
+    "dask-ms[s3,xarray,zarr]>=0.2.23",
 ]
 
 [project.urls]

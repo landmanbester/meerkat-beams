@@ -70,7 +70,7 @@ def _run_conversion(input_zarr: Path, output_dir: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(params=ALL_BANDS)
+@pytest.fixture(params=ALL_BANDS, scope="session")
 def bds_pair(request):
     """
     For each band, run the conversion and yield (new_ds, ref_ds, band).

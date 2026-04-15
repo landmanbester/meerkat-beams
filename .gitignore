@@ -42,6 +42,10 @@ ENV/
 htmlcov/
 .tox/
 .nox/
+tests/data
+
+# Docs
+docs
 
 # OS
 .DS_Store

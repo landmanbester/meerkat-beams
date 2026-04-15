@@ -33,8 +33,8 @@ def test_rendered_vs_beamgain():
     """Test that rendered beam zarr matches get_time_variable_beamgain()."""
     import xarray
 
-    from meerkat_beams.core.beams import BeamWizard
-    from meerkat_beams.core.xradio_util import bds_to_xradio
+    from meerkat_beams.core.bds_to_xradio import bds_to_xradio
+    from meerkat_beams.utils import BeamWizard
 
     bw = BeamWizard(BDS_PATH, IMAGE_PATH)
 

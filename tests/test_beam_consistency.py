@@ -22,7 +22,7 @@ needs_data = pytest.mark.skipif(
 
 
 def _make_beam_wizard():
-    from meerkat_beams.core.beams import BeamWizard
+    from meerkat_beams.utils import BeamWizard
 
     return BeamWizard(BDS_PATH, IMAGE_PATH)
 
