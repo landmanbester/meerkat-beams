@@ -141,10 +141,11 @@ class BeamWizard(object):
         log.info(f"location is MeerKAT ({self.default_location})")
         self._prefilters = {}
 
-    def _get_prefilter(self, var: str, i: Union[str, int], j: Union[str, int]):
+    def _get_prefilter(self, var: str, i: Union[str, int], j: Union[str, int], verbose=1):
         key = var, i, j
         if key not in self._prefilters:
-            self.log.debug(f"computing spline prefilter for {var}[{i},{j}]")
+            if verbose > 0:
+                self.log.debug(f"computing spline prefilter for {var}[{i},{j}]")
             da = self.bds[var]
             # Use the variable's actual first two dims (receptor_i/j or stokes_i/j)
             sel = {da.dims[0]: i, da.dims[1]: j}
@@ -306,6 +307,7 @@ class BeamWizard(object):
         var: str = "nstokes",
         i: str = "I",
         j: str = "I",
+        verbose: int = 1,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute the rotation-averaged beam at specified l/m coordinates.
@@ -411,12 +413,13 @@ class BeamWizard(object):
         n_pixels = len(ll_flat)
         n_chunks = (n_pixels + chunk_size - 1) // chunk_size
         stepping_info = f", pixel_stepping={pixel_stepping}" if pixel_stepping > 1 else ""
-        self.log.info(
-            f"computing rotation-averaged beam over {n_times} times, "
-            f"PA range {pa.min().deg:.1f} to {pa.max().deg:.1f} deg, "
-            f"{len(freq)} frequency planes, {n_pixels} pixels in {n_chunks} chunks"
-            f"{stepping_info}"
-        )
+        if verbose > 0:
+            self.log.info(
+                f"computing rotation-averaged beam over {n_times} times, "
+                f"PA range {pa.min().deg:.1f} to {pa.max().deg:.1f} deg, "
+                f"{len(freq)} frequency planes, {n_pixels} pixels in {n_chunks} chunks"
+                f"{stepping_info}"
+            )
 
         # Precompute the spline filter to ensure it's cached
         self._get_prefilter(var, i, j)
@@ -430,7 +433,8 @@ class BeamWizard(object):
         for chunk_idx in range(n_chunks):
             chunk_start = chunk_idx * chunk_size
             chunk_end = min(chunk_start + chunk_size, n_pixels)
-            self.log.info(f"processing chunk {chunk_idx + 1}/{n_chunks} (pixels {chunk_start}-{chunk_end})")
+            if verbose > 0:
+                self.log.info(f"processing chunk {chunk_idx + 1}/{n_chunks} (pixels {chunk_start}-{chunk_end})")
             ll_chunk = ll_flat[chunk_start:chunk_end]
             mm_chunk = mm_flat[chunk_start:chunk_end]
 
@@ -527,6 +531,7 @@ class BeamWizard(object):
         ij_list: Optional[List[Tuple]] = None,
         compressor=None,
         filters=None,
+        verbose: int = 1,
     ):
         """
         Compute the beam per time and frequency and write to a zarr dataset.
@@ -657,12 +662,13 @@ class BeamWizard(object):
         if chunks_freq is None:
             chunks_freq = n_freq
 
-        self.log.info(
-            f"computing time-freq beam: {n_ij} ij elements, {n_times} times, "
-            f"PA range {pa.min().deg:.1f} to {pa.max().deg:.1f} deg, "
-            f"{n_freq} freqs, {nx}x{ny} pixels"
-            f"{f', pixel_stepping={pixel_stepping}' if pixel_stepping > 1 else ''}"
-        )
+        if verbose > 0:
+            self.log.info(
+                f"computing time-freq beam: {n_ij} ij elements, {n_times} times, "
+                f"PA range {pa.min().deg:.1f} to {pa.max().deg:.1f} deg, "
+                f"{n_freq} freqs, {nx}x{ny} pixels"
+                f"{f', pixel_stepping={pixel_stepping}' if pixel_stepping > 1 else ''}"
+            )
 
         # Precompute spline filters for all ij pairs
         for ii, jj in ij_list:
@@ -744,7 +750,7 @@ class BeamWizard(object):
                 idx[ij_axis] = ij_idx
                 zarr_arr[tuple(idx)] = plane
                 done_count += 1
-                if done_count % max(1, total // 10) == 0 or done_count == total:
+                if (done_count % max(1, total // 10) == 0 or done_count == total) and verbose > 0:
                     self.log.info(f"  written {done_count}/{total} planes")
 
 
