@@ -141,15 +141,17 @@ class BeamWizard(object):
         log.info(f"location is MeerKAT ({self.default_location})")
         self._prefilters = {}
 
-    def _get_prefilter(self, var: str, i: Union[str, int], j: Union[str, int], verbose=1):
-        key = var, i, j
+    def _get_prefilter(self, var: str, i: Union[str, int], j: Union[str, int], order: int = 3, verbose=1):
+        # order is included in the cache key: spline_filter coefficients depend on
+        # the spline order, so callers requesting different orders must not collide.
+        key = var, i, j, order
         if key not in self._prefilters:
             if verbose > 0:
-                self.log.debug(f"computing spline prefilter for {var}[{i},{j}]")
+                self.log.debug(f"computing spline prefilter for {var}[{i},{j}] (order={order})")
             da = self.bds[var]
             # Use the variable's actual first two dims (receptor_i/j or stokes_i/j)
             sel = {da.dims[0]: i, da.dims[1]: j}
-            self._prefilters[key] = spline_filter(da.sel(**sel))
+            self._prefilters[key] = spline_filter(da.sel(**sel), order=order)
         return self._prefilters[key]
 
     def get_source_coordinates(
@@ -195,13 +197,31 @@ class BeamWizard(object):
         var: str = "nstokes",
         i="I",
         j="I",
+        order: int = 3,
     ):
         # beam is I,J,FREQ,Y,X
+        freq = np.asarray(freq, dtype=float)
+        bds_freqs = self.bds.coords["FREQ"].values
+        fmin, fmax = float(bds_freqs.min()), float(bds_freqs.max())
+        if freq.size and (freq.min() < fmin or freq.max() > fmax):
+            raise ValueError(
+                f"requested frequencies [{freq.min() * 1e-6:.3f}, {freq.max() * 1e-6:.3f}] MHz "
+                f"fall outside the BDS frequency range [{fmin * 1e-6:.3f}, {fmax * 1e-6:.3f}] MHz"
+            )
         freq = self.freq_to_index(freq)
         fx = np.meshgrid(freq, xpyp[0], indexing="ij")  # mesh freq,x
         fy = np.meshgrid(freq, xpyp[1], indexing="ij")  # mesh freq,y
         coords = np.vstack([fy] + [fx[1:]])  # mesh freq,yx
-        return map_coordinates(self._get_prefilter(var, i, j), coords, prefilter=True)
+        # prefilter=False because _get_prefilter already applied spline_filter;
+        # mode="constant", cval=0.0 makes the off-cube extrapolation policy explicit.
+        return map_coordinates(
+            self._get_prefilter(var, i, j, order=order),
+            coords,
+            order=order,
+            prefilter=False,
+            mode="constant",
+            cval=0.0,
+        )
 
     def _resolve_freqs(
         self, freq: Optional[np.ndarray] = None, num_freq: Optional[int] = None, spi: Optional[float] = None
