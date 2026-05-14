@@ -1640,6 +1640,7 @@ full = [
     { name = "astropy", version = "6.1.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "astropy", version = "7.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "dask-ms", extra = ["s3", "xarray", "zarr"] },
+    { name = "gdown" },
     { name = "matplotlib" },
     { name = "numcodecs" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -1665,7 +1666,6 @@ dev = [
     { name = "tbump" },
 ]
 test = [
-    { name = "gdown" },
     { name = "pytest" },
 ]
 
@@ -1673,6 +1673,7 @@ test = [
 requires-dist = [
     { name = "astropy", marker = "extra == 'full'" },
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.23" },
+    { name = "gdown", marker = "extra == 'full'", specifier = ">=5.0.0" },
     { name = "hip-cargo", specifier = ">=0.2.0" },
     { name = "matplotlib", marker = "extra == 'full'" },
     { name = "numcodecs", marker = "extra == 'full'" },
@@ -1694,10 +1695,7 @@ dev = [
     { name = "ruff", specifier = ">=0.9.0" },
     { name = "tbump", specifier = ">=6.11.0" },
 ]
-test = [
-    { name = "gdown", specifier = ">=5.0.0" },
-    { name = "pytest", specifier = ">=8.0.0" },
-]
+test = [{ name = "pytest", specifier = ">=8.0.0" }]
 
 [[package]]
 name = "multidict"
