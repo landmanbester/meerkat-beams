@@ -19,6 +19,7 @@ are not guarded. Warm the cache from a single process.
 
 import os
 import shutil
+import sys
 import tarfile
 from pathlib import Path
 
@@ -96,8 +97,11 @@ def _download_and_extract(band: str) -> None:
             ) from e
 
         log.info(f"extracting {tarball} into {partial}")
+        # Python 3.12+ tarfile expects an explicit `filter`; "data" strips
+        # setuid/setgid bits and absolute paths. Default becomes mandatory in 3.14.
+        extract_kwargs = {"filter": "data"} if sys.version_info >= (3, 12) else {}
         with tarfile.open(tarball, "r:gz") as tar:
-            tar.extractall(path=partial)
+            tar.extractall(path=partial, **extract_kwargs)
 
         # Tarball contains a top-level MeerKAT_<BAND>.zarr/ directory; promote it.
         extracted = partial / f"MeerKAT_{band}.zarr"
