@@ -18,6 +18,7 @@ are not guarded. Warm the cache from a single process.
 """
 
 import os
+import shutil
 from pathlib import Path
 
 BAND_GDRIVE_IDS: dict[str, str] = {
@@ -53,6 +54,8 @@ def ensure_band_bds(band: str) -> str:
     if band not in SUPPORTED_BANDS:
         raise ValueError(f"band must be one of {SUPPORTED_BANDS}, got {band!r}")
 
+    _clear_partials(band)
+
     bds = bds_path(band)
     if bds.exists():
         return str(bds)
@@ -70,3 +73,17 @@ def _download_and_extract(band: str) -> None:
 
 def _convert_to_bds(band: str) -> None:
     raise NotImplementedError
+
+
+def _partial(path: Path) -> Path:
+    """Sibling .partial directory next to ``path``."""
+    return path.with_name(path.name + ".partial")
+
+
+def _clear_partials(band: str) -> None:
+    from meerkat_beams.utils import log
+
+    for p in (_partial(input_zarr_path(band)), _partial(bds_path(band))):
+        if p.exists():
+            log.warning(f"removing stale partial cache dir {p}")
+            shutil.rmtree(p, ignore_errors=True)

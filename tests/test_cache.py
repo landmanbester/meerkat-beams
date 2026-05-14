@@ -118,3 +118,39 @@ def test_ensure_band_bds_skips_download_when_input_exists(tmp_path, monkeypatch)
     result = cache.ensure_band_bds("U")
     assert result == str(cache.bds_path("U"))
     assert convert_calls == ["U"]
+
+
+@pytest.mark.unit
+def test_ensure_band_bds_clears_stale_partials(tmp_path, monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+
+    inp = cache.input_zarr_path("U")
+    out = cache.bds_path("U")
+    stale_input = inp.with_name(inp.name + ".partial")
+    stale_bds = out.with_name(out.name + ".partial")
+    stale_input.mkdir(parents=True)
+    (stale_input / "junk").write_text("x")
+    stale_bds.mkdir(parents=True)
+    (stale_bds / "junk").write_text("x")
+
+    def stub_download(band):
+        inp = cache.input_zarr_path(band)
+        inp.mkdir(parents=True)
+        (inp / ".zgroup").write_text("{}")
+
+    def stub_convert(band):
+        out = cache.bds_path(band)
+        out.mkdir(parents=True)
+        (out / ".zgroup").write_text("{}")
+
+    monkeypatch.setattr(cache, "_download_and_extract", stub_download)
+    monkeypatch.setattr(cache, "_convert_to_bds", stub_convert)
+
+    with caplog.at_level(logging.WARNING, logger="meerkat_beams"):
+        cache.ensure_band_bds("U")
+
+    assert not stale_input.exists()
+    assert not stale_bds.exists()
+    assert any("partial" in r.message.lower() for r in caplog.records)
