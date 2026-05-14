@@ -1,7 +1,4 @@
-import tarfile
 from pathlib import Path
-
-import gdown
 
 test_root_path = Path(__file__).resolve().parent
 test_data_path = Path(test_root_path, "data")
@@ -33,14 +30,5 @@ gdrive_id = "13k5WyyQFdcNG8FqsBAz3mAvhuaVZ2FlW"
 
 def pytest_sessionstart(session):
     """Called after Session object has been created, before run test loop."""
-
-    if beam_path.exists():
-        print("Test data already present - not downloading.")
-        return
-
-    print("Test data not found - downloading...")
-    gdown.download(id=gdrive_id, output=str(data_tar_path), quiet=False)
-    with tarfile.open(data_tar_path, "r:gz") as tar:
-        tar.extractall(path=test_data_path)
-    data_tar_path.unlink()
-    print("Test data successfully downloaded.")
+    # WIP: replaced in Task 10 of docs/superpowers/plans/2026-05-14-beamwizard-auto-download.md
+    return

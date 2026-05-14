@@ -44,9 +44,6 @@ htmlcov/
 .nox/
 tests/data
 
-# Docs
-docs
-
 # OS
 .DS_Store
 Thumbs.db
