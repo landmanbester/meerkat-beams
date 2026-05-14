@@ -209,3 +209,52 @@ def test_download_and_extract_missing_gdown(tmp_path, monkeypatch):
     monkeypatch.setattr(cache, "_gdown_download", raise_import)
     with pytest.raises(ImportError, match=r"meerkat-beams\[full\]"):
         cache._download_and_extract("U")
+
+
+@pytest.mark.unit
+def test_convert_to_bds_atomic(tmp_path, monkeypatch):
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+
+    inp = cache.input_zarr_path("U")
+    inp.mkdir(parents=True)
+    (inp / ".zgroup").write_text("{}")
+
+    calls = []
+
+    def stub_mdv(mdv_beams, bds, compress):
+        calls.append((mdv_beams, bds, compress))
+        Path(bds).mkdir(parents=True)
+        (Path(bds) / ".zgroup").write_text("{}")
+
+    monkeypatch.setattr("meerkat_beams.core.mdv_beams_to_bds.mdv_beams_to_bds", stub_mdv)
+    cache._convert_to_bds("U")
+
+    out = cache.bds_path("U")
+    assert out.is_dir()
+    assert (out / ".zgroup").exists()
+    assert not cache._partial(out).exists()
+    assert calls[0][0] == str(inp)
+    assert calls[0][1].endswith(".partial")
+    assert calls[0][2] is True
+
+
+@pytest.mark.unit
+def test_convert_to_bds_failure_preserves_input(tmp_path, monkeypatch):
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+
+    inp = cache.input_zarr_path("U")
+    inp.mkdir(parents=True)
+    (inp / ".zgroup").write_text("{}")
+
+    def boom(mdv_beams, bds, compress):
+        Path(bds).mkdir(parents=True)
+        (Path(bds) / "half").write_text("x")
+        raise RuntimeError("conversion failed")
+
+    monkeypatch.setattr("meerkat_beams.core.mdv_beams_to_bds.mdv_beams_to_bds", boom)
+    with pytest.raises(RuntimeError, match="conversion failed"):
+        cache._convert_to_bds("U")
+
+    assert not cache.bds_path("U").exists()
+    assert not cache._partial(cache.bds_path("U")).exists()
+    assert inp.exists(), "input zarr must be preserved on conversion failure"

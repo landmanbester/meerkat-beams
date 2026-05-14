@@ -116,7 +116,23 @@ def _download_and_extract(band: str) -> None:
 
 
 def _convert_to_bds(band: str) -> None:
-    raise NotImplementedError
+    from meerkat_beams.core.mdv_beams_to_bds import mdv_beams_to_bds
+    from meerkat_beams.utils import log
+
+    inp = input_zarr_path(band)
+    out = bds_path(band)
+    partial = _partial(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if partial.exists():
+        shutil.rmtree(partial, ignore_errors=True)
+
+    log.info(f"converting {inp} -> {out} (via .partial)")
+    try:
+        mdv_beams_to_bds(mdv_beams=str(inp), bds=str(partial), compress=True)
+        os.replace(partial, out)
+    finally:
+        if partial.exists():
+            shutil.rmtree(partial, ignore_errors=True)
 
 
 def _partial(path: Path) -> Path:
