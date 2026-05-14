@@ -7,6 +7,7 @@ MeerKAT primary-beam model handling: download MdV beam files from the SARAO arch
 ```
 src/meerkat_beams/
 ├── utils.py                # shared: BeamWizard, PowerBeam, logging, zarr constants
+├── cache.py                # on-demand download + BDS cache (per band)
 ├── cabs/<cmd>.yml          # Stimela cab definitions (one per command)
 ├── cli/<cmd>.py            # thin Typer wrappers (one per command)
 └── core/<cmd>.py           # plain-Python implementations (one per command)
@@ -40,6 +41,21 @@ Convention: the beam cube in BDS is dim-ordered `(i, j, FREQ, Y, X)`; variable n
 
 ### `enrich_bds_xradio(zarr_path, bw, output_var, polarizations)`
 Post-processes a zarr store written by `get_time_freq_beam` into xradio schema: converts `l`/`m` from degrees to radians, sets polarization labels, adds a `direction` attribute block (`icrs`, SIN projection, reference = field centre), and re-consolidates metadata.
+
+### Cache (`cache.py`)
+
+`BeamWizard(band="L", image_name=...)` auto-downloads the MeerKAT
+mean-beam zarr for the named band from Google Drive and builds a
+compressed BDS locally, caching both under
+
+  `$MBEAMS_CACHE_DIR` or `$XDG_CACHE_HOME/meerkat-beams` or `~/.cache/meerkat-beams`
+
+as `inputs/MeerKAT_<BAND>.zarr/` and `bds/MeerKAT_<BAND>.bds.zarr/`.
+Subsequent constructions of `BeamWizard(band=...)` reuse the cached
+BDS. Supported bands: `U`, `L`, `S0`, `S4` (S1/S2/S3 have no published
+gdrive ID — request the band explicitly via `bds_name=` instead).
+Concurrent first-time downloads of the same band from multiple
+processes are not guarded; warm the cache from a single process.
 
 ### Logging
 `LOGGER` / `log` (same object). Console handler is kept on the module-level `CONSOLE`; change level via `set_console_logging_level(level)`. Don't create additional handlers.
