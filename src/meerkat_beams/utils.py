@@ -120,7 +120,7 @@ class BeamWizard(object):
             log.info(f"obtaining WCS from FITS image {image_name}")
             fitshdr = fits.open(image_name)[0].header
             self.wcs = WCS(fitshdr)
-            self.time = None
+            self.times = None
         elif (Path(image_name) / ".zgroup").exists():
             log.info(f"obtaining WCS from dataset {image_name}")
             ds = xarray.open_zarr(image_name)

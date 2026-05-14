@@ -110,12 +110,12 @@ Flagged while reviewing `BeamWizard.interpolate_beam` and `get_time_freq_beam`. 
 - **Implicit off-cube policy.** `map_coordinates` in `interpolate_beam` now passes `mode="constant", cval=0.0` explicitly; out-of-X/Y coordinates still return 0 (pinned by `test_out_of_range_xy_returns_zero`).
 - **Spline order in the prefilter cache.** `_get_prefilter` now takes `order: int = 3` and includes it in the cache key; `interpolate_beam` accepts and forwards `order` to both `spline_filter` and `map_coordinates`.
 - **Silent out-of-range frequency.** `interpolate_beam` now raises `ValueError` with the requested vs. BDS frequency ranges (in MHz) before calling `freq_to_index`. Pinned by `test_out_of_range_freq_raises`.
+- **FITS-image branch `self.time` → `self.times` typo.** The FITS branch of `BeamWizard.__init__` now sets `self.times = None`, so `get_source_coordinates` with no explicit `times` raises the documented `RuntimeError` instead of an `AttributeError`. Pinned by `test_fits_branch_sets_times_none_raises_runtimeerror`.
 
 **Still open:**
 1. **Redundant meshgrid in `interpolate_beam`** — `fx` and `fy` both recompute the identical freq grid; only `fy[0]` and `fx[1]` are used. Functionally correct, just wasteful and confusing.
 2. **`spline_filter` default output dtype is float64** even on float32 inputs — doubles the memory per cached prefilter entry. Fix: pass `output=np.float32` (or inherit the input dtype) in `_get_prefilter`.
 3. **`get_time_freq_beam` zarr fill_value pitfall.** `zarr.Group.create_dataset` is called for the beam variable with `fill_value=0`, and the coord datasets are created with zarr's default fill (also 0). When the store is re-opened with `xarray.open_zarr(...)` (default `mask_and_scale=True`), every genuine `0.0` — including a `l=0` or `m=0` coord, or a beam pixel that happens to be 0 — comes back as `NaN`. The `test_time_freq_beam_writes_zarr` test works around this with `mask_and_scale=False`. Proper fix: pass `fill_value=None` for the coord datasets (values are always valid), and for the beam variable either use `fill_value=None` or a sentinel that can't collide with real data.
-4. **FITS-image branch of `BeamWizard.__init__`** sets `self.time = None` (singular) but every downstream method reads `self.times` (plural). `get_source_coordinates` with no explicit `times` will raise `AttributeError` instead of the intended `RuntimeError`. `get_rotation_averaged_beam` and `get_time_freq_beam` use `getattr(self, "times", None)` and happen to work. Fix: rename to `self.times = None` in the FITS branch.
 
 ## Current branch
 

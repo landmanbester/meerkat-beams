@@ -357,6 +357,19 @@ def test_beam_wizard_band_routes_through_cache(tmp_path, monkeypatch):
     assert bw.bds is not None
 
 
+@pytest.mark.unit
+def test_fits_branch_sets_times_none_raises_runtimeerror(bw):
+    """FITS-image branch must set self.times (plural).
+
+    Pins the fix for the time/times typo: get_source_coordinates called
+    without explicit times should raise the documented RuntimeError, not
+    an AttributeError from self.times missing on the FITS branch.
+    """
+    assert bw.times is None
+    with pytest.raises(RuntimeError, match="explicit times must be supplied"):
+        bw.get_source_coordinates(bw.centre)
+
+
 @pytest.mark.integration
 def test_beam_wizard_band_l_end_to_end(tmp_path):
     """End-to-end: BeamWizard(band='L', ...) opens a real cached BDS.
