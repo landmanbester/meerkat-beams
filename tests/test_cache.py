@@ -1,9 +1,12 @@
 """
 Hermetic unit tests for meerkat_beams.cache.
 
-No network, no real conversion. ensure_band_bds is exercised with the
-download+convert internals monkeypatched.
+No network, no real conversion. As later tasks build out the module,
+ensure_band_bds is exercised with the download+convert internals
+monkeypatched.
 """
+
+from pathlib import Path  # noqa: F401  -- used by later-task tests
 
 import pytest
 
