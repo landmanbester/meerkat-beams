@@ -1,26 +1,30 @@
 cabs:
-  mdv-beams-to-bds:
-    _use: lib.misc.suricat.cabs
-    command: suricat.beams.mdv_beams_to_bds
-    info: Converts MdV-format primary beams to a beam dataset (BDS)
+  mdv_beams_to_bds:
     flavour: python
+    command: meerkat_beams.core.mdv_beams_to_bds.mdv_beams_to_bds
+    name: mdv-beams-to-bds
+    info:
+      Converts MdV-format primary beams to a beam dataset (BDS)
+    image: ghcr.io/landmanbester/meerkat-beams:dev001
     inputs:
       mdv-beams:
+        info:
+          input MdV beams npz file (see https://doi.org/10.48479/wdb0-h061)
         dtype: File
-        metavar: MDV_FILE
-        info: input MdV beams npz file (see https://doi.org/10.48479/wdb0-h061)
         required: true
         policies:
           positional: true
+        metavar: MDV_FILE
       compress:
+        info:
+          apply Delta+Blosc compression to zarr output
         dtype: bool
-        info: apply Delta+Blosc compression to zarr output
         default: false
     outputs:
       bds:
         dtype: Directory
-        metavar: BDS_FILE
-        info: output beam dataset (BDS) file
-        mkdir: false
+        info:
+          output beam dataset (BDS) file
         policies:
           positional: true
+        mkdir: false
