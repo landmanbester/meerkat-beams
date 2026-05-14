@@ -355,3 +355,22 @@ def test_beam_wizard_band_routes_through_cache(tmp_path, monkeypatch):
     bw = BeamWizard(image_name=str(fake_image), band="U")
     assert calls == ["U"]
     assert bw.bds is not None
+
+
+@pytest.mark.integration
+def test_beam_wizard_band_l_end_to_end(tmp_path):
+    """End-to-end: BeamWizard(band='L', ...) opens a real cached BDS.
+
+    Skipped when MBEAMS_OFFLINE=1 (air-gapped CI). Reuses whatever the
+    cache already contains; populates it via ensure_band_bds if needed.
+    """
+    import os
+
+    if os.environ.get("MBEAMS_OFFLINE") == "1":
+        pytest.skip("MBEAMS_OFFLINE=1 set")
+
+    fits_path = tmp_path / "synthetic.fits"
+    _build_image(fits_path)
+    bw = BeamWizard(image_name=str(fits_path), band="L")
+    assert "FREQ" in bw.bds.coords
+    assert bw.bds.attrs["dx"] > 0
