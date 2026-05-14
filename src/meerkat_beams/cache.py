@@ -19,6 +19,7 @@ are not guarded. Warm the cache from a single process.
 
 import os
 import shutil
+import tarfile
 from pathlib import Path
 
 BAND_GDRIVE_IDS: dict[str, str] = {
@@ -67,8 +68,47 @@ def ensure_band_bds(band: str) -> str:
     return str(bds)
 
 
+def _gdown_download(id: str, output: str, quiet: bool) -> None:  # noqa: A002
+    """Thin wrapper around gdown.download so tests can monkeypatch it."""
+    import gdown  # local import: gdown is a [full] extra
+
+    gdown.download(id=id, output=output, quiet=quiet)
+
+
 def _download_and_extract(band: str) -> None:
-    raise NotImplementedError
+    from meerkat_beams.utils import log
+
+    inp = input_zarr_path(band)
+    partial = _partial(inp)
+    inp.parent.mkdir(parents=True, exist_ok=True)
+    partial.mkdir(parents=True, exist_ok=True)
+
+    tarball = partial.parent / f"MeerKAT_{band}.zarr.tgz"
+    gid = BAND_GDRIVE_IDS[band]
+    try:
+        try:
+            log.info(f"downloading MeerKAT_{band}.zarr.tgz from gdrive id {gid}")
+            _gdown_download(id=gid, output=str(tarball), quiet=False)
+        except ImportError as e:
+            raise ImportError(
+                f"meerkat-beams was installed without the [full] extra; "
+                f"install meerkat-beams[full] to use band={band!r}"
+            ) from e
+
+        log.info(f"extracting {tarball} into {partial}")
+        with tarfile.open(tarball, "r:gz") as tar:
+            tar.extractall(path=partial)
+
+        # Tarball contains a top-level MeerKAT_<BAND>.zarr/ directory; promote it.
+        extracted = partial / f"MeerKAT_{band}.zarr"
+        if not extracted.is_dir():
+            raise RuntimeError(f"expected {extracted.name}/ inside tarball but did not find it")
+        os.replace(extracted, inp)
+    finally:
+        if tarball.exists():
+            tarball.unlink()
+        if partial.exists():
+            shutil.rmtree(partial, ignore_errors=True)
 
 
 def _convert_to_bds(band: str) -> None:

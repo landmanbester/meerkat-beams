@@ -6,6 +6,7 @@ ensure_band_bds is exercised with the download+convert internals
 monkeypatched.
 """
 
+import tarfile
 from pathlib import Path  # noqa: F401  -- used by later-task tests
 
 import pytest
@@ -154,3 +155,57 @@ def test_ensure_band_bds_clears_stale_partials(tmp_path, monkeypatch, caplog):
     assert not stale_input.exists()
     assert not stale_bds.exists()
     assert any("partial" in r.message.lower() for r in caplog.records)
+
+
+def _make_fake_tarball(tar_path: Path, member_name: str):
+    """Build a real .tar.gz on disk containing a single zarr-shaped directory."""
+    payload_dir = tar_path.parent / "_stage"
+    payload_dir.mkdir(parents=True, exist_ok=True)
+    zarr_dir = payload_dir / member_name
+    zarr_dir.mkdir(parents=True, exist_ok=True)
+    (zarr_dir / ".zgroup").write_text("{}")
+    with tarfile.open(tar_path, "w:gz") as tar:
+        tar.add(zarr_dir, arcname=member_name)
+
+
+@pytest.mark.unit
+def test_download_and_extract_writes_atomic(tmp_path, monkeypatch):
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+
+    def fake_gdown_download(id, output, quiet):  # noqa: A002
+        _make_fake_tarball(Path(output), "MeerKAT_U.zarr")
+
+    monkeypatch.setattr(cache, "_gdown_download", fake_gdown_download)
+    cache._download_and_extract("U")
+
+    inp = cache.input_zarr_path("U")
+    assert inp.is_dir()
+    assert (inp / ".zgroup").exists()
+    assert not cache._partial(inp).exists()
+
+
+@pytest.mark.unit
+def test_download_and_extract_failure_cleans_partial(tmp_path, monkeypatch):
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+
+    def boom(id, output, quiet):  # noqa: A002
+        Path(output).write_text("not a tarball")  # download "succeeds" with junk
+
+    monkeypatch.setattr(cache, "_gdown_download", boom)
+    with pytest.raises(Exception):
+        cache._download_and_extract("U")
+
+    assert not cache.input_zarr_path("U").exists()
+    assert not cache._partial(cache.input_zarr_path("U")).exists()
+
+
+@pytest.mark.unit
+def test_download_and_extract_missing_gdown(tmp_path, monkeypatch):
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+
+    def raise_import(*a, **kw):
+        raise ImportError("gdown not available")
+
+    monkeypatch.setattr(cache, "_gdown_download", raise_import)
+    with pytest.raises(ImportError, match=r"meerkat-beams\[full\]"):
+        cache._download_and_extract("U")
