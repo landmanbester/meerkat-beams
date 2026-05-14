@@ -93,7 +93,21 @@ class BeamWizard(object):
     ra0: float  # field centre in degrees
     dec0: float
 
-    def __init__(self, bds_name: str, image_name: str):
+    def __init__(
+        self,
+        bds_name: Optional[str] = None,
+        image_name: Optional[str] = None,
+        *,
+        band: Optional[str] = None,
+    ):
+        if (bds_name is None) == (band is None):
+            raise ValueError("exactly one of bds_name or band must be provided")
+        if image_name is None:
+            raise ValueError("image_name is required")
+        if band is not None:
+            from meerkat_beams import cache
+
+            bds_name = cache.ensure_band_bds(band)
         self.log = log
         log.info(f"opening BDS {bds_name}")
         self.bds = xarray.open_zarr(bds_name)

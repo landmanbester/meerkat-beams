@@ -313,3 +313,45 @@ def test_time_freq_beam_writes_zarr(bw, times, tmp_path):
     np.testing.assert_allclose(ds.coords["m"].values, m_grid)
     # at (l=0, m=0) the rotated track collapses to the centre pixel → 1.0 everywhere
     np.testing.assert_allclose(ds["BEAM"].isel(l=1, m=1, polarization=0).values, 1.0, atol=1e-5)
+
+
+@pytest.mark.unit
+def test_beam_wizard_requires_one_of_bds_or_band(tmp_path):
+    with pytest.raises(ValueError, match="exactly one of bds_name or band"):
+        BeamWizard(image_name=str(tmp_path / "x.fits"))
+
+
+@pytest.mark.unit
+def test_beam_wizard_rejects_both_bds_and_band(tmp_path):
+    with pytest.raises(ValueError, match="exactly one of bds_name or band"):
+        BeamWizard(bds_name="some.bds.zarr", image_name=str(tmp_path / "x.fits"), band="U")
+
+
+@pytest.mark.unit
+def test_beam_wizard_requires_image_name():
+    with pytest.raises(ValueError, match="image_name is required"):
+        BeamWizard(bds_name="some.bds.zarr")
+
+
+@pytest.mark.unit
+def test_beam_wizard_band_routes_through_cache(tmp_path, monkeypatch):
+    """band='U' must call ensure_band_bds and feed the result to the existing init."""
+    from meerkat_beams import cache
+
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+
+    fake_bds = tmp_path / "fake.bds.zarr"
+    fake_image = tmp_path / "synthetic.fits"
+    _build_bds(fake_bds)
+    _build_image(fake_image)
+
+    calls = []
+
+    def stub_ensure(band):
+        calls.append(band)
+        return str(fake_bds)
+
+    monkeypatch.setattr(cache, "ensure_band_bds", stub_ensure)
+    bw = BeamWizard(image_name=str(fake_image), band="U")
+    assert calls == ["U"]
+    assert bw.bds is not None
