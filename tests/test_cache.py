@@ -70,3 +70,25 @@ def test_cache_root_empty_env_vars_ignored(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", "")
     monkeypatch.setenv("HOME", str(tmp_path))
     assert cache.cache_root() == tmp_path / ".cache" / "meerkat-beams"
+
+
+@pytest.mark.unit
+def test_ensure_band_bds_rejects_unknown_band(tmp_path, monkeypatch):
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+    with pytest.raises(ValueError, match="band must be one of"):
+        cache.ensure_band_bds("Q")
+
+
+@pytest.mark.unit
+def test_ensure_band_bds_short_circuits_when_bds_exists(tmp_path, monkeypatch):
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+    bds = cache.bds_path("U")
+    bds.mkdir(parents=True)
+    (bds / ".zgroup").write_text("{}")
+
+    def boom(*a, **kw):
+        raise AssertionError("must not be called when BDS already exists")
+
+    monkeypatch.setattr(cache, "_download_and_extract", boom)
+    monkeypatch.setattr(cache, "_convert_to_bds", boom)
+    assert cache.ensure_band_bds("U") == str(bds)

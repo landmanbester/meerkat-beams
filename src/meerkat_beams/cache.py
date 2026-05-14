@@ -46,3 +46,27 @@ def input_zarr_path(band: str) -> Path:
 
 def bds_path(band: str) -> Path:
     return cache_root() / "bds" / f"MeerKAT_{band}.bds.zarr"
+
+
+def ensure_band_bds(band: str) -> str:
+    """Return a local BDS path for ``band``, downloading and converting as needed."""
+    if band not in SUPPORTED_BANDS:
+        raise ValueError(f"band must be one of {SUPPORTED_BANDS}, got {band!r}")
+
+    bds = bds_path(band)
+    if bds.exists():
+        return str(bds)
+
+    if not input_zarr_path(band).exists():
+        _download_and_extract(band)
+
+    _convert_to_bds(band)
+    return str(bds)
+
+
+def _download_and_extract(band: str) -> None:
+    raise NotImplementedError
+
+
+def _convert_to_bds(band: str) -> None:
+    raise NotImplementedError
