@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 import xarray
 
-from tests.conftest import BAND_INPUT_ZARR, test_data_path
+from meerkat_beams import cache
 
 # Bands to test -- add new bands here as data becomes available
 ALL_BANDS = ["U", "L", "S0", "S1", "S2", "S3", "S4"]
@@ -44,11 +44,10 @@ def _ref_bds_path(band: str) -> str | None:
 
 
 def _input_zarr_path(band: str) -> Path | None:
-    """Return the input zarr path in tests/data/, or None if missing."""
-    name = BAND_INPUT_ZARR.get(band)
-    if name is None:
+    """Return the cached input zarr path, or None if absent."""
+    if band not in cache.SUPPORTED_BANDS:
         return None
-    p = test_data_path / name
+    p = cache.input_zarr_path(band)
     return p if p.exists() else None
 
 
