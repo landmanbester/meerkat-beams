@@ -92,3 +92,29 @@ def test_ensure_band_bds_short_circuits_when_bds_exists(tmp_path, monkeypatch):
     monkeypatch.setattr(cache, "_download_and_extract", boom)
     monkeypatch.setattr(cache, "_convert_to_bds", boom)
     assert cache.ensure_band_bds("U") == str(bds)
+
+
+@pytest.mark.unit
+def test_ensure_band_bds_skips_download_when_input_exists(tmp_path, monkeypatch):
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+    inp = cache.input_zarr_path("U")
+    inp.mkdir(parents=True)
+    (inp / ".zgroup").write_text("{}")
+
+    def must_not_download(*a, **kw):
+        raise AssertionError("download must not run when input already exists")
+
+    convert_calls = []
+
+    def stub_convert(band):
+        convert_calls.append(band)
+        out = cache.bds_path(band)
+        out.mkdir(parents=True)
+        (out / ".zgroup").write_text("{}")
+
+    monkeypatch.setattr(cache, "_download_and_extract", must_not_download)
+    monkeypatch.setattr(cache, "_convert_to_bds", stub_convert)
+
+    result = cache.ensure_band_bds("U")
+    assert result == str(cache.bds_path("U"))
+    assert convert_calls == ["U"]
