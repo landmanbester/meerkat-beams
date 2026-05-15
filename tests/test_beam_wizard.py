@@ -303,8 +303,8 @@ def test_time_freq_beam_writes_zarr(bw, times, tmp_path):
         var="nstokes",
         verbose=0,
     )
-    # A1 fix: fill_value=None on the zarr means default open_zarr no longer
-    # masks genuine zeros as NaN. mask_and_scale=False is no longer needed.
+    # fill_value=None on the zarr means default open_zarr no longer masks
+    # genuine zeros as NaN; no mask_and_scale=False workaround required.
     ds = xarray.open_zarr(str(out))
     assert ds["BEAM"].dims == ("time", "frequency", "polarization", "l", "m")
     assert ds["BEAM"].shape == (len(times), 2, 1, 3, 3)
@@ -320,7 +320,7 @@ def test_time_freq_beam_open_default_keeps_real_zeros(bw, times, tmp_path):
     """Regression: rendered zarr must round-trip 0.0 coords/values as real zeros.
 
     With fill_value=0 + xarray.open_zarr's default mask_and_scale=True, genuine
-    zeros (e.g. l=0.0 coord) come back as NaN. Pins the A1 fix.
+    zeros (e.g. l=0.0 coord) come back as NaN.
     """
     out = tmp_path / "tfbeam_default_open.zarr"
     l_grid = np.array([-DELTA, 0.0, DELTA])
