@@ -147,3 +147,8 @@ def _clear_partials(band: str) -> None:
         if p.exists():
             log.warning(f"removing stale partial cache dir {p}")
             shutil.rmtree(p, ignore_errors=True)
+
+    tarball = input_zarr_path(band).parent / f"MeerKAT_{band}.zarr.tgz"
+    if tarball.exists():
+        log.warning(f"removing stale download tarball {tarball}")
+        tarball.unlink()

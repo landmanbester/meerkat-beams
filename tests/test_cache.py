@@ -258,3 +258,33 @@ def test_convert_to_bds_failure_preserves_input(tmp_path, monkeypatch):
     assert not cache.bds_path("U").exists()
     assert not cache._partial(cache.bds_path("U")).exists()
     assert inp.exists(), "input zarr must be preserved on conversion failure"
+
+
+@pytest.mark.unit
+def test_clear_partials_removes_stale_tarball(tmp_path, monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+    inp = cache.input_zarr_path("U")
+    inp.parent.mkdir(parents=True, exist_ok=True)
+    stale_tarball = inp.parent / "MeerKAT_U.zarr.tgz"
+    stale_tarball.write_text("garbage from a killed download")
+
+    def stub_download(band):
+        out = cache.input_zarr_path(band)
+        out.mkdir(parents=True)
+        (out / ".zgroup").write_text("{}")
+
+    def stub_convert(band):
+        out = cache.bds_path(band)
+        out.mkdir(parents=True)
+        (out / ".zgroup").write_text("{}")
+
+    monkeypatch.setattr(cache, "_download_and_extract", stub_download)
+    monkeypatch.setattr(cache, "_convert_to_bds", stub_convert)
+
+    with caplog.at_level(logging.WARNING, logger="meerkat_beams"):
+        cache.ensure_band_bds("U")
+
+    assert not stale_tarball.exists(), "stale tarball should have been removed"
+    assert any("tarball" in r.message.lower() for r in caplog.records)
