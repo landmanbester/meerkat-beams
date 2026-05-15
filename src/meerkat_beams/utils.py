@@ -549,7 +549,7 @@ class BeamWizard(object):
         self,
         filename: str,
         var_name: str,
-        dim_names: Tuple[str, str, str, str, str] = ("time", "freq", "ij", "x", "y"),
+        dim_names: Tuple[str, str, str, str, str] = ("time", "frequency", "polarization", "l", "m"),
         ds: Optional[xarray.Dataset] = None,
         l: Optional[np.ndarray] = None,
         m: Optional[np.ndarray] = None,
