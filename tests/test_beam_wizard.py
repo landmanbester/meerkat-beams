@@ -262,6 +262,59 @@ def test_time_freq_beam_open_default_keeps_real_zeros(bw, times, tmp_path):
 
 
 @pytest.mark.unit
+def test_time_freq_beam_multi_ij(bw, times, tmp_path):
+    """ij_list with more than one element must produce a wider polarization axis."""
+    out = tmp_path / "tfbeam_multi_ij.zarr"
+    l_grid = np.array([-DELTA, 0.0, DELTA])
+    m_grid = np.array([-DELTA, 0.0, DELTA])
+    bw.get_time_freq_beam(
+        filename=str(out),
+        var_name="BEAM",
+        dim_names=("time", "frequency", "polarization", "l", "m"),
+        l=l_grid,
+        m=m_grid,
+        times=times,
+        freq=FREQS[:2],
+        pixel_stepping=1,
+        time_stepping=1,
+        ij_list=[("I", "I"), ("Q", "Q")],
+        var="nstokes",
+        verbose=0,
+    )
+    ds = xarray.open_zarr(str(out))
+    assert ds["BEAM"].sizes["polarization"] == 2
+    assert list(ds.coords["polarization"].values) == ["II", "QQ"]
+    np.testing.assert_allclose(ds["BEAM"].isel(l=1, m=1).values, 1.0, atol=1e-5)
+
+
+@pytest.mark.unit
+def test_time_freq_beam_pixel_stepping_upsamples(bw, times, tmp_path):
+    """pixel_stepping > 1 must still produce the requested l/m grid shape."""
+    out = tmp_path / "tfbeam_pxstep.zarr"
+    n = 5
+    grid = np.linspace(-2 * DELTA, 2 * DELTA, n)
+    bw.get_time_freq_beam(
+        filename=str(out),
+        var_name="BEAM",
+        dim_names=("time", "frequency", "polarization", "l", "m"),
+        l=grid,
+        m=grid,
+        times=times,
+        freq=FREQS[:2],
+        pixel_stepping=2,
+        time_stepping=1,
+        ij_list=[("I", "I")],
+        var="nstokes",
+        verbose=0,
+    )
+    ds = xarray.open_zarr(str(out))
+    assert ds["BEAM"].shape == (len(times), 2, 1, n, n)
+    # Centre value remains the on-axis 1.0 even under upsampling.
+    mid = n // 2
+    np.testing.assert_allclose(ds["BEAM"].isel(l=mid, m=mid, polarization=0).values, 1.0, atol=1e-4)
+
+
+@pytest.mark.unit
 def test_beam_wizard_requires_one_of_bds_or_band(tmp_path):
     with pytest.raises(ValueError, match="exactly one of bds_name or band"):
         BeamWizard(image_name=str(tmp_path / "x.fits"))
