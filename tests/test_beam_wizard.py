@@ -451,3 +451,40 @@ def test_beam_wizard_band_l_end_to_end(tmp_path):
     bw = BeamWizard(image_name=str(fits_path), band="L")
     assert "FREQ" in bw.bds.coords
     assert bw.bds.attrs["dx"] > 0
+
+
+# ---------------------------------------------------------------------------
+# _resolve_freqs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_resolve_freqs_defaults_to_bds_freqs(bw):
+    freq, weights = bw._resolve_freqs()
+    np.testing.assert_array_equal(freq, FREQS)
+    assert weights is None
+
+
+@pytest.mark.unit
+def test_resolve_freqs_num_freq_linspace(bw):
+    freq, weights = bw._resolve_freqs(num_freq=7)
+    assert freq.shape == (7,)
+    np.testing.assert_allclose(freq[0], FREQS[0])
+    np.testing.assert_allclose(freq[-1], FREQS[-1])
+    assert weights is None
+
+
+@pytest.mark.unit
+def test_resolve_freqs_both_args_raises(bw):
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        bw._resolve_freqs(freq=FREQS, num_freq=4)
+
+
+@pytest.mark.unit
+def test_resolve_freqs_spi_weights_sum_to_one(bw):
+    freq, weights = bw._resolve_freqs(spi=-0.7)
+    assert weights is not None
+    assert weights.shape == freq.shape
+    np.testing.assert_allclose(weights.sum(), 1.0, atol=1e-12)
+    # Negative spi means lower frequencies should carry more weight.
+    assert weights[0] > weights[-1]
