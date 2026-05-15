@@ -133,10 +133,10 @@ Flagged while reviewing `BeamWizard.interpolate_beam` and `get_time_freq_beam`. 
 - **Silent out-of-range frequency.** `interpolate_beam` now raises `ValueError` with the requested vs. BDS frequency ranges (in MHz) before calling `freq_to_index`. Pinned by `test_out_of_range_freq_raises`.
 - **FITS-image branch `self.time` → `self.times` typo.** The FITS branch of `BeamWizard.__init__` now sets `self.times = None`, so `get_source_coordinates` with no explicit `times` raises the documented `RuntimeError` instead of an `AttributeError`. Pinned by `test_fits_branch_sets_times_none_raises_runtimeerror`.
 - **`get_time_freq_beam` fill_value pitfall.** Both the beam variable and the coord datasets now pass `fill_value=None` to `zarr.Group.create_dataset`. Default `xarray.open_zarr` no longer masks genuine `0.0` (coord or pixel) as `NaN`. Pinned by `test_time_freq_beam_open_default_keeps_real_zeros`.
+- **`_get_prefilter` cache widened float32 → float64.** `scipy.ndimage.spline_filter` defaults to float64 output even on float32 inputs, doubling the memory per cached entry. `_get_prefilter` now passes `output=np.float32`, so the cached prefilter mirrors the BDS dtype. Pinned by `test_prefilter_cached_dtype_is_float32`.
 
 **Still open:**
 1. **Redundant meshgrid in `interpolate_beam`** — `fx` and `fy` both recompute the identical freq grid; only `fy[0]` and `fx[1]` are used. Functionally correct, just wasteful and confusing.
-2. **`spline_filter` default output dtype is float64** even on float32 inputs — doubles the memory per cached prefilter entry. Fix: pass `output=np.float32` (or inherit the input dtype) in `_get_prefilter`.
 
 ## Current branch
 

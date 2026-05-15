@@ -150,6 +150,13 @@ def test_prefilter_is_cached(bw):
 
 
 @pytest.mark.unit
+def test_prefilter_cached_dtype_is_float32(bw):
+    """_get_prefilter must mirror input dtype (float32), not silently widen to float64."""
+    arr = bw._get_prefilter("nstokes", "I", "I")
+    assert arr.dtype == np.float32, f"prefilter widened to {arr.dtype}"
+
+
+@pytest.mark.unit
 def test_on_axis_normalised_beam_is_one(bw):
     """At the BDS centre, the normalised beam equals 1 across all frequencies."""
     xpyp = np.array([[float(bw.bds.attrs["x0"])], [float(bw.bds.attrs["y0"])]])
@@ -185,7 +192,9 @@ def test_subpixel_matches_direct_scipy(bw):
     vals = bw.interpolate_beam(xpyp, freq_subset, var="nstokes", i="I", j="I")
 
     raw = bw.bds["nstokes"].sel(stokes_i="I", stokes_j="I").values
-    filtered = spline_filter(raw)
+    # Match the production prefilter dtype (float32) so the comparison reflects the
+    # same precision as the cached prefilter in BeamWizard.
+    filtered = spline_filter(raw, output=np.float32)
     freq_idx = bw.freq_to_index(freq_subset)
     fx = np.meshgrid(freq_idx, xp, indexing="ij")
     fy = np.meshgrid(freq_idx, yp, indexing="ij")

@@ -165,7 +165,7 @@ class BeamWizard(object):
             da = self.bds[var]
             # Use the variable's actual first two dims (receptor_i/j or stokes_i/j)
             sel = {da.dims[0]: i, da.dims[1]: j}
-            self._prefilters[key] = spline_filter(da.sel(**sel), order=order)
+            self._prefilters[key] = spline_filter(da.sel(**sel), order=order, output=np.float32)
         return self._prefilters[key]
 
     def get_source_coordinates(
