@@ -738,7 +738,7 @@ class BeamWizard(object):
                 shape=shape,
                 chunks=chunks,
                 dtype="float32",
-                fill_value=0,
+                fill_value=None,
                 compressor=compressor,
                 filters=filters,
             )
@@ -746,7 +746,7 @@ class BeamWizard(object):
             # Write coordinate arrays
             for dim_idx, dim in enumerate(dim_names):
                 coord_data = np.asarray(coords[dim])
-                store.create_dataset(dim, data=coord_data, overwrite=True)
+                store.create_dataset(dim, data=coord_data, overwrite=True, fill_value=None)
                 store[dim].attrs["_ARRAY_DIMENSIONS"] = [dim]
             zarr.consolidate_metadata(filename)
 

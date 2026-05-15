@@ -303,9 +303,9 @@ def test_time_freq_beam_writes_zarr(bw, times, tmp_path):
         var="nstokes",
         verbose=0,
     )
-    # mask_and_scale=False: the zarr is written with default fill_value=0, so
-    # xarray would otherwise mask genuine 0 values (e.g. l=0.0) as NaN.
-    ds = xarray.open_zarr(str(out), mask_and_scale=False)
+    # A1 fix: fill_value=None on the zarr means default open_zarr no longer
+    # masks genuine zeros as NaN. mask_and_scale=False is no longer needed.
+    ds = xarray.open_zarr(str(out))
     assert ds["BEAM"].dims == ("time", "frequency", "polarization", "l", "m")
     assert ds["BEAM"].shape == (len(times), 2, 1, 3, 3)
     np.testing.assert_allclose(ds.coords["frequency"].values, FREQS[:2])
@@ -313,6 +313,37 @@ def test_time_freq_beam_writes_zarr(bw, times, tmp_path):
     np.testing.assert_allclose(ds.coords["m"].values, m_grid)
     # at (l=0, m=0) the rotated track collapses to the centre pixel → 1.0 everywhere
     np.testing.assert_allclose(ds["BEAM"].isel(l=1, m=1, polarization=0).values, 1.0, atol=1e-5)
+
+
+@pytest.mark.unit
+def test_time_freq_beam_open_default_keeps_real_zeros(bw, times, tmp_path):
+    """Regression: rendered zarr must round-trip 0.0 coords/values as real zeros.
+
+    With fill_value=0 + xarray.open_zarr's default mask_and_scale=True, genuine
+    zeros (e.g. l=0.0 coord) come back as NaN. Pins the A1 fix.
+    """
+    out = tmp_path / "tfbeam_default_open.zarr"
+    l_grid = np.array([-DELTA, 0.0, DELTA])
+    m_grid = np.array([-DELTA, 0.0, DELTA])
+    bw.get_time_freq_beam(
+        filename=str(out),
+        var_name="BEAM",
+        dim_names=("time", "frequency", "polarization", "l", "m"),
+        l=l_grid,
+        m=m_grid,
+        times=times,
+        freq=FREQS[:2],
+        pixel_stepping=1,
+        time_stepping=1,
+        ij_list=[("I", "I")],
+        var="nstokes",
+        verbose=0,
+    )
+    ds = xarray.open_zarr(str(out))  # default mask_and_scale=True
+    assert not np.isnan(ds.coords["l"].values).any(), "l coord 0.0 masked as NaN"
+    assert not np.isnan(ds.coords["m"].values).any(), "m coord 0.0 masked as NaN"
+    np.testing.assert_allclose(ds.coords["l"].values, l_grid)
+    np.testing.assert_allclose(ds.coords["m"].values, m_grid)
 
 
 @pytest.mark.unit

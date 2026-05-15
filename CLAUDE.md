@@ -132,11 +132,11 @@ Flagged while reviewing `BeamWizard.interpolate_beam` and `get_time_freq_beam`. 
 - **Spline order in the prefilter cache.** `_get_prefilter` now takes `order: int = 3` and includes it in the cache key; `interpolate_beam` accepts and forwards `order` to both `spline_filter` and `map_coordinates`.
 - **Silent out-of-range frequency.** `interpolate_beam` now raises `ValueError` with the requested vs. BDS frequency ranges (in MHz) before calling `freq_to_index`. Pinned by `test_out_of_range_freq_raises`.
 - **FITS-image branch `self.time` → `self.times` typo.** The FITS branch of `BeamWizard.__init__` now sets `self.times = None`, so `get_source_coordinates` with no explicit `times` raises the documented `RuntimeError` instead of an `AttributeError`. Pinned by `test_fits_branch_sets_times_none_raises_runtimeerror`.
+- **`get_time_freq_beam` fill_value pitfall.** Both the beam variable and the coord datasets now pass `fill_value=None` to `zarr.Group.create_dataset`. Default `xarray.open_zarr` no longer masks genuine `0.0` (coord or pixel) as `NaN`. Pinned by `test_time_freq_beam_open_default_keeps_real_zeros`.
 
 **Still open:**
 1. **Redundant meshgrid in `interpolate_beam`** — `fx` and `fy` both recompute the identical freq grid; only `fy[0]` and `fx[1]` are used. Functionally correct, just wasteful and confusing.
 2. **`spline_filter` default output dtype is float64** even on float32 inputs — doubles the memory per cached prefilter entry. Fix: pass `output=np.float32` (or inherit the input dtype) in `_get_prefilter`.
-3. **`get_time_freq_beam` zarr fill_value pitfall.** `zarr.Group.create_dataset` is called for the beam variable with `fill_value=0`, and the coord datasets are created with zarr's default fill (also 0). When the store is re-opened with `xarray.open_zarr(...)` (default `mask_and_scale=True`), every genuine `0.0` — including a `l=0` or `m=0` coord, or a beam pixel that happens to be 0 — comes back as `NaN`. The `test_time_freq_beam_writes_zarr` test works around this with `mask_and_scale=False`. Proper fix: pass `fill_value=None` for the coord datasets (values are always valid), and for the beam variable either use `fill_value=None` or a sentinel that can't collide with real data.
 
 ## Current branch
 
