@@ -356,7 +356,10 @@ def solve_per_bin(M: np.ndarray, V: np.ndarray) -> tuple[np.ndarray, np.ndarray]
     cond : (Nt, Nf) float
         Per-bin 2-norm condition numbers of M (for downstream masking).
     """
-    B = np.linalg.solve(M, V)
+    # NumPy 2.x's np.linalg.solve treats a (..., M) RHS as a stack of
+    # (M, K) matrices rather than (M,)-vectors (numpy 2.0 release notes).
+    # Add a trailing singleton, solve, then squeeze it back out.
+    B = np.linalg.solve(M, V[..., None])[..., 0]
     cond = np.linalg.cond(M)
     return B, cond
 ```
