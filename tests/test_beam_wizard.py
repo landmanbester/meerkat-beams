@@ -5,124 +5,30 @@ Hermetic: builds a synthetic BDS zarr + a minimal FITS image in tmp_path.
 No external data, no env vars required.
 """
 
-from pathlib import Path
-
 import astropy.units as u
 import numpy as np
 import pytest
 import xarray
-from astropy.io import fits
 from astropy.time import Time
 from scipy.ndimage import map_coordinates, spline_filter
 
 from meerkat_beams.utils import BeamWizard
-
-# ---------------------------------------------------------------------------
-# Synthetic-beam parameters
-# ---------------------------------------------------------------------------
-
-N_XY = 41
-I0 = N_XY // 2  # centre pixel index
-DELTA = 0.05  # degrees/pixel
-FREQS = np.array([1.0e9, 1.1e9, 1.2e9, 1.3e9])
-SIGMA_PIX = 5.0
-RA0 = 0.0
-DEC0 = -30.0
-
-
-def _gaussian_plane() -> np.ndarray:
-    """Separable radial Gaussian, peak 1.0 at (I0, I0), replicated across freq."""
-    y, x = np.indices((N_XY, N_XY), dtype=np.float64)
-    r2 = (x - I0) ** 2 + (y - I0) ** 2
-    plane = np.exp(-0.5 * r2 / SIGMA_PIX**2)
-    return np.broadcast_to(plane, (len(FREQS), N_XY, N_XY)).astype(np.float32).copy()
-
-
-def _build_bds(path: Path) -> Path:
-    degs = (np.arange(N_XY) - I0) * DELTA
-    gauss = _gaussian_plane()  # (nfreq, ny, nx)
-    zeros = np.zeros_like(gauss)
-
-    # Jones: [[G, 0], [0, G]]  — identity at centre
-    njones = np.stack(
-        [np.stack([gauss, zeros], axis=0), np.stack([zeros, gauss], axis=0)],
-        axis=0,
-    ).astype(np.float32)
-    jones = njones.copy()
-
-    # Stokes: diag(G, G, G, G) — identity Mueller at centre
-    nstokes_arr = np.zeros((4, 4, len(FREQS), N_XY, N_XY), dtype=np.float32)
-    for s in range(4):
-        nstokes_arr[s, s] = gauss
-    stokes_arr = nstokes_arr.copy()
-
-    fits_header = {
-        "SIMPLE": "T",
-        "NAXIS1": N_XY,
-        "NAXIS2": N_XY,
-        "NAXIS3": len(FREQS),
-        "CRPIX1": I0 + 1,
-        "CRPIX2": I0 + 1,
-        "CRPIX3": 1,
-        "CRVAL1": 0,
-        "CRVAL2": 0,
-        "CRVAL3": float(FREQS[0]),
-        "CDELT1": DELTA,
-        "CDELT2": DELTA,
-        "CDELT3": float(FREQS[1] - FREQS[0]),
-        "CTYPE1": "X",
-        "CTYPE2": "Y",
-        "CTYPE3": "FREQ",
-        "CUNIT1": "deg",
-        "CUNIT2": "deg",
-        "CUNIT3": "Hz",
-    }
-
-    jcoords = dict(receptor_i=[0, 1], receptor_j=[0, 1], X=degs, Y=degs, FREQ=FREQS)
-    scoords = dict(stokes_i=list("IQUV"), stokes_j=list("IQUV"), X=degs, Y=degs, FREQ=FREQS)
-
-    xds = xarray.Dataset(
-        {
-            "jones": xarray.DataArray(jones, dims=("receptor_i", "receptor_j", "FREQ", "Y", "X"), coords=jcoords),
-            "njones": xarray.DataArray(njones, dims=("receptor_i", "receptor_j", "FREQ", "Y", "X"), coords=jcoords),
-            "stokes": xarray.DataArray(stokes_arr, dims=("stokes_i", "stokes_j", "FREQ", "Y", "X"), coords=scoords),
-            "nstokes": xarray.DataArray(nstokes_arr, dims=("stokes_i", "stokes_j", "FREQ", "Y", "X"), coords=scoords),
-        }
-    )
-    xds.attrs["fits_header"] = fits_header
-    xds.attrs.update(x0=I0, y0=I0, dx=DELTA, dy=DELTA, freqs=FREQS)
-    xds.to_zarr(str(path), mode="w")
-    return path
-
-
-def _build_image(path: Path) -> Path:
-    """Minimal 2-axis FITS image with SIN-projection WCS centred at (RA0, DEC0)."""
-    nx = ny = 64
-    data = np.zeros((ny, nx), dtype=np.float32)
-    hdr = fits.Header()
-    hdr["NAXIS"] = 2
-    hdr["NAXIS1"] = nx
-    hdr["NAXIS2"] = ny
-    hdr["CRPIX1"] = nx // 2 + 1
-    hdr["CRPIX2"] = ny // 2 + 1
-    hdr["CRVAL1"] = RA0
-    hdr["CRVAL2"] = DEC0
-    hdr["CDELT1"] = -0.01
-    hdr["CDELT2"] = 0.01
-    hdr["CTYPE1"] = "RA---SIN"
-    hdr["CTYPE2"] = "DEC--SIN"
-    hdr["CUNIT1"] = "deg"
-    hdr["CUNIT2"] = "deg"
-    fits.PrimaryHDU(data=data, header=hdr).writeto(str(path), overwrite=True)
-    return path
+from tests._synthetic import (
+    DELTA,
+    FREQS,
+    I0,
+    N_XY,
+    build_synthetic_bds,
+    build_synthetic_image,
+)
 
 
 @pytest.fixture(scope="module")
 def bw(tmp_path_factory):
     """BeamWizard over a synthetic BDS + FITS image."""
     tmp = tmp_path_factory.mktemp("bw")
-    _build_bds(tmp / "synthetic.bds.zarr")
-    _build_image(tmp / "synthetic.fits")
+    build_synthetic_bds(tmp / "synthetic.bds.zarr")
+    build_synthetic_image(tmp / "synthetic.fits")
     return BeamWizard(str(tmp / "synthetic.bds.zarr"), str(tmp / "synthetic.fits"))
 
 
@@ -382,8 +288,8 @@ def test_beam_wizard_band_routes_through_cache(tmp_path, monkeypatch):
 
     fake_bds = tmp_path / "fake.bds.zarr"
     fake_image = tmp_path / "synthetic.fits"
-    _build_bds(fake_bds)
-    _build_image(fake_image)
+    build_synthetic_bds(fake_bds)
+    build_synthetic_image(fake_image)
 
     calls = []
 
@@ -423,7 +329,7 @@ def test_beam_wizard_band_l_end_to_end(tmp_path):
         pytest.skip("MBEAMS_OFFLINE=1 set")
 
     fits_path = tmp_path / "synthetic.fits"
-    _build_image(fits_path)
+    build_synthetic_image(fits_path)
     bw = BeamWizard(image_name=str(fits_path), band="L")
     assert "FREQ" in bw.bds.coords
     assert bw.bds.attrs["dx"] > 0
