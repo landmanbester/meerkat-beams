@@ -87,10 +87,13 @@ phase-rotated residuals (= visibilities, since `X_b ≡ 0` by assumption).
   results into a `(Nt, Nν, 4, 4)` complex tensor.
 - We solve `M_S(t,ν) · B(t,ν) = V̄_S(t,ν)` per bin.
 
-`get_time_variable_beamgain` is the function under test. The script does not
-modify it; the wrong-orientation controls in Section 6 perturb the inputs or
-the parallactic angle returned by `get_source_coordinates`, leaving the
-function's code untouched.
+The composition `get_source_coordinates → interpolate_beam` (with default
+`signs=(1, 1), swap=False`) is exactly what `get_time_variable_beamgain`
+wraps when `spi=None`, and is the unit under test. The script calls these
+two methods directly rather than `get_time_variable_beamgain`, so it can
+expose the existing `signs` / `swap` knobs on `get_source_coordinates` for
+the wrong-orientation controls in Section 6 without touching any
+library code.
 
 ## 4. Data flow
 
@@ -138,31 +141,49 @@ MS (V_lin, UVW, t, freq, WEIGHT_SPECTRUM, FLAG, phase_centre)
 | 3 | Phase-rotate to source | `vis`, `uvw`, `freq`, source (RA, Dec) | `vis'` with PKS 1934-638 at phase centre | Direct implementation: `vis' = vis · exp(±2πi (uΔl + vΔm + w(Δn − 1)) / λ)`. Sign of the exponent and of the w-term are noted as candidate convention knobs (Section 6). |
 | 4 | Baseline average | `vis'`, `weight_spectrum`, `flag` | `V̄_lin(t, ν, corr)` | `V̄ = Σ_b w_b v_b / Σ_b w_b` over unflagged baselines. Equivalent to `W⁻¹ M† Σ⁻¹ R` because `M` is baseline-independent. |
 | 5 | Linear → Stokes | `V̄_lin` | `V̄_S(t, ν)` | Fixed `T⁻¹` (Section 8). |
-| 6 | **Call function under test** | `BeamWizard(band='L')`, source coords, `times`, `freq` | `M_S(t, ν)` as `(Nt, Nν, 4, 4)` | Loop over 16 `(i, j)` pairs calling `bw.get_time_variable_beamgain(..., spi=None, var='nstokes', i=i, j=j)`. The unit under test. |
+| 6 | **Call function under test** | `BeamWizard(band='L')`, source coords, `times`, `freq`, `signs`, `swap` | `M_S(t, ν)` as `(Nt, Nν, 4, 4)` | Call `bw.get_source_coordinates(srcpos, times, loc, signs, swap)` once, then loop over the 16 `(i, j)` pairs calling `bw.interpolate_beam(xpyp, freq, var='nstokes', i=i, j=j)`. With `signs=(1, 1), swap=False` this is identical to `get_time_variable_beamgain(..., spi=None, var='nstokes', i=i, j=j)`. |
 | 7 | Per-bin solve | `M_S`, `V̄_S` | `B(t, ν) = (I, Q, U, V)`; `cond_M(t, ν)` | `np.linalg.solve(M_S, V̄_S)` vectorised over (t, ν); flag bins where `cond_M > threshold`. |
 | 8 | Write outputs | `B`, `cond_M`, `freq`, `time` | `dynamic_spectrum.zarr` | Minimal store, only what plotting needs. |
 | 9 | Plots | DS zarr, catalog polynomial, control-run DS | PNGs in same dir | Spectra, waterfalls, control overlay (Section 9). |
 
 ## 6. Wrong-orientation controls
 
-Three perturbations to `get_source_coordinates`'s returned position
-angle, applied outside `BeamWizard` (so its code is untouched):
+Reuse the existing `signs` and `swap` knobs on
+`BeamWizard.get_source_coordinates`, which already feed directly into the
+sky-position → beam-pixel transform:
 
-1. **`identity`** — pretend the beam is fixed on the sky (no parallactic
-   rotation).
-2. **`angle_sign_flip`** — replace `angle(t)` with `-angle(t)`.
-3. **`angle_plus_pi`** — replace `angle(t)` with `angle(t) + π`.
+```python
+x = signs[0] * seps.deg * sin(angles.rad)
+y = signs[1] * seps.deg * cos(angles.rad)
+if swap: x, y = y, x
+```
 
-(Names match the `perturbation` attr values listed in Section 9; the
-unperturbed run is `perturbation = "none"`.)
+The unperturbed run uses `signs=(1, 1), swap=False` — the "expected
+correct" convention we're validating. The control runs each twiddle
+exactly one knob, sampling the four elements of the symmetry group
+that share a single perturbation step away from the unperturbed
+orientation:
 
-For v1 these are the only controls we run. Additional convention knobs
-held at their "expected correct" values during v1, to be systematically
-flipped one at a time if the unperturbed run still looks bad:
+| `perturbation` attr | `signs` | `swap` | What it does |
+|---|---|---|---|
+| `"none"` | `(1, 1)` | `False` | Unperturbed reference run. |
+| `"flip_x"` | `(-1, 1)` | `False` | Mirror the source position about the y-axis of the beam frame. |
+| `"flip_y"` | `(1, -1)` | `False` | Mirror about the x-axis. |
+| `"swap_xy"` | `(1, 1)` | `True` | Transpose x and y. |
 
-- Sign of the phase-rotation exponent (step 3).
+Together these probe the dihedral symmetries of the asymmetric L-band
+beam pattern. If the convention is correct, the unperturbed run should
+be visibly better than all three controls on the diagnostic plots
+(Section 9). If any control wins, that's a direct hint at which knob is
+wrong in the current convention.
+
+Additional convention knobs held at their "expected correct" values
+during v1, to be systematically flipped one at a time if the
+`signs`/`swap` controls don't isolate the problem:
+
+- Sign of the phase-rotation exponent (Section 5 step 3).
 - Sign of the w-term in the same.
-- `T` versus `T*` for the linear↔Stokes transform (step 5).
+- `T` versus `T*` for the linear↔Stokes transform (Section 5 step 5).
 - Y-axis flip on the BDS beam pixels (would require rebuilding the BDS).
 
 ## 7. Code layout
@@ -212,6 +233,19 @@ use it directly. No fallback path needed for v1.
 **Source position constant.** Pull `ra` and `dec` from
 `tests/conftest.py` (already defined there).
 
+**Calibrator spectrum.** Polynomial coefficients (`I0`, `a`, `b`, `c`,
+`d`, `e`, reference `nu0 = 1.283791015625 GHz`) and the parametrisation
+formula
+
+```
+I(ν) = I0 · (ν/ν0)^(a + b·log10(ν/ν0) + c·log10(ν/ν0)²
+                    + d·log10(ν/ν0)³ + e·log10(ν/ν0)⁴)
+```
+
+are recorded in `tests/conftest.py`. `plots.py` reads them from there
+rather than re-hard-coding the polynomial, so we have a single source of
+truth.
+
 ## 9. Outputs
 
 All under `scratch/orientation_test/<run-name>/`:
@@ -221,9 +255,9 @@ All under `scratch/orientation_test/<run-name>/`:
     `("I", "Q", "U", "V")`.
   - `cond_M`: `(time, frequency)` float32 condition number.
   - and attrs: `source = "PKS 1934-638"`, `ra`, `dec`, `band = "L"`,
-    `perturbation ∈ {"none", "identity", "angle_sign_flip",
-    "angle_plus_pi"}`, plus the catalog polynomial coefficients used
-    for comparison.
+    `perturbation ∈ {"none", "flip_x", "flip_y", "swap_xy"}` (with the
+    corresponding `(signs, swap)` values from Section 6), plus the
+    catalog polynomial coefficients used for comparison.
 - `dyn_spec_I.png`, `dyn_spec_Q.png`, `dyn_spec_U.png`,
   `dyn_spec_V.png` — waterfalls per Stokes (with `cond_M`-bad bins
   masked).
@@ -260,10 +294,11 @@ the v1 plots and can pick numbers grounded in real output.
 
 ## 11. Risks and open items
 
-- **`get_time_variable_beamgain` signature.** This design assumes
-  `spi=None` returns a `(Nt, Nν)` complex array per `(i, j)` pair. To be
-  verified before writing the script; if the actual return is reduced
-  along an axis the call shape changes but the data flow doesn't.
+- **`interpolate_beam` return shape.** `bw.interpolate_beam(xpyp, freq,
+  ...)` returns a `(Nfreq, Ntime)` complex array per `(i, j)` pair
+  (confirmed by reading `utils.py`). The script stacks 16 of these into
+  the `(Nt, Nν, 4, 4)` Mueller tensor — transposing axes once so the
+  last two are the Stokes indices.
 - **Phase-rotation sign convention.** Held at the "expected correct"
   value for v1; flagged as a fallback perturbation if the parallactic-
   angle controls don't isolate the problem.
