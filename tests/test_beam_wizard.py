@@ -14,10 +14,12 @@ from scipy.ndimage import map_coordinates, spline_filter
 
 from meerkat_beams.utils import BeamWizard
 from tests._synthetic import (
+    DEC0,
     DELTA,
     FREQS,
     I0,
     N_XY,
+    RA0,
     build_synthetic_bds,
     build_synthetic_image,
 )
@@ -488,3 +490,23 @@ def test_resolve_freqs_spi_weights_sum_to_one(bw):
     np.testing.assert_allclose(weights.sum(), 1.0, atol=1e-12)
     # Negative spi means lower frequencies should carry more weight.
     assert weights[0] > weights[-1]
+
+
+@pytest.mark.unit
+def test_time_variable_beamgain_spi_collapses_freq(bw, times):
+    """spi != None must collapse the frequency axis (single weighted average per time).
+
+    Pins the documented shape contract: with spi=None the return is
+    (NFREQ, NTIME); with spi set the frequency axis is collapsed into a
+    weighted average so the return is (NTIME,).
+    """
+    from astropy.coordinates import SkyCoord
+
+    coord = SkyCoord(ra=RA0 * u.deg, dec=DEC0 * u.deg, frame="icrs")
+    spi_none = bw.get_time_variable_beamgain(coord, times=times, freq=FREQS[:3], spi=None)
+    spi_set = bw.get_time_variable_beamgain(coord, times=times, freq=FREQS[:3], spi=-0.7)
+
+    # spi=None preserves the freq axis (NFREQ, NTIME); spi=-0.7 collapses it (NTIME,).
+    assert spi_none.shape == (3, len(times))
+    assert spi_set.shape == (len(times),)
+    assert spi_set.ndim == spi_none.ndim - 1
