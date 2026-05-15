@@ -26,3 +26,25 @@ def linear_to_stokes_matrix() -> np.ndarray:
 def stokes_to_linear_matrix() -> np.ndarray:
     """Inverse of :func:`linear_to_stokes_matrix`."""
     return np.linalg.inv(linear_to_stokes_matrix())
+
+
+def solve_per_bin(M: np.ndarray, V: np.ndarray) -> tuple[np.ndarray, np.ndarray]:  # noqa: N803
+    """Solve M(t,ν) · B(t,ν) = V(t,ν) for every (t, ν) bin.
+
+    Parameters
+    ----------
+    M : (Nt, Nf, 4, 4) complex
+        Per-bin 4×4 Stokes Mueller matrices.
+    V : (Nt, Nf, 4) complex
+        Per-bin observed Stokes vectors.
+
+    Returns
+    -------
+    B : (Nt, Nf, 4) complex
+        Per-bin solved Stokes vectors.
+    cond : (Nt, Nf) float
+        Per-bin 2-norm condition numbers of M (for downstream masking).
+    """
+    B = np.linalg.solve(M, V[..., None])[..., 0]
+    cond = np.linalg.cond(M)
+    return B, cond

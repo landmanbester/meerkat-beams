@@ -38,3 +38,30 @@ def test_T_and_inverse_compose_to_identity():  # noqa: N802
     T_inv = mueller.stokes_to_linear_matrix()
     np.testing.assert_allclose(T @ T_inv, np.eye(4), atol=1e-12)
     np.testing.assert_allclose(T_inv @ T, np.eye(4), atol=1e-12)
+
+
+@pytest.mark.unit
+def test_solve_recovers_known_B_from_synthetic_M():  # noqa: N802
+    rng = np.random.default_rng(0)
+    Nt, Nf = 3, 5  # noqa: N806
+    # Random invertible 4×4 Mueller per bin
+    M = rng.standard_normal((Nt, Nf, 4, 4)) + 1j * rng.standard_normal((Nt, Nf, 4, 4))  # noqa: N806
+    B_true = rng.standard_normal((Nt, Nf, 4)) + 1j * rng.standard_normal((Nt, Nf, 4))  # noqa: N806
+    V = np.einsum("tfij,tfj->tfi", M, B_true)  # noqa: N806
+
+    B_rec, cond = mueller.solve_per_bin(M, V)  # noqa: N806
+
+    np.testing.assert_allclose(B_rec, B_true, atol=1e-10)  # noqa: N806
+    assert cond.shape == (Nt, Nf)
+    assert np.all(cond > 0)
+
+
+@pytest.mark.unit
+def test_solve_flags_ill_conditioned_bins():  # noqa: N802
+    # M with a near-singular bin should produce a large condition number.
+    M = np.tile(np.eye(4, dtype=complex), (1, 1, 1, 1))  # (1, 1, 4, 4)  # noqa: N806
+    M[0, 0, 1, 1] = 1e-15  # near-singular
+    V = np.ones((1, 1, 4), dtype=complex)  # noqa: N806
+
+    _, cond = mueller.solve_per_bin(M, V)  # noqa: N806
+    assert cond[0, 0] > 1e10
