@@ -352,6 +352,35 @@ def test_enrich_bds_xradio_writes_xradio_schema(bw, times, tmp_path):
     assert "reference" in direction
 
 
+@pytest.mark.unit
+def test_time_freq_beam_rejects_non_canonical_dim_names(bw, times, tmp_path):
+    """dim_names must be the canonical xradio order; permutation must raise.
+
+    The data layout is always canonical (time, freq, ij, x, y). Until real
+    permutation is implemented, non-canonical dim_names would silently produce
+    a zarr whose dim labels don't describe its data, so the function rejects
+    them.
+    """
+    out = tmp_path / "tfbeam_perm.zarr"
+    l_grid = np.array([-DELTA, 0.0, DELTA])
+    m_grid = np.array([-DELTA, 0.0, DELTA])
+    with pytest.raises(ValueError, match="canonical xradio order"):
+        bw.get_time_freq_beam(
+            filename=str(out),
+            var_name="BEAM",
+            dim_names=("frequency", "time", "polarization", "l", "m"),
+            l=l_grid,
+            m=m_grid,
+            times=times,
+            freq=FREQS[:2],
+            pixel_stepping=1,
+            time_stepping=1,
+            ij_list=[("I", "I")],
+            var="nstokes",
+            verbose=0,
+        )
+
+
 @pytest.mark.integration
 def test_beam_wizard_band_l_end_to_end(tmp_path):
     """End-to-end: BeamWizard(band='L', ...) opens a real cached BDS.

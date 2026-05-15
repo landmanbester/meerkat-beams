@@ -606,6 +606,20 @@ class BeamWizard(object):
         """
         import zarr
 
+        # dim_names is positionally interpreted: index 0 is the time-axis name,
+        # 1 the frequency-axis name, 2 the polarization/ij-axis name, 3 the
+        # x/l-axis name, 4 the y/m-axis name. The data is always laid out in
+        # that canonical role order. Passing a permuted tuple would relabel
+        # the dims without reordering the data -- silent corruption. Until we
+        # implement real permutation, accept only the canonical xradio order.
+        _CANONICAL_DIM_NAMES = ("time", "frequency", "polarization", "l", "m")
+        if tuple(dim_names) != _CANONICAL_DIM_NAMES:
+            raise ValueError(
+                f"dim_names must equal the canonical xradio order "
+                f"{_CANONICAL_DIM_NAMES!r}, got {tuple(dim_names)!r}. "
+                f"Non-canonical orderings are not currently supported."
+            )
+
         dim_time, dim_freq, dim_ij, dim_x, dim_y = dim_names
 
         if loc is None:
