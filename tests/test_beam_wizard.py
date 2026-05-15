@@ -510,3 +510,38 @@ def test_time_variable_beamgain_spi_collapses_freq(bw, times):
     assert spi_none.shape == (3, len(times))
     assert spi_set.shape == (len(times),)
     assert spi_set.ndim == spi_none.ndim - 1
+
+
+@pytest.mark.unit
+def test_rotation_averaged_beam_2d_lm(bw, times):
+    """2D l/m grids must propagate to a matching 2D output."""
+    l = np.linspace(-DELTA, DELTA, 3)[None, :].repeat(5, axis=0)
+    m = np.linspace(-DELTA, DELTA, 5)[:, None].repeat(3, axis=1)
+    assert l.shape == m.shape == (5, 3)
+
+    mean, var = bw.get_rotation_averaged_beam(
+        l=l,
+        m=m,
+        times=times,
+        freq=FREQS[:1],
+        pixel_stepping=1,
+        time_stepping=1,
+    )
+    assert mean.shape == (5, 3)
+    assert var.shape == (5, 3)
+
+
+@pytest.mark.unit
+def test_rotation_averaged_beam_mismatched_2d_raises(bw, times):
+    """Mismatched 2D l/m shapes must raise ValueError."""
+    l = np.zeros((4, 3))
+    m = np.zeros((4, 4))
+    with pytest.raises(ValueError):
+        bw.get_rotation_averaged_beam(
+            l=l,
+            m=m,
+            times=times,
+            freq=FREQS[:1],
+            pixel_stepping=1,
+            time_stepping=1,
+        )
