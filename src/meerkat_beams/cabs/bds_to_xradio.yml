@@ -2,7 +2,7 @@ cabs:
   bds_to_xradio:
     flavour: python
     command: meerkat_beams.core.bds_to_xradio.bds_to_xradio
-    name: bds-to-xradio
+    name: bds_to_xradio
     info:
       Renders a beam dataset (BDS) to an xradio-compatible zarr image
     image: ghcr.io/landmanbester/meerkat-beams:dev001

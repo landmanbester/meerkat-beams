@@ -2,7 +2,7 @@ cabs:
   mdv_beams_to_bds:
     flavour: python
     command: meerkat_beams.core.mdv_beams_to_bds.mdv_beams_to_bds
-    name: mdv-beams-to-bds
+    name: mdv_beams_to_bds
     info:
       Converts MdV-format primary beams to a beam dataset (BDS)
     image: ghcr.io/landmanbester/meerkat-beams:dev001

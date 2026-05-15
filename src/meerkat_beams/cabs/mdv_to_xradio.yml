@@ -2,7 +2,7 @@ cabs:
   mdv_to_xradio:
     flavour: python
     command: meerkat_beams.core.mdv_to_xradio.mdv_to_xradio
-    name: mdv-to-xradio
+    name: mdv_to_xradio
     info:
       Converts raw MdV beam npz to an xradio-compatible zarr image
     image: ghcr.io/landmanbester/meerkat-beams:dev001

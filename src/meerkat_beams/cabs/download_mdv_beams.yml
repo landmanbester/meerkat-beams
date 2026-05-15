@@ -2,7 +2,7 @@ cabs:
   download_mdv_beams:
     flavour: python
     command: meerkat_beams.core.download_mdv_beams.download_mdv_beams
-    name: download-mdv-beams
+    name: download_mdv_beams
     info:
       Downloads MdV-format primary beams from SARAO archive
     image: ghcr.io/landmanbester/meerkat-beams:dev001
