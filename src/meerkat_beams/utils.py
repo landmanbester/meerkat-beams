@@ -223,9 +223,12 @@ class BeamWizard(object):
                 f"fall outside the BDS frequency range [{fmin * 1e-6:.3f}, {fmax * 1e-6:.3f}] MHz"
             )
         freq = self.freq_to_index(freq)
-        fx = np.meshgrid(freq, xpyp[0], indexing="ij")  # mesh freq,x
-        fy = np.meshgrid(freq, xpyp[1], indexing="ij")  # mesh freq,y
-        coords = np.vstack([fy] + [fx[1:]])  # mesh freq,yx
+        nfreq = len(freq)
+        n_xy = xpyp.shape[1]
+        freq_grid = np.broadcast_to(freq[:, None], (nfreq, n_xy))
+        x_grid = np.broadcast_to(xpyp[0], (nfreq, n_xy))
+        y_grid = np.broadcast_to(xpyp[1], (nfreq, n_xy))
+        coords = np.array([freq_grid, y_grid, x_grid])
         # prefilter=False because _get_prefilter already applied spline_filter;
         # mode="constant", cval=0.0 makes the off-cube extrapolation policy explicit.
         return map_coordinates(
