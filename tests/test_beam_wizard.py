@@ -545,3 +545,25 @@ def test_rotation_averaged_beam_mismatched_2d_raises(bw, times):
             pixel_stepping=1,
             time_stepping=1,
         )
+
+
+@pytest.mark.unit
+def test_interpolate_beam_jones_var_and_offdiagonal_stokes(bw):
+    """Confirm i/j label-to-index lookup works for jones (0,1) and stokes (Q,I)."""
+    xpyp = np.array([[I0, I0 + 1], [I0, I0]])
+
+    # Jones var: (0, 1) is the off-diagonal element. Our synthetic Jones is
+    # diag(G, G) so the off-diagonal is identically zero.
+    jones_offdiag = bw.interpolate_beam(xpyp, freq=FREQS[:1], var="jones", i=0, j=1)
+    assert jones_offdiag.shape == (1, 2)
+    np.testing.assert_allclose(jones_offdiag, 0.0, atol=1e-6)
+
+    # Stokes var: (Q, I) is an off-diagonal Mueller element, also zero in our
+    # synthetic dataset.
+    stokes_qi = bw.interpolate_beam(xpyp, freq=FREQS[:1], var="nstokes", i="Q", j="I")
+    assert stokes_qi.shape == (1, 2)
+    np.testing.assert_allclose(stokes_qi, 0.0, atol=1e-6)
+
+    # On-axis diagonal Stokes Q is still 1.0 (synthetic Mueller is identity).
+    stokes_qq = bw.interpolate_beam(xpyp[:, :1], freq=FREQS[:1], var="nstokes", i="Q", j="Q")
+    np.testing.assert_allclose(stokes_qq, 1.0, atol=1e-5)
