@@ -316,6 +316,42 @@ def test_fits_branch_sets_times_none_raises_runtimeerror(bw):
         bw.get_source_coordinates(bw.centre)
 
 
+@pytest.mark.unit
+def test_enrich_bds_xradio_writes_xradio_schema(bw, times, tmp_path):
+    """enrich_bds_xradio must convert l/m to radians, set pol labels, and add direction attrs."""
+    from meerkat_beams.utils import enrich_bds_xradio
+
+    out = tmp_path / "enriched.zarr"
+    l_deg = np.array([-DELTA, 0.0, DELTA])
+    m_deg = np.array([-DELTA, 0.0, DELTA])
+    bw.get_time_freq_beam(
+        filename=str(out),
+        var_name="SKY",
+        dim_names=("time", "frequency", "polarization", "l", "m"),
+        l=l_deg,
+        m=m_deg,
+        times=times,
+        freq=FREQS[:2],
+        pixel_stepping=1,
+        time_stepping=1,
+        ij_list=[("I", "I")],
+        var="nstokes",
+        verbose=0,
+    )
+
+    enrich_bds_xradio(str(out), bw, "SKY", ["I"])
+
+    ds = xarray.open_zarr(str(out))
+    np.testing.assert_allclose(ds.coords["l"].values, np.deg2rad(l_deg), atol=1e-12)
+    np.testing.assert_allclose(ds.coords["m"].values, np.deg2rad(m_deg), atol=1e-12)
+    assert list(ds.coords["polarization"].values) == ["I"]
+
+    direction = ds.attrs.get("direction")
+    assert isinstance(direction, dict)
+    assert direction.get("projection") == "SIN"
+    assert "reference" in direction
+
+
 @pytest.mark.integration
 def test_beam_wizard_band_l_end_to_end(tmp_path):
     """End-to-end: BeamWizard(band='L', ...) opens a real cached BDS.
