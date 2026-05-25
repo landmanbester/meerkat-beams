@@ -9,6 +9,7 @@ import astropy.units as u
 import numpy as np
 import pytest
 import xarray
+from astropy.coordinates import SkyCoord
 from astropy.time import Time
 from scipy.ndimage import map_coordinates, spline_filter
 
@@ -328,10 +329,57 @@ def test_beam_wizard_rejects_both_bds_and_band(tmp_path):
         BeamWizard(bds_name="some.bds.zarr", image_name=str(tmp_path / "x.fits"), band="U")
 
 
+@pytest.fixture
+def no_image_paths(tmp_path):
+    """Synthetic BDS + FITS on disk; returns (bds_path, fits_path) as strings."""
+    bds = tmp_path / "synthetic.bds.zarr"
+    img = tmp_path / "synthetic.fits"
+    build_synthetic_bds(bds)
+    build_synthetic_image(img)
+    return str(bds), str(img)
+
+
 @pytest.mark.unit
-def test_beam_wizard_requires_image_name():
-    with pytest.raises(ValueError, match="image_name is required"):
-        BeamWizard(bds_name="some.bds.zarr")
+def test_construct_without_image(no_image_paths):
+    """A BDS-only wizard constructs and supports BDS-only interpolation."""
+    bds, _ = no_image_paths
+    bw = BeamWizard(bds_name=bds)
+    xpyp = np.array([[float(bw.bds.attrs["x0"])], [float(bw.bds.attrs["y0"])]])
+    vals = bw.interpolate_beam(xpyp, FREQS, var="nstokes", i="I", j="I")
+    np.testing.assert_allclose(vals[:, 0], 1.0, atol=1e-5)
+
+
+@pytest.mark.unit
+def test_no_image_attrs_raise(no_image_paths):
+    """Image-derived attrs raise a clear RuntimeError; times is None."""
+    bds, _ = no_image_paths
+    bw = BeamWizard(bds_name=bds)
+    for attr in ("centre", "wcs", "l_grid", "m_grid"):
+        with pytest.raises(RuntimeError, match="without an image"):
+            getattr(bw, attr)
+    assert bw.times is None
+
+
+@pytest.mark.unit
+def test_no_image_get_source_coordinates_raises(no_image_paths, times):
+    """get_source_coordinates needs a centre; without one it raises RuntimeError."""
+    bds, _ = no_image_paths
+    bw = BeamWizard(bds_name=bds)
+    src = SkyCoord(RA0, DEC0, unit="deg", frame="icrs")
+    with pytest.raises(RuntimeError, match="without an image"):
+        bw.get_source_coordinates(src, times=times)
+
+
+@pytest.mark.unit
+def test_attach_image_unblocks_grid_methods(no_image_paths, times):
+    """attach_image populates centre/l_grid/m_grid and unblocks grid-default methods."""
+    bds, img = no_image_paths
+    bw = BeamWizard(bds_name=bds)
+    bw.attach_image(img)
+    assert bw.l_grid is not None and bw.m_grid is not None
+    xpyp, seps, _ = bw.get_source_coordinates(bw.centre, times=times)
+    np.testing.assert_allclose(xpyp[0], bw.bds.attrs["x0"], atol=1e-6)
+    np.testing.assert_allclose(seps.deg, 0.0, atol=1e-6)
 
 
 @pytest.mark.unit

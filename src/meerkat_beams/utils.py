@@ -101,8 +101,6 @@ class BeamWizard(object):
     ):
         if (bds_name is None) == (band is None):
             raise ValueError("exactly one of bds_name or band must be provided")
-        if image_name is None:
-            raise ValueError("image_name is required")
         if band is not None:
             from meerkat_beams import cache
 
@@ -115,44 +113,112 @@ class BeamWizard(object):
         self.index_to_freq = scipy.interpolate.interp1d(np.arange(len(freqs)), freqs)
         self.freq_to_index = scipy.interpolate.interp1d(freqs, np.arange(len(freqs)))
 
+        # location could be made configurable
+        self.default_location = EarthLocation.of_site("MeerKAT")
+        log.info(f"location is MeerKAT ({self.default_location})")
+        self._prefilters = {}
+
+        # Image-derived state; unset until an image is attached or a field
+        # centre is supplied. See attach_image() / set_field_centre().
+        self._wcs = None
+        self._centre = None
+        self._times = None
+        self._l_grid = None
+        self._m_grid = None
+
+        if image_name is not None:
+            self.attach_image(image_name)
+        else:
+            log.warning(
+                "BeamWizard constructed without an image: operating in BDS-only mode. "
+                "Methods needing a field centre, time axis, or default l/m grid "
+                "(get_source_coordinates, get_rotation_averaged_beam, get_time_freq_beam) "
+                "will raise until you call attach_image(image_name) or set_field_centre(centre=...)."
+            )
+
+    @property
+    def centre(self):
+        if self._centre is None:
+            raise RuntimeError(
+                "BeamWizard.centre is unavailable: this wizard was constructed without an image. "
+                "Call attach_image(image_name) or set_field_centre(centre=...) first."
+            )
+        return self._centre
+
+    @property
+    def wcs(self):
+        if self._wcs is None:
+            raise RuntimeError(
+                "BeamWizard.wcs is unavailable: this wizard was constructed without an image. "
+                "Call attach_image(image_name) first."
+            )
+        return self._wcs
+
+    @property
+    def l_grid(self):
+        if self._l_grid is None:
+            raise RuntimeError(
+                "BeamWizard.l_grid is unavailable: this wizard was constructed without an image. "
+                "Call attach_image(image_name) first, or pass l/m explicitly."
+            )
+        return self._l_grid
+
+    @property
+    def m_grid(self):
+        if self._m_grid is None:
+            raise RuntimeError(
+                "BeamWizard.m_grid is unavailable: this wizard was constructed without an image. "
+                "Call attach_image(image_name) first, or pass l/m explicitly."
+            )
+        return self._m_grid
+
+    @property
+    def times(self):
+        # None is a valid state (FITS images and BDS-only wizards have no time
+        # axis). Callers handle None by requiring an explicit times= argument.
+        return self._times
+
+    def attach_image(self, image_name: str) -> None:
+        """Attach an image (FITS or xradio zarr), populating the field centre,
+        time axis, and default l/m grid from its WCS.
+
+        May be called after construction to upgrade a BDS-only wizard, or to
+        swap the image on an existing wizard.
+        """
         if image_name.endswith(".fits"):
             log.info(f"obtaining WCS from FITS image {image_name}")
             fitshdr = fits.open(image_name)[0].header
-            self.wcs = WCS(fitshdr)
-            self.times = None
+            wcs = WCS(fitshdr)
+            self._times = None
         elif (Path(image_name) / ".zgroup").exists():
             log.info(f"obtaining WCS from dataset {image_name}")
             ds = xarray.open_zarr(image_name)
             fitshdr = fits.Header(dict(ds.attrs["fits_header"]))
-            self.wcs = WCS(fitshdr)
-            self.times = Time(ds.coords["TIME"].values / (24 * 3600), format="mjd")
-            log.info(f"time axis is {self.times[0].iso} to {self.times[-1].iso}")
+            wcs = WCS(fitshdr)
+            self._times = Time(ds.coords["TIME"].values / (24 * 3600), format="mjd")
+            log.info(f"time axis is {self._times[0].iso} to {self._times[-1].iso}")
         else:
             raise RuntimeError(f"unable to determine type of image {image_name}")
         # drop WCS axes >2
-        while len(self.wcs.axis_type_names) > 2:
-            log.debug(f"dropping WCS axis {self.wcs.axis_type_names[-1]}")
-            self.wcs = self.wcs.dropaxis(len(self.wcs.axis_type_names) - 1)
-        self.centre = self.wcs.pixel_to_world(fitshdr["CRPIX1"] - 1, fitshdr["CRPIX2"] - 1)
-        log.info(f"image centre is at {self.centre}")
+        while len(wcs.axis_type_names) > 2:
+            log.debug(f"dropping WCS axis {wcs.axis_type_names[-1]}")
+            wcs = wcs.dropaxis(len(wcs.axis_type_names) - 1)
+        self._wcs = wcs
+        self._centre = wcs.pixel_to_world(fitshdr["CRPIX1"] - 1, fitshdr["CRPIX2"] - 1)
+        log.info(f"image centre is at {self._centre}")
 
         # Construct default l/m grid from image pixels
         nx, ny = fitshdr["NAXIS1"], fitshdr["NAXIS2"]
         crpix1, crpix2 = fitshdr["CRPIX1"], fitshdr["CRPIX2"]
         cdelt1, cdelt2 = fitshdr["CDELT1"], fitshdr["CDELT2"]
-        # l/m are offsets from center in degrees (l increases to the east, m to the north)
-        self.l_grid: np.ndarray = (np.arange(nx) - (crpix1 - 1)) * cdelt1
-        self.m_grid: np.ndarray = (np.arange(ny) - (crpix2 - 1)) * cdelt2
+        # l/m are offsets from center in degrees (l increases east, m north)
+        self._l_grid = (np.arange(nx) - (crpix1 - 1)) * cdelt1
+        self._m_grid = (np.arange(ny) - (crpix2 - 1)) * cdelt2
         log.info(
             f"default l/m grid: {nx}x{ny} pixels, "
-            f"l=[{self.l_grid[0]:.4f}, {self.l_grid[-1]:.4f}], "
-            f"m=[{self.m_grid[0]:.4f}, {self.m_grid[-1]:.4f}] deg"
+            f"l=[{self._l_grid[0]:.4f}, {self._l_grid[-1]:.4f}], "
+            f"m=[{self._m_grid[0]:.4f}, {self._m_grid[-1]:.4f}] deg"
         )
-
-        # location could be made configurable
-        self.default_location = EarthLocation.of_site("MeerKAT")
-        log.info(f"location is MeerKAT ({self.default_location})")
-        self._prefilters = {}
 
     def _get_prefilter(self, var: str, i: Union[str, int], j: Union[str, int], order: int = 3, verbose=1):
         # order is included in the cache key: spline_filter coefficients depend on
