@@ -187,7 +187,8 @@ class BeamWizard(object):
         """
         if image_name.endswith(".fits"):
             log.info(f"obtaining WCS from FITS image {image_name}")
-            fitshdr = fits.open(image_name)[0].header
+            with fits.open(image_name) as hdul:
+                fitshdr = hdul[0].header
             wcs = WCS(fitshdr)
             self._times = None
         elif (Path(image_name) / ".zgroup").exists():
