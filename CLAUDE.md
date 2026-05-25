@@ -42,7 +42,9 @@ Two generators, inverse of each other:
 ## Key abstractions in `utils.py`
 
 ### `BeamWizard`
-Attaches to a BDS (zarr) + an image (FITS or xradio zarr) and provides beam interpolation. The image supplies WCS and (optionally) a time axis.
+Attaches to a BDS (zarr) and, optionally, an image (FITS or xradio zarr) and provides beam interpolation. The image supplies WCS and (optionally) a time axis.
+
+`image_name` is optional. Without it the wizard is BDS-only: `interpolate_beam` works, but `centre`/`wcs`/`l_grid`/`m_grid` raise `RuntimeError` and `times` is `None`. Use `attach_image(image_name)` to populate image-derived state after construction, or `set_field_centre(centre, times=None)` to supply just a pointing centre (the image-free path used by `scripts/test_beam_orientation.py`).
 
 - `get_source_coordinates(srcpos, times, loc)` → (xpyp, seps, angles). Transforms sky → AltAz per time, computes sep/position-angle from field centre, converts to BDS pixel coords via `dx`/`dy`/`x0`/`y0` attrs.
 - `interpolate_beam(xpyp, freq, var, i, j)` → cubic-B-spline interpolation of the beam at (freq, y, x). Uses `_get_prefilter` to cache `spline_filter(var[i,j])`; the `map_coordinates` call passes `prefilter=False` because the input is already prefiltered. **Do not flip this back to `True`** — it silently double-filters.

@@ -80,7 +80,15 @@ class PowerBeam(object):
 
 
 class BeamWizard(object):
-    """Attaches to a BDS and provides various convenienece functions"""
+    """Attaches to a BDS and provides beam-interpolation conveniences.
+
+    ``image_name`` is optional. Without an image the wizard runs in BDS-only
+    mode: ``interpolate_beam`` and the prefilter/frequency helpers work, but
+    ``centre``/``wcs``/``l_grid``/``m_grid`` raise ``RuntimeError`` and
+    ``times`` is ``None``. Call ``attach_image(image_name)`` to populate all
+    image-derived state from a FITS/xradio image, or ``set_field_centre(centre)``
+    to supply just a pointing centre (e.g. for beam gain at a fixed source).
+    """
 
     Eband: np.ndarray  # per-band power beam
     Emean: np.ndarray  # mean MFS beam
