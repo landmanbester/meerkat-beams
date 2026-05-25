@@ -119,6 +119,8 @@ def main() -> None:
     loc = EarthLocation.from_geodetic(lon=21.4 * np.pi / 180, lat=-30.7 * np.pi / 180, height=1054.0)
 
     bw = BeamWizard(band="L")
+    # Beam pointing centre = original MS phase centre (radians from MSBundle).
+    bw.set_field_centre(SkyCoord(ra_pc, dec_pc, unit="rad", frame="icrs"))
     runs: dict[str, tuple[np.ndarray, np.ndarray]] = {}
 
     for name in args.perturbations:
