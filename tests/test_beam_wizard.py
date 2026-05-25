@@ -371,6 +371,23 @@ def test_no_image_get_source_coordinates_raises(no_image_paths, times):
 
 
 @pytest.mark.unit
+def test_set_field_centre_unblocks_source_coordinates(no_image_paths, times):
+    """After set_field_centre, get_source_coordinates works without an image;
+    the l/m grid stays unavailable."""
+    bds, _ = no_image_paths
+    bw = BeamWizard(bds_name=bds)
+    centre = SkyCoord(RA0, DEC0, unit="deg", frame="icrs")
+    bw.set_field_centre(centre)
+    xpyp, seps, _ = bw.get_source_coordinates(centre, times=times)
+    assert xpyp.shape == (2, len(times))
+    np.testing.assert_allclose(xpyp[0], bw.bds.attrs["x0"], atol=1e-6)
+    np.testing.assert_allclose(xpyp[1], bw.bds.attrs["y0"], atol=1e-6)
+    np.testing.assert_allclose(seps.deg, 0.0, atol=1e-6)
+    with pytest.raises(RuntimeError, match="without an image"):
+        bw.l_grid
+
+
+@pytest.mark.unit
 def test_attach_image_unblocks_grid_methods(no_image_paths, times):
     """attach_image populates centre/l_grid/m_grid and unblocks grid-default methods."""
     bds, img = no_image_paths

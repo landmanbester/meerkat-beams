@@ -221,6 +221,21 @@ class BeamWizard(object):
             f"m=[{self._m_grid[0]:.4f}, {self._m_grid[-1]:.4f}] deg"
         )
 
+    def set_field_centre(self, centre: SkyCoord, times: Optional[Time] = None) -> None:
+        """Set the field (pointing) centre — and optionally the time axis —
+        without attaching an image.
+
+        Use this for workflows that only need beam values at explicit source
+        positions (e.g. beam gain at a calibrator). ``centre`` is an astropy
+        ``SkyCoord``; ``times`` an astropy ``Time``. The WCS and default l/m
+        grid stay unavailable, so methods that fall back to the image grid
+        still require explicit l/m.
+        """
+        self._centre = centre
+        if times is not None:
+            self._times = times
+        log.info(f"field centre set to {centre}")
+
     def _get_prefilter(self, var: str, i: Union[str, int], j: Union[str, int], order: int = 3, verbose=1):
         # order is included in the cache key: spline_filter coefficients depend on
         # the spline order, so callers requesting different orders must not collide.
