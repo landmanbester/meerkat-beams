@@ -13,6 +13,13 @@ from pathlib import Path
 
 import numpy as np
 
+# FIELD_ID, FIELD_NAME
+# 0    Offset1
+# 1    J1939-6342
+# 2    Offset2
+# 3    Offset3
+# 4    Offset4
+
 
 @dataclass
 class MSBundle:
@@ -34,11 +41,12 @@ def read_ms(path: str | Path) -> MSBundle:
     # Main-table groups by DDID + FIELD_ID + SCAN; we expect exactly one group.
     main = xds_from_ms(
         path,
-        columns=("DATA", "WEIGHT_SPECTRUM", "FLAG", "UVW", "TIME", "ANTENNA1", "ANTENNA2"),
-        group_cols=("DATA_DESC_ID", "FIELD_ID", "SCAN_NUMBER"),
+        columns=("CORRECTED_DATA", "WEIGHT_SPECTRUM", "FLAG", "UVW", "TIME", "ANTENNA1", "ANTENNA2", "FLAG_ROW"),
+        group_cols=("DATA_DESC_ID", "FIELD_ID"),
+        taql_where=("FIELD_ID == 0"),
     )
-    if len(main) != 1:
-        raise RuntimeError(f"{path}: expected one DDID/FIELD/SCAN group, got {len(main)}")
+    # make sure only a single DDID is present
+    assert len(main) == 1, f"expected exactly one group in main table, got {len(main)}"
     xds = main[0].compute()
 
     # Spectral window for the freq axis.
@@ -49,10 +57,13 @@ def read_ms(path: str | Path) -> MSBundle:
     freq = np.asarray(spw.CHAN_FREQ.values[spw_idx], dtype=float)
 
     # Field table for the phase centre.
-    field = xds_from_table(f"{path}::FIELD")[0].compute()
     field_id = int(xds.attrs.get("FIELD_ID", 0))
-    phase_dir = np.asarray(field.PHASE_DIR.values[field_id])  # (1, 2) usually
-    ra_rad, dec_rad = float(phase_dir.flat[0]), float(phase_dir.flat[1])
+    field = xds_from_table(
+        f"{path}::FIELD",
+        taql_where=(f"SOURCE_ID == {field_id}"),
+    )[0].compute()
+    phase_dir = field.PHASE_DIR.values.squeeze()
+    ra_rad, dec_rad = phase_dir[0], phase_dir[1]
 
     # Reshape (row, chan, corr) -> (Nb, Nt, Nf, Ncorr).
     ant1 = np.asarray(xds.ANTENNA1.values)
@@ -73,9 +84,16 @@ def read_ms(path: str | Path) -> MSBundle:
         out[inv, time_idx] = col
         return out
 
-    vis = _reshape(np.asarray(xds.DATA.values), 0.0 + 0.0j)
+    # get flag and apply FLAG_ROW + autocorrs
+    flag = xds.FLAG.values
+    flag_row = xds.FLAG_ROW.values | (ant1 == ant2)
+
+    print(flag.sum() / flag.size, flag_row.sum() / flag_row.size)
+    flag = flag | flag_row[:, None, None]
+
+    vis = _reshape(np.asarray(xds.CORRECTED_DATA.values), 0.0 + 0.0j)
     ws = _reshape(np.asarray(xds.WEIGHT_SPECTRUM.values), 0.0)
-    flag = _reshape(np.asarray(xds.FLAG.values), True)
+    flag = _reshape(np.asarray(flag), True)
 
     uvw = np.zeros((Nb, Nt, 3), dtype=float)
     uvw_row = np.asarray(xds.UVW.values)

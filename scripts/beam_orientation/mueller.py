@@ -31,7 +31,7 @@ def linear_to_stokes_matrix() -> np.ndarray:
 
 def stokes_to_linear_matrix() -> np.ndarray:
     """Inverse of :func:`linear_to_stokes_matrix`."""
-    return np.linalg.inv(linear_to_stokes_matrix())
+    return linear_to_stokes_matrix().conj().T
 
 
 def solve_per_bin(M: np.ndarray, V: np.ndarray) -> tuple[np.ndarray, np.ndarray]:  # noqa: N803

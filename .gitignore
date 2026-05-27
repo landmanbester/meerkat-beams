@@ -43,6 +43,7 @@ htmlcov/
 .tox/
 .nox/
 tests/data
+scratch
 
 # OS
 .DS_Store
