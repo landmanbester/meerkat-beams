@@ -91,12 +91,13 @@ def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
     mueller = mueller_func(jjt)
     muellernorm = mueller_func(jnorm)
     # convert to Stokes and transpose back to FREQ,Y,X,STOKES_i,STOKES_j
-    stokes = stokes_func(mueller).transpose((3, 4, 0, 1, 2)).astype(np.float32)
-    stokesnorm = stokes_func(muellernorm).transpose((3, 4, 0, 1, 2)).astype(np.float32)
-    # transpose Mueller and Kones
+    stokes = stokes_func(mueller).transpose((3, 4, 0, 1, 2)).real.astype(np.float32)
+    stokesnorm = stokes_func(muellernorm).transpose((3, 4, 0, 1, 2)).real.astype(np.float32)
+    # transpose Mueller and Jones back to (i, j, FREQ, Y, X)
     mueller = mueller.transpose((3, 4, 0, 1, 2)).astype(np.complex64)
     muellernorm = muellernorm.transpose((3, 4, 0, 1, 2)).astype(np.complex64)
-    jj = jj.transpose((3, 4, 0, 1, 2)).astype(np.complex64)
+    # jj is already ROW,COL,FREQ,Y,X from the reshape above; jnorm is FREQ,Y,X,ROW,COL.
+    jj = jj.astype(np.complex64)
     jnorm = jnorm.transpose((3, 4, 0, 1, 2)).astype(np.complex64)
 
     LOGGER.info(f"saving output dataset {bds}")

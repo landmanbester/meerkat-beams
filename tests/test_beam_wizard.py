@@ -5,6 +5,8 @@ Hermetic: builds a synthetic BDS zarr + a minimal FITS image in tmp_path.
 No external data, no env vars required.
 """
 
+import warnings
+
 import astropy.units as u
 import numpy as np
 import pytest
@@ -63,6 +65,24 @@ def test_prefilter_cached_dtype_is_float32(bw):
     """_get_prefilter must mirror input dtype (float32), not silently widen to float64."""
     arr = bw._get_prefilter("nstokes", "I", "I")
     assert arr.dtype == np.float32, f"prefilter widened to {arr.dtype}"
+
+
+@pytest.mark.unit
+def test_prefilter_complex_var_is_complex64_without_warning(bw):
+    """A complex BDS var (nmueller) must prefilter to complex64 directly.
+
+    The output dtype must be derived from the variable, not hardcoded float32
+    and left to scipy's implicit complex promotion (which emits a UserWarning
+    and is version-dependent).
+    """
+    bw._prefilters.clear()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # any warning (e.g. scipy promotion) fails the test
+        arr = bw._get_prefilter("nmueller", "U", "V")
+    assert arr.dtype == np.complex64, f"complex prefilter has dtype {arr.dtype}"
+    # Real vars must still prefilter to float32 (memory-saving contract).
+    real_arr = bw._get_prefilter("nstokes", "I", "I")
+    assert real_arr.dtype == np.float32
 
 
 @pytest.mark.unit
@@ -130,6 +150,21 @@ def test_out_of_range_freq_raises(bw):
         bw.interpolate_beam(xpyp, bad_freq, var="nstokes", i="I", j="I")
 
 
+@pytest.mark.unit
+def test_interpolate_beam_complex_var_preserves_imaginary(bw):
+    """interpolate_beam on a complex var (nmueller) returns complex values with
+    the imaginary part intact, matching the raw BDS at integer pixels."""
+    xi = np.array([I0 + 1, I0 + 3], dtype=float)
+    yi = np.array([I0, I0 - 2], dtype=float)
+    xpyp = np.array([xi, yi])
+    vals = bw.interpolate_beam(xpyp, FREQS[:1], var="nmueller", i="U", j="V")
+    assert np.iscomplexobj(vals), f"complex var returned real dtype {vals.dtype}"
+    raw = bw.bds["nmueller"].sel(stokes_i="U", stokes_j="V").values
+    expected = raw[0, yi.astype(int), xi.astype(int)]
+    np.testing.assert_allclose(vals[0], expected, atol=1e-5)
+    assert np.any(np.abs(vals.imag) > 1e-6), "imaginary part was lost"
+
+
 # ---------------------------------------------------------------------------
 # get_source_coordinates, get_time_variable_beamgain,
 # get_rotation_averaged_beam, get_time_freq_beam
@@ -176,6 +211,34 @@ def test_rotation_averaged_beam_on_axis(bw, times):
     assert var.shape == (len(FREQS), 1, 1)
     np.testing.assert_allclose(mean, 1.0, atol=1e-5)
     np.testing.assert_allclose(var, 0.0, atol=1e-10)
+
+
+@pytest.mark.unit
+def test_rotation_averaged_beam_complex_var(bw, times):
+    """Rotation-averaging a complex var (nmueller) must return a complex mean
+    and a real, non-negative variance (E[|b|^2] - |E[b]|^2), not crash on a
+    float accumulator."""
+    mean, var = bw.get_rotation_averaged_beam(
+        l=np.array([2 * DELTA]),
+        m=np.array([0.0]),
+        times=times,
+        freq=FREQS,
+        time_stepping=1,
+        pixel_stepping=1,
+        var="nmueller",
+        i="U",
+        j="V",
+        verbose=0,
+    )
+    assert mean.shape == (len(FREQS), 1, 1)
+    assert var.shape == (len(FREQS), 1, 1)
+    assert np.iscomplexobj(mean), "complex var must yield a complex mean"
+    assert not np.iscomplexobj(var), "variance of a complex beam must be real"
+    assert np.all(var >= -1e-9), "variance must be non-negative"
+    # The synthetic (U,V) element is purely imaginary, so the rotation average
+    # carries a nonzero imaginary part and ~zero real part.
+    assert np.any(np.abs(mean.imag) > 1e-9), "imaginary part lost in the average"
+    np.testing.assert_allclose(mean.real, 0.0, atol=1e-6)
 
 
 @pytest.mark.unit
@@ -262,6 +325,64 @@ def test_time_freq_beam_open_default_keeps_real_zeros(bw, times, tmp_path):
     assert not np.isnan(ds.coords["m"].values).any(), "m coord 0.0 masked as NaN"
     np.testing.assert_allclose(ds.coords["l"].values, l_grid)
     np.testing.assert_allclose(ds.coords["m"].values, m_grid)
+
+
+@pytest.mark.unit
+def test_time_freq_beam_complex_var_preserves_imaginary(bw, times, tmp_path):
+    """Rendering a complex var (nmueller) must write a complex64 store with the
+    imaginary part intact, not silently cast to float32.
+
+    Also exercises the Jones/coherency rendering path that previously dropped
+    the imaginary part via an unconditional .astype(float32).
+    """
+    out = tmp_path / "tfbeam_complex.zarr"
+    # Off-axis l/m so the synthetic cross-hand term (imaginary, zero on-axis) is
+    # nonzero somewhere on the grid.
+    l_grid = np.array([-2 * DELTA, 0.0, 2 * DELTA])
+    m_grid = np.array([-2 * DELTA, 0.0, 2 * DELTA])
+    bw.get_time_freq_beam(
+        filename=str(out),
+        var_name="BEAM",
+        dim_names=("time", "frequency", "polarization", "l", "m"),
+        l=l_grid,
+        m=m_grid,
+        times=times,
+        freq=FREQS[:2],
+        pixel_stepping=1,
+        time_stepping=1,
+        ij_list=[("U", "V")],
+        var="nmueller",
+        verbose=0,
+    )
+    ds = xarray.open_zarr(str(out))
+    assert np.iscomplexobj(ds["BEAM"].values), f"rendered store dtype {ds['BEAM'].dtype} is not complex"
+    assert np.any(np.abs(ds["BEAM"].values.imag) > 1e-6), "imaginary part dropped during rendering"
+
+
+@pytest.mark.unit
+def test_time_freq_beam_complex_var_upsamples(bw, times, tmp_path):
+    """The pixel_stepping>1 upsample branch must also keep complex dtype + imaginary."""
+    out = tmp_path / "tfbeam_complex_px.zarr"
+    n = 5
+    grid = np.linspace(-2 * DELTA, 2 * DELTA, n)
+    bw.get_time_freq_beam(
+        filename=str(out),
+        var_name="BEAM",
+        dim_names=("time", "frequency", "polarization", "l", "m"),
+        l=grid,
+        m=grid,
+        times=times,
+        freq=FREQS[:2],
+        pixel_stepping=2,
+        time_stepping=1,
+        ij_list=[("U", "V")],
+        var="nmueller",
+        verbose=0,
+    )
+    ds = xarray.open_zarr(str(out))
+    assert ds["BEAM"].shape == (len(times), 2, 1, n, n)
+    assert np.iscomplexobj(ds["BEAM"].values)
+    assert np.any(np.abs(ds["BEAM"].values.imag) > 1e-6), "imaginary part lost during upsampling"
 
 
 @pytest.mark.unit

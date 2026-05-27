@@ -43,6 +43,22 @@ def build_synthetic_bds(path: Path) -> Path:
         nstokes_arr[s, s] = gauss
     stokes_arr = nstokes_arr.copy()
 
+    # Complex coherency Mueller (mueller/nmueller). Synthetic, not physically
+    # derived from `jones`: it exists purely to exercise the complex
+    # interpolation paths. Identity on-axis (diagonal=gauss, off-diagonal=0 at
+    # centre) with a purely-imaginary cross-hand (U<->V) term that grows with an
+    # x-ramp vanishing at the centre pixel, so tests can pin a known nonzero
+    # imaginary component off-axis. The (V,U) element is the conjugate (-cross).
+    _, x_idx = np.indices((N_XY, N_XY), dtype=np.float64)
+    x_ramp = np.broadcast_to(((x_idx - I0) / I0).astype(np.float32), gauss.shape).copy()
+    cross = (0.5j * x_ramp * gauss).astype(np.complex64)  # 0 at centre, imaginary
+    nmueller_arr = np.zeros((4, 4, len(FREQS), N_XY, N_XY), dtype=np.complex64)
+    for s in range(4):
+        nmueller_arr[s, s] = gauss
+    nmueller_arr[2, 3] = cross  # (U, V)
+    nmueller_arr[3, 2] = -cross  # (V, U) = conj(cross), cross is imaginary
+    mueller_arr = nmueller_arr.copy()
+
     fits_header = {
         "SIMPLE": "T",
         "NAXIS1": N_XY,
@@ -74,6 +90,8 @@ def build_synthetic_bds(path: Path) -> Path:
             "njones": xarray.DataArray(njones, dims=("receptor_i", "receptor_j", "FREQ", "Y", "X"), coords=jcoords),
             "stokes": xarray.DataArray(stokes_arr, dims=("stokes_i", "stokes_j", "FREQ", "Y", "X"), coords=scoords),
             "nstokes": xarray.DataArray(nstokes_arr, dims=("stokes_i", "stokes_j", "FREQ", "Y", "X"), coords=scoords),
+            "mueller": xarray.DataArray(mueller_arr, dims=("stokes_i", "stokes_j", "FREQ", "Y", "X"), coords=scoords),
+            "nmueller": xarray.DataArray(nmueller_arr, dims=("stokes_i", "stokes_j", "FREQ", "Y", "X"), coords=scoords),
         }
     )
     xds.attrs["fits_header"] = fits_header

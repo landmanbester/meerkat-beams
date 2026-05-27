@@ -254,7 +254,12 @@ class BeamWizard(object):
             da = self.bds[var]
             # Use the variable's actual first two dims (receptor_i/j or stokes_i/j)
             sel = {da.dims[0]: i, da.dims[1]: j}
-            self._prefilters[key] = spline_filter(da.sel(**sel), order=order, output=np.float32)
+            # Mirror the variable's dtype: float32 for real beams (stokes/nstokes),
+            # complex64 for complex ones (jones/njones/mueller/nmueller). Passing a
+            # real output dtype for complex input makes scipy implicitly promote it
+            # (UserWarning, version-dependent), so pick the dtype explicitly here.
+            out_dtype = np.complex64 if np.iscomplexobj(da) else np.float32
+            self._prefilters[key] = spline_filter(da.sel(**sel), order=order, output=out_dtype)
         return self._prefilters[key]
 
     def get_source_coordinates(
@@ -550,10 +555,14 @@ class BeamWizard(object):
         # Precompute the spline filter to ensure it's cached
         self._get_prefilter(var, i, j)
 
-        # Allocate output arrays
+        # Allocate output arrays. For complex beams the running sum is complex
+        # so the mean stays complex; the sum of squares accumulates |b|^2 so the
+        # returned variance is real and non-negative. For real beams |b|^2 == b**2,
+        # so behaviour is unchanged.
+        is_complex = np.iscomplexobj(self.bds[var])
         out_shape = (n_pixels,) if spi is not None else (len(freq), n_pixels)
-        beam_sum = np.zeros(out_shape)
-        beam_sum_sq = np.zeros(out_shape)
+        beam_sum = np.zeros(out_shape, dtype=complex if is_complex else float)
+        beam_sum_sq = np.zeros(out_shape)  # |b|^2 is always real
 
         # Process in spatial chunks to limit memory
         for chunk_idx in range(n_chunks):
@@ -566,9 +575,10 @@ class BeamWizard(object):
 
             # Accumulate over time for this chunk
             chunk_sum = np.zeros(
-                (chunk_end - chunk_start,) if spi is not None else (len(freq), chunk_end - chunk_start)
+                (chunk_end - chunk_start,) if spi is not None else (len(freq), chunk_end - chunk_start),
+                dtype=complex if is_complex else float,
             )
-            chunk_sum_sq = np.zeros_like(chunk_sum)
+            chunk_sum_sq = np.zeros_like(chunk_sum, dtype=float)
 
             for t_idx in range(n_times):
                 pa_t = pa[t_idx].rad
@@ -588,7 +598,7 @@ class BeamWizard(object):
                     beam_vals = (beam_vals * norm_weights[:, np.newaxis]).sum(axis=0)
 
                 chunk_sum += beam_vals
-                chunk_sum_sq += beam_vals**2
+                chunk_sum_sq += np.abs(beam_vals) ** 2
 
             # Store chunk results
             if spi is not None:
@@ -598,9 +608,11 @@ class BeamWizard(object):
                 beam_sum[:, chunk_start:chunk_end] = chunk_sum
                 beam_sum_sq[:, chunk_start:chunk_end] = chunk_sum_sq
 
-        # Compute mean and variance over time
+        # Compute mean and variance over time. Variance uses |E[b]|^2 so it is
+        # real and non-negative for complex beams (and identical to mean**2 for
+        # real beams).
         beam_mean = beam_sum / n_times
-        beam_var = beam_sum_sq / n_times - beam_mean**2
+        beam_var = beam_sum_sq / n_times - np.abs(beam_mean) ** 2
 
         # Reshape to coarse grid
         if spi is not None or len(freq) == 1:
@@ -621,8 +633,8 @@ class BeamWizard(object):
                 beam_mean = map_coordinates(beam_mean, coords, order=1, mode="nearest").reshape(full_shape)
                 beam_var = map_coordinates(beam_var, coords, order=1, mode="nearest").reshape(full_shape)
             else:
-                mean_full = np.empty((len(freq),) + full_shape)
-                var_full = np.empty((len(freq),) + full_shape)
+                mean_full = np.empty((len(freq),) + full_shape, dtype=beam_mean.dtype)
+                var_full = np.empty((len(freq),) + full_shape)  # variance is real
                 for f_idx in range(len(freq)):
                     mean_full[f_idx] = map_coordinates(beam_mean[f_idx], coords, order=1, mode="nearest").reshape(
                         full_shape
@@ -716,6 +728,11 @@ class BeamWizard(object):
             loc = self.default_location
         if ij_list is None:
             ij_list = [("I", "I")]
+
+        # Output dtype mirrors the source variable: complex64 for complex beams
+        # (jones/njones/mueller/nmueller), float32 for real ones (stokes/nstokes).
+        # Hardcoding float32 here silently drops the imaginary part of complex beams.
+        out_dtype = np.complex64 if np.iscomplexobj(self.bds[var]) else np.float32
 
         # Resolve parameters from ds or defaults
         if ds is not None:
@@ -843,7 +860,7 @@ class BeamWizard(object):
                 var_name,
                 shape=shape,
                 chunks=chunks,
-                dtype="float32",
+                dtype=out_dtype,
                 fill_value=None,
                 compressor=compressor,
                 filters=filters,
@@ -867,14 +884,14 @@ class BeamWizard(object):
             beam_2d = beam_vals.reshape((n_freq,) + compute_shape)
 
             if upsample_coords is not None:
-                beam_full = np.empty((n_freq,) + full_shape, dtype=np.float32)
+                beam_full = np.empty((n_freq,) + full_shape, dtype=out_dtype)
                 for f_idx in range(n_freq):
                     beam_full[f_idx] = map_coordinates(
                         beam_2d[f_idx], upsample_coords, order=1, mode="nearest"
                     ).reshape(full_shape)
                 return beam_full
 
-            return beam_2d.astype(np.float32)
+            return beam_2d.astype(out_dtype)
 
         # Sequential computation across (time, ij); write to zarr after each plane
         done_count = 0
