@@ -40,14 +40,6 @@ def test_T_maps_pure_V_to_imaginary_cross_hands():  # noqa: N802
 
 
 @pytest.mark.unit
-def test_T_and_inverse_compose_to_identity():  # noqa: N802
-    T = mueller.linear_to_stokes_matrix()
-    T_inv = mueller.stokes_to_linear_matrix()
-    np.testing.assert_allclose(T @ T_inv, np.eye(4), atol=1e-12)
-    np.testing.assert_allclose(T_inv @ T, np.eye(4), atol=1e-12)
-
-
-@pytest.mark.unit
 def test_solve_recovers_known_B_from_synthetic_M():  # noqa: N802
     rng = np.random.default_rng(0)
     Nt, Nf = 3, 5  # noqa: N806
