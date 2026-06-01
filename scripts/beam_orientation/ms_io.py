@@ -110,12 +110,13 @@ class MSBundle:
     uvw: np.ndarray  # (Nb, Nt, 3) float64, metres
     time: np.ndarray  # (Nt,) MJD seconds
     freq: np.ndarray  # (Nf,) Hz
-    phase_centre: tuple[float, float]  # (ra_rad, dec_rad)
+    phase_centre: tuple[float, float]  # (ra_rad, dec_rad), MS phase centre
+    pointing_centre: tuple[float, float]  # (ra_rad, dec_rad), original dish pointing
     ant1: np.ndarray  # (Nb,) int
     ant2: np.ndarray  # (Nb,) int
 
 
-def read_ms(path: str | Path) -> MSBundle:
+def read_ms(path: str | Path, field_id: int = 0) -> MSBundle:
     from daskms import xds_from_ms, xds_from_table
 
     path = str(path)
@@ -124,7 +125,7 @@ def read_ms(path: str | Path) -> MSBundle:
         path,
         columns=("CORRECTED_DATA", "WEIGHT_SPECTRUM", "FLAG", "UVW", "TIME", "ANTENNA1", "ANTENNA2", "FLAG_ROW"),
         group_cols=("DATA_DESC_ID", "FIELD_ID"),
-        taql_where=("FIELD_ID == 1"),
+        taql_where=(f"FIELD_ID == {field_id}"),
     )
     # make sure only a single DDID is present
     assert len(main) == 1, f"expected exactly one group in main table, got {len(main)}"
@@ -138,7 +139,6 @@ def read_ms(path: str | Path) -> MSBundle:
     freq = np.asarray(spw.CHAN_FREQ.values[spw_idx], dtype=float)
 
     # Field table for the phase centre.
-    field_id = int(xds.attrs.get("FIELD_ID", 0))
     field = xds_from_table(
         f"{path}::FIELD",
         taql_where=(f"SOURCE_ID == {field_id}"),
@@ -152,6 +152,7 @@ def read_ms(path: str | Path) -> MSBundle:
     time_row = np.asarray(xds.TIME.values)
 
     times = np.unique(time_row)
+    pointing_centre = _resolve_pointing_centre(path, field_id, times)
     Nt = times.size
     pairs, inv = np.unique(np.stack([ant1, ant2], axis=1), axis=0, return_inverse=True)
     Nb = pairs.shape[0]
@@ -189,6 +190,7 @@ def read_ms(path: str | Path) -> MSBundle:
         time=times,
         freq=freq,
         phase_centre=(ra_rad, dec_rad),
+        pointing_centre=pointing_centre,
         ant1=pairs[:, 0],
         ant2=pairs[:, 1],
     )
