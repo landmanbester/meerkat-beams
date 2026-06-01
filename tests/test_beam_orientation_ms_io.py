@@ -47,3 +47,15 @@ def test_pointing_from_direction_accepts_2d_direction():
     ra, dec = ms_io._pointing_from_direction(ptime, direction, 0.0, 10.0)
     assert ra == pytest.approx(2.0)
     assert dec == pytest.approx(-1.0)
+
+
+@pytest.mark.unit
+def test_pointing_from_direction_uses_zeroth_poly_term():
+    """For npoly>1 only the zeroth-order (constant) term is averaged."""
+    ptime = np.array([0.0, 1.0])
+    direction = np.zeros((2, 2, 2))  # (row, npoly=2, 2)
+    direction[:, 0, :] = [[3.0, -0.7], [5.0, -0.9]]  # constant term -> used
+    direction[:, 1, :] = [[99.0, 99.0], [99.0, 99.0]]  # higher term -> ignored
+    ra, dec = ms_io._pointing_from_direction(ptime, direction, 0.0, 1.0)
+    assert ra == pytest.approx(4.0)  # mean(3, 5)
+    assert dec == pytest.approx(-0.8)  # mean(-0.7, -0.9)

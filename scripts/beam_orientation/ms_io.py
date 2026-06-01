@@ -49,9 +49,11 @@ def _pointing_from_direction(
     if not mask.any():
         return None
     d = np.asarray(direction, dtype=float)[mask]
+    if d.ndim not in (2, 3):
+        raise ValueError(f"direction must be 2-D or 3-D, got shape {d.shape}")
     if d.ndim == 3:  # (row, npoly, 2) -> constant (zeroth-order) term
         d = d[:, 0, :]
-    d = d.reshape(-1, 2)
+    d = d.reshape(-1, 2)  # already (row, 2); reshape normalises defensively
     return float(d[:, 0].mean()), float(d[:, 1].mean())
 
 
