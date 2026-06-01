@@ -13,12 +13,24 @@ from pathlib import Path
 
 import numpy as np
 
-# FIELD_ID, FIELD_NAME, RA, DEC, ra_rad, ra_dec
-# 0    Offset1, 19:39:25.03, -63:42:45.60, 5.146178203219011, -1.1119958085589738
-# 1    J1939-6342, 19:39:25.03, -65:06:45.60, 5.146178203219011, -1.1364304180868943
-# 2    Offset2, 19:39:25.03, -62:18:45.60, 5.146178203219011, -1.0875611990310532
-# 3    Offset3, 19:52:04.00, -63:42:45.60, 5.201372059151767, -1.1119958085589738
-# 4    Offset4, 19:26:46.00, -63:42:45.60, 5.090979983963126, -1.1119958085589738
+# Original pointing directions (ra_rad, dec_rad) per FIELD_ID for this MS.
+# The MS was rephased to the source by an earlier step, which did NOT preserve
+# the original pointing directions in the FIELD table; these are the recovered
+# values used as a fallback when the POINTING table is unavailable. Specific to
+# this MS — see docs/superpowers/specs/2026-06-01-field-id-pointing-design.md.
+#   FIELD_ID  name        ra            dec
+#   0         Offset1     19:39:25.03   -63:42:45.60
+#   1         J1939-6342  19:39:25.03   -65:06:45.60
+#   2         Offset2     19:39:25.03   -62:18:45.60
+#   3         Offset3     19:52:04.00   -63:42:45.60
+#   4         Offset4     19:26:46.00   -63:42:45.60
+ORIGINAL_POINTING: dict[int, tuple[float, float]] = {
+    0: (5.146178203219011, -1.1119958085589738),
+    1: (5.146178203219011, -1.1364304180868943),
+    2: (5.146178203219011, -1.0875611990310532),
+    3: (5.201372059151767, -1.1119958085589738),
+    4: (5.090979983963126, -1.1119958085589738),
+}
 
 
 @dataclass
