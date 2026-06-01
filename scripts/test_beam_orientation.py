@@ -12,8 +12,10 @@ End-to-end pipeline:
        - assemble the complex coherency Mueller M_C(t, ν) from the cached L-band BDS
        - solve the coherency dynamic spectrum B_C(t, ν) = M_C⁻¹ V̄
        - convert to Stokes B = (coherency→Stokes) · B_C
-       - write dynamic_spectrum.zarr + the PNG plots
-  6. Write a control_overlay.png across the four runs.
+       - write dynamic_spectrum.zarr
+       - per Stokes parameter, write the dynamic spectrum, time profile, and
+         frequency profile of the apparent source, the recovered source, and the
+         beam (Stokes-Mueller diagonal) into <perturbation>/<Stokes>/.
 
 Working in the coherency frame (rather than converting the visibilities to
 Stokes up front) keeps the data in its native basis and uses the complex
