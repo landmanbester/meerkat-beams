@@ -18,17 +18,19 @@ from meerkat_beams.utils import log
 # Original pointing directions (ra_rad, dec_rad) per FIELD_ID for this MS.
 # The MS was rephased to the source by an earlier step, which did NOT preserve
 # the original pointing directions in the FIELD table; these are the recovered
-# values used as a fallback when the POINTING table is unavailable. Specific to
-# this MS — see docs/superpowers/specs/2026-06-01-field-id-pointing-design.md.
+# values used as a fallback when the POINTING table is unavailable.
+# The fields in the original unaveraged and unphased MS was also incorrect.
+# The field names for Offset1 and J1939-6342 were swapped.
+# The below should be correct.
 #   FIELD_ID  name        ra            dec
-#   0         Offset1     19:39:25.03   -63:42:45.60
-#   1         J1939-6342  19:39:25.03   -65:06:45.60
+#   0         Offset1     19:39:25.03   -65:06:45.60
+#   1         J1939-6342  19:39:25.03   -63:42:45.60
 #   2         Offset2     19:39:25.03   -62:18:45.60
 #   3         Offset3     19:52:04.00   -63:42:45.60
 #   4         Offset4     19:26:46.00   -63:42:45.60
 ORIGINAL_POINTING: dict[int, tuple[float, float]] = {
-    0: (5.146178203219011, -1.1119958085589738),
-    1: (5.146178203219011, -1.1364304180868943),
+    0: (5.146178203219011, -1.1364304180868943),
+    1: (5.146178203219011, -1.1119958085589738),
     2: (5.146178203219011, -1.0875611990310532),
     3: (5.201372059151767, -1.1119958085589738),
     4: (5.090979983963126, -1.1119958085589738),
@@ -169,8 +171,6 @@ def read_ms(path: str | Path, field_id: int = 0) -> MSBundle:
     # get flag and apply FLAG_ROW + autocorrs
     flag = xds.FLAG.values
     flag_row = xds.FLAG_ROW.values | (ant1 == ant2)
-
-    print(flag.sum() / flag.size, flag_row.sum() / flag_row.size)
     flag = flag | flag_row[:, None, None]
 
     vis = _reshape(np.asarray(xds.CORRECTED_DATA.values), 0.0 + 0.0j)
