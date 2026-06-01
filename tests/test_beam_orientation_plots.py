@@ -33,49 +33,48 @@ from beam_orientation import plots  # noqa: E402
 
 
 @pytest.fixture
-def fake_dyn_spec():
-    rng = np.random.default_rng(2)
+def fake_2d():
+    rng = np.random.default_rng(7)
     Nt, Nf = 8, 16
     times = np.linspace(0.0, 3600.0, Nt)  # seconds
     freq = np.linspace(0.9e9, 1.7e9, Nf)
-    B = (1.0 + 0.01 * rng.standard_normal((Nt, Nf, 4))).astype(complex)
-    cond = np.ones((Nt, Nf), dtype=float) * 1.5
-    return times, freq, B, cond
+    data = (1.0 + 0.01 * rng.standard_normal((Nt, Nf))) + 0.01j * rng.standard_normal((Nt, Nf))
+    return times, freq, data
 
 
 @pytest.mark.unit
-def test_plot_waterfall_writes_png(tmp_path, fake_dyn_spec):
-    times, freq, B, cond = fake_dyn_spec
-    out = tmp_path / "waterfall_I.png"
-    plots.waterfall(times, freq, B, cond, stokes="I", out_path=out)
+def test_plot_dyn_spectrum_writes_png(tmp_path, fake_2d):
+    times, freq, data = fake_2d
+    out = tmp_path / "dyn.png"
+    plots.dyn_spectrum(times, freq, data, out, title="t", cbar_label="Jy")
     assert out.exists() and out.stat().st_size > 0
 
 
 @pytest.mark.unit
-def test_plot_mean_spectrum_writes_png(tmp_path, fake_dyn_spec):
-    times, freq, B, cond = fake_dyn_spec
-    out = tmp_path / "mean_I_spectrum.png"
-    plots.mean_spectrum(freq, B, cond, out_path=out)
+def test_plot_time_profile_writes_png(tmp_path, fake_2d):
+    times, freq, data = fake_2d
+    out = tmp_path / "tp.png"
+    plots.time_profile(times, data, out, title="t", ylabel="Jy")
     assert out.exists() and out.stat().st_size > 0
 
 
 @pytest.mark.unit
-def test_plot_time_variation_writes_png(tmp_path, fake_dyn_spec):
-    times, freq, B, cond = fake_dyn_spec
-    out = tmp_path / "time_variation.png"
-    plots.time_variation(freq, B, cond, out_path=out)
+def test_plot_freq_profile_writes_png(tmp_path, fake_2d):
+    times, freq, data = fake_2d
+    out = tmp_path / "fp.png"
+    plots.freq_profile(freq, data, out, title="t", ylabel="Jy")
     assert out.exists() and out.stat().st_size > 0
 
 
 @pytest.mark.unit
-def test_plot_control_overlay_writes_png(tmp_path, fake_dyn_spec):
-    times, freq, B, cond = fake_dyn_spec
-    runs = {
-        "none": (B, cond),
-        "flip_x": (B * 1.1, cond),
-        "flip_y": (B * 1.2, cond),
-        "swap_xy": (B * 1.3, cond),
-    }
-    out = tmp_path / "control_overlay.png"
-    plots.control_overlay(freq, runs, out_path=out)
+def test_profiles_ignore_nan_bins(tmp_path, fake_2d):
+    times, freq, data = fake_2d
+    data = data.copy()
+    data[0, :] = np.nan  # blank one time row
+    data[:, 0] = np.nan  # blank one freq channel
+    out = tmp_path / "tp_nan.png"
+    plots.time_profile(times, data, out, title="t", ylabel="Jy")
     assert out.exists() and out.stat().st_size > 0
+    # nanmean over time must not propagate the blanked row into every channel.
+    prof = np.nanmean(np.real(data), axis=0)
+    assert np.isfinite(prof[1:]).all()

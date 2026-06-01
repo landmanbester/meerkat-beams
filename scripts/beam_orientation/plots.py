@@ -1,9 +1,10 @@
 """
 Diagnostic plots for the beam-orientation validation experiment.
 
-All functions take fully-resolved NumPy arrays (no xarray/zarr), apply
-``cond > threshold`` masking, and write a single PNG via matplotlib's
-Agg backend. They do not display anything interactively.
+Each function takes a single fully-resolved ``(Nt, Nf)`` complex NumPy array,
+plots its real part via matplotlib's Agg backend, and writes one PNG. Profile
+means use ``nanmean`` so blanked (NaN) bins are ignored. Nothing is displayed
+interactively and nothing is normalised.
 """
 
 from pathlib import Path
@@ -12,115 +13,68 @@ import matplotlib
 
 matplotlib.use("Agg")  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np
-
-from beam_orientation.calibrator import evaluate as catalog_spectrum
-
-STOKES_INDEX = {"I": 0, "Q": 1, "U": 2, "V": 3}
-DEFAULT_COND_THRESHOLD = 1e6
+import numpy as np  # noqa: E402
 
 
-def _mask(arr: np.ndarray, cond: np.ndarray, threshold: float) -> np.ndarray:
-    """Return arr with cond>threshold bins set to NaN (broadcast over trailing axes)."""
-    bad = cond > threshold
-    bad = np.broadcast_to(bad[..., None], arr.shape) if arr.ndim > cond.ndim else bad
-    return np.where(bad, np.nan, arr)
-
-
-def waterfall(
+def dyn_spectrum(
     times: np.ndarray,
     freq: np.ndarray,
-    B: np.ndarray,  # noqa: N803
-    cond: np.ndarray,
-    stokes: str,
+    data: np.ndarray,
     out_path: Path,
-    cond_threshold: float = DEFAULT_COND_THRESHOLD,
+    *,
+    title: str,
+    cbar_label: str,
 ) -> None:
-    """Waterfall (time × freq) plot of one Stokes component of B."""
-    idx = STOKES_INDEX[stokes]
-    val = _mask(B[..., idx].real, cond, cond_threshold)
+    """Dynamic spectrum (time × freq) of ``Re(data)`` for one ``(Nt, Nf)`` array."""
+    val = np.real(data)
+    t0 = times[0]
+    extent = [freq[0] * 1e-9, freq[-1] * 1e-9, times[-1] - t0, times[0] - t0]
     fig, ax = plt.subplots(figsize=(8, 4))
-    extent = [freq[0] * 1e-9, freq[-1] * 1e-9, times[-1], times[0]]
     im = ax.imshow(val, aspect="auto", extent=extent, interpolation="nearest")
     ax.set_xlabel("frequency (GHz)")
     ax.set_ylabel("time (s)")
-    ax.set_title(f"Stokes {stokes}")
-    fig.colorbar(im, ax=ax, label="Jy")
+    ax.set_title(title)
+    fig.colorbar(im, ax=ax, label=cbar_label)
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
     plt.close(fig)
 
 
-def mean_spectrum(
-    freq: np.ndarray,
-    B: np.ndarray,  # noqa: N803
-    cond: np.ndarray,
+def time_profile(
+    times: np.ndarray,
+    data: np.ndarray,
     out_path: Path,
-    cond_threshold: float = DEFAULT_COND_THRESHOLD,
+    *,
+    title: str,
+    ylabel: str,
 ) -> None:
-    """Time-averaged recovered I(ν) with catalog polynomial overlaid; residuals subplot."""
-    val = _mask(B[..., 0].real, cond, cond_threshold)
-    mean_I = np.nanmean(val, axis=0)
-    cat = catalog_spectrum(freq)
-    fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(8, 6), sharex=True, gridspec_kw={"height_ratios": [3, 1]})
-    ax_top.plot(freq * 1e-9, mean_I, label="recovered ⟨I⟩_t")
-    ax_top.plot(freq * 1e-9, cat, "--", label="PKS 1934-638 catalog")
-    ax_top.set_ylabel("Jy")
-    ax_top.legend()
-    ax_bot.plot(freq * 1e-9, mean_I - cat)
-    ax_bot.axhline(0, color="k", linewidth=0.5)
-    ax_bot.set_xlabel("frequency (GHz)")
-    ax_bot.set_ylabel("residual (Jy)")
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=120)
-    plt.close(fig)
-
-
-def time_variation(
-    freq: np.ndarray,
-    B: np.ndarray,  # noqa: N803
-    cond: np.ndarray,
-    out_path: Path,
-    cond_threshold: float = DEFAULT_COND_THRESHOLD,
-) -> None:
-    """Per-channel std_t(B) / median_t(|B|) for each Stokes."""
+    """``Re(data)`` averaged over frequency, plotted as a function of time."""
+    prof = np.nanmean(np.real(data), axis=1)
     fig, ax = plt.subplots(figsize=(8, 4))
-    for label, idx in STOKES_INDEX.items():
-        val = _mask(B[..., idx], cond, cond_threshold)
-        std = np.nanstd(val.real, axis=0)
-        med = np.nanmedian(np.abs(val), axis=0)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            metric = np.where(med > 0, std / med, np.nan)
-        ax.plot(freq * 1e-9, metric, label=f"Stokes {label}")
-    ax.set_xlabel("frequency (GHz)")
-    ax.set_ylabel("std_t(B) / median_t(|B|)")
-    ax.set_yscale("log")
-    ax.legend()
+    ax.plot(times - times[0], prof)
+    ax.set_xlabel("time (s)")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
     plt.close(fig)
 
 
-def control_overlay(
+def freq_profile(
     freq: np.ndarray,
-    runs: dict[str, tuple[np.ndarray, np.ndarray]],
+    data: np.ndarray,
     out_path: Path,
-    cond_threshold: float = DEFAULT_COND_THRESHOLD,
+    *,
+    title: str,
+    ylabel: str,
 ) -> None:
-    """Overlay the Stokes-I time-variation metric across multiple runs."""
+    """``Re(data)`` averaged over time, plotted as a function of frequency."""
+    prof = np.nanmean(np.real(data), axis=0)
     fig, ax = plt.subplots(figsize=(8, 4))
-    for name, (B, cond) in runs.items():
-        val = _mask(B[..., 0], cond, cond_threshold)
-        std = np.nanstd(val.real, axis=0)
-        med = np.nanmedian(np.abs(val), axis=0)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            metric = np.where(med > 0, std / med, np.nan)
-        ax.plot(freq * 1e-9, metric, label=name)
+    ax.plot(freq * 1e-9, prof)
     ax.set_xlabel("frequency (GHz)")
-    ax.set_ylabel("std_t(I) / median_t(|I|)")
-    ax.set_yscale("log")
-    ax.legend()
-    ax.set_title("Residual time variation: unperturbed vs controls")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
     plt.close(fig)
