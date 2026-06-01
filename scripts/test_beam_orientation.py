@@ -69,6 +69,12 @@ def parse_args() -> argparse.Namespace:
         help="override path to the calibrator MS; defaults to the cached download.",
     )
     p.add_argument(
+        "--field-id",
+        type=int,
+        default=0,
+        help="FIELD_ID to select; also chooses the original pointing direction.",
+    )
+    p.add_argument(
         "--perturbations",
         nargs="+",
         choices=list(PERTURBATIONS),
@@ -84,7 +90,7 @@ def main() -> None:
 
     ms_path = args.ms or ensure_ms()
     log.info(f"reading MS from {ms_path}")
-    bundle = read_ms(ms_path)
+    bundle = read_ms(ms_path, field_id=args.field_id)
     log.info(
         f"MS shape Nb={bundle.vis.shape[0]} Nt={bundle.vis.shape[1]} "
         f"Nf={bundle.vis.shape[2]} corr={bundle.vis.shape[3]}"
@@ -95,12 +101,10 @@ def main() -> None:
     ra_src_rad = float(srcpos.ra.rad)
     dec_src_rad = float(srcpos.dec.rad)
 
-    # SIN-projection direction-cosine offset from the original phase centre.
-    # ra_pc, dec_pc = bundle.phase_centre
-    ra_pc, dec_pc = 5.146178203219011, -1.1119958085589738  # Offset1
-    # ra_pc, dec_pc = 5.146178203219011, -1.0875611990310532  # Offset2
-    # ra_pc, dec_pc = 5.201372059151767, -1.1119958085589738  # Offset3
-    # ra_pc, dec_pc = 5.090979983963126, -1.1119958085589738  # Offset4
+    # SIN-projection direction-cosine offset from the MS phase centre. For the
+    # pre-rephased MS this centre is already the source, so (dl, dm) ~= 0 and
+    # phase_rotate is a no-op; for a non-rephased MS it rephases correctly.
+    ra_pc, dec_pc = bundle.phase_centre
     dl = np.cos(dec_src_rad) * np.sin(ra_src_rad - ra_pc)
     dm = np.sin(dec_src_rad) * np.cos(dec_pc) - np.cos(dec_src_rad) * np.sin(dec_pc) * np.cos(ra_src_rad - ra_pc)
     log.info(f"phase-rotating to (dl, dm) = ({dl:.6e}, {dm:.6e}) rad")
@@ -127,8 +131,8 @@ def main() -> None:
     coh_to_stokes = mueller.coherency_to_stokes_matrix()
 
     bw = BeamWizard(band="L")
-    # Beam pointing centre = original MS phase centre (radians from MSBundle).
-    bw.set_field_centre(SkyCoord(ra_pc, dec_pc, unit="rad", frame="icrs"))
+    # Beam pointing centre = original dish pointing for this field (radians).
+    bw.set_field_centre(SkyCoord(*bundle.pointing_centre, unit="rad", frame="icrs"))
     runs: dict[str, tuple[np.ndarray, np.ndarray]] = {}
 
     for name in args.perturbations:
