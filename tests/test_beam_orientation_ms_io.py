@@ -59,3 +59,11 @@ def test_pointing_from_direction_uses_zeroth_poly_term():
     ra, dec = ms_io._pointing_from_direction(ptime, direction, 0.0, 1.0)
     assert ra == pytest.approx(4.0)  # mean(3, 5)
     assert dec == pytest.approx(-0.8)  # mean(-0.7, -0.9)
+
+
+@pytest.mark.unit
+def test_resolve_pointing_centre_falls_back_to_dict():
+    """An unreadable POINTING table falls back to ORIGINAL_POINTING[field_id]."""
+    times = np.array([1.0, 2.0, 3.0])
+    pc = ms_io._resolve_pointing_centre("/no/such/ms.ms", 3, times)
+    assert pc == ms_io.ORIGINAL_POINTING[3]

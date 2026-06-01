@@ -13,6 +13,8 @@ from pathlib import Path
 
 import numpy as np
 
+from meerkat_beams.utils import log
+
 # Original pointing directions (ra_rad, dec_rad) per FIELD_ID for this MS.
 # The MS was rephased to the source by an earlier step, which did NOT preserve
 # the original pointing directions in the FIELD table; these are the recovered
@@ -55,6 +57,49 @@ def _pointing_from_direction(
         d = d[:, 0, :]
     d = d.reshape(-1, 2)  # already (row, 2); reshape normalises defensively
     return float(d[:, 0].mean()), float(d[:, 1].mean())
+
+
+def _read_pointing_table(path: str, times: np.ndarray) -> tuple[float, float] | None:
+    """Read the original pointing centre from the MS POINTING table.
+
+    Selects POINTING rows whose TIME lies within the selected field's scan
+    window (POINTING has no FIELD_ID column) and averages their DIRECTION.
+    Returns ``None`` on any failure or when no rows match, so the caller can
+    fall back to ORIGINAL_POINTING.
+    """
+    try:
+        from daskms import xds_from_table
+
+        groups = xds_from_table(f"{path}::POINTING")
+        if not groups:
+            return None
+        pnt = groups[0].compute()
+        if "DIRECTION" not in pnt or "TIME" not in pnt:
+            return None
+        return _pointing_from_direction(
+            np.asarray(pnt.TIME.values),
+            np.asarray(pnt.DIRECTION.values),
+            float(np.min(times)),
+            float(np.max(times)),
+        )
+    except Exception as exc:  # noqa: BLE001 - any read failure -> fallback
+        log.warning(f"could not read POINTING table ({exc}); using fallback")
+        return None
+
+
+def _resolve_pointing_centre(
+    path: str,
+    field_id: int,
+    times: np.ndarray,
+) -> tuple[float, float]:
+    """Pointing centre for ``field_id``: POINTING table first, dict fallback."""
+    pc = _read_pointing_table(path, times)
+    if pc is not None:
+        log.info(f"pointing centre for field {field_id} from POINTING table: {pc}")
+        return pc
+    pc = ORIGINAL_POINTING[field_id]
+    log.info(f"pointing centre for field {field_id} from ORIGINAL_POINTING: {pc}")
+    return pc
 
 
 @dataclass
