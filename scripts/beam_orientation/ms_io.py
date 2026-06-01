@@ -33,6 +33,28 @@ ORIGINAL_POINTING: dict[int, tuple[float, float]] = {
 }
 
 
+def _pointing_from_direction(
+    ptime: np.ndarray,
+    direction: np.ndarray,
+    t0: float,
+    t1: float,
+) -> tuple[float, float] | None:
+    """Average POINTING DIRECTION over rows whose TIME falls in [t0, t1].
+
+    ``direction`` may be (row, 2) or (row, npoly, 2) with the last axis
+    ordered (ra, dec) in radians. Returns ``None`` when no row matches.
+    """
+    ptime = np.asarray(ptime)
+    mask = (ptime >= t0) & (ptime <= t1)
+    if not mask.any():
+        return None
+    d = np.asarray(direction, dtype=float)[mask]
+    if d.ndim == 3:  # (row, npoly, 2) -> constant (zeroth-order) term
+        d = d[:, 0, :]
+    d = d.reshape(-1, 2)
+    return float(d[:, 0].mean()), float(d[:, 1].mean())
+
+
 @dataclass
 class MSBundle:
     vis: np.ndarray  # (Nb, Nt, Nf, 4) complex64
