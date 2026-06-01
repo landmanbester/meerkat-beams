@@ -53,6 +53,9 @@ PERTURBATIONS: dict[str, tuple[tuple[int, int], bool]] = {
     "swap_xy": ((1, 1), True),
 }
 
+STOKES = ("I", "Q", "U", "V")
+COND_THRESHOLD = 1e6  # recovered bins with cond above this are blanked (NaN)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
@@ -129,11 +132,16 @@ def main() -> None:
 
     # Coherency (XX,XY,YX,YY) → Stokes (I,Q,U,V), matching the BDS convention.
     coh_to_stokes = mueller.coherency_to_stokes_matrix()
+    S = np.linalg.inv(coh_to_stokes)  # noqa: N806  Stokes → coherency
+
+    # Observed apparent Stokes from the data — the beam-modulated spectrum the
+    # model should reproduce. Depends only on the data, not the perturbation, so
+    # it is identical in every perturbation folder.
+    apparent = np.einsum("ij,tfj->tfi", coh_to_stokes, V_coh)
 
     bw = BeamWizard(band="L")
     # Beam pointing centre = original dish pointing for this field (radians).
     bw.set_field_centre(SkyCoord(*bundle.pointing_centre, unit="rad", frame="icrs"))
-    runs: dict[str, tuple[np.ndarray, np.ndarray]] = {}
 
     for name in args.perturbations:
         signs, swap = PERTURBATIONS[name]
@@ -146,18 +154,59 @@ def main() -> None:
         B_C, cond = mueller.solve_per_bin(M_C, V_coh)
         B = np.einsum("ij,tfj->tfi", coh_to_stokes, B_C)
 
-        _write_zarr(run_dir / "dynamic_spectrum.zarr", B, cond, bundle.time, bundle.freq, name)
-        plots.waterfall(bundle.time, bundle.freq, B, cond, "I", run_dir / "dyn_spec_I.png")
-        plots.waterfall(bundle.time, bundle.freq, B, cond, "Q", run_dir / "dyn_spec_Q.png")
-        plots.waterfall(bundle.time, bundle.freq, B, cond, "U", run_dir / "dyn_spec_U.png")
-        plots.waterfall(bundle.time, bundle.freq, B, cond, "V", run_dir / "dyn_spec_V.png")
-        plots.mean_spectrum(bundle.freq, B, cond, run_dir / "mean_I_spectrum.png")
-        plots.time_variation(bundle.freq, B, cond, run_dir / "time_variation.png")
-        runs[name] = (B, cond)
+        # Stokes Mueller and its per-Stokes diagonal (the beam gain per Stokes).
+        M_S = np.einsum("ij,tfjk,kl->tfil", coh_to_stokes, M_C, S)  # noqa: N806
+        beam_diag = np.einsum("tfpp->tfp", M_S)
 
-    if len(runs) > 1:
-        plots.control_overlay(bundle.freq, runs, args.out_dir / "control_overlay.png")
-        log.info(f"control overlay → {args.out_dir / 'control_overlay.png'}")
+        _write_zarr(run_dir / "dynamic_spectrum.zarr", B, cond, bundle.time, bundle.freq, name)
+        _write_stokes_plots(run_dir, bundle.time, bundle.freq, apparent, B, cond, beam_diag)
+
+
+def _write_stokes_plots(
+    run_dir: Path,
+    times: np.ndarray,
+    freq: np.ndarray,
+    apparent: np.ndarray,  # (Nt, Nf, 4) complex, observed apparent Stokes
+    B: np.ndarray,  # noqa: N803  (Nt, Nf, 4) complex, recovered Stokes
+    cond: np.ndarray,  # (Nt, Nf) float
+    beam_diag: np.ndarray,  # (Nt, Nf, 4) complex, Stokes-Mueller diagonal
+) -> None:
+    """Write the 9 per-Stokes diagnostic PNGs (apparent / recovered / beam) per folder."""
+    for p_idx, p in enumerate(STOKES):
+        sdir = run_dir / p
+        sdir.mkdir(parents=True, exist_ok=True)
+        app = apparent[..., p_idx]
+        # Blank ill-conditioned recovered bins so solve outliers don't dominate.
+        rec = np.where(cond > COND_THRESHOLD, np.nan, B[..., p_idx])
+        bem = beam_diag[..., p_idx]
+
+        plots.dyn_spectrum(
+            times, freq, app, sdir / "apparent_dyn_spec.png", title=f"apparent Stokes {p}", cbar_label="Jy"
+        )
+        plots.time_profile(
+            times, app, sdir / "apparent_time_profile.png", title=f"apparent Stokes {p} — time profile", ylabel="Jy"
+        )
+        plots.freq_profile(
+            freq, app, sdir / "apparent_freq_profile.png", title=f"apparent Stokes {p} — freq profile", ylabel="Jy"
+        )
+
+        plots.dyn_spectrum(
+            times, freq, rec, sdir / "recovered_dyn_spec.png", title=f"recovered Stokes {p}", cbar_label="Jy"
+        )
+        plots.time_profile(
+            times, rec, sdir / "recovered_time_profile.png", title=f"recovered Stokes {p} — time profile", ylabel="Jy"
+        )
+        plots.freq_profile(
+            freq, rec, sdir / "recovered_freq_profile.png", title=f"recovered Stokes {p} — freq profile", ylabel="Jy"
+        )
+
+        plots.dyn_spectrum(times, freq, bem, sdir / "beam_dyn_spec.png", title=f"beam Stokes {p}", cbar_label="gain")
+        plots.time_profile(
+            times, bem, sdir / "beam_time_profile.png", title=f"beam Stokes {p} — time profile", ylabel="gain"
+        )
+        plots.freq_profile(
+            freq, bem, sdir / "beam_freq_profile.png", title=f"beam Stokes {p} — freq profile", ylabel="gain"
+        )
 
 
 def _write_zarr(
