@@ -13,30 +13,34 @@ from tests._synthetic import DEC0, DELTA, FREQS, I0, N_XY, RA0, build_synthetic_
 
 
 @pytest.mark.unit
-def test_T_maps_unpolarized_stokes_to_equal_parallel_hands():  # noqa: N802
-    T = mueller.linear_to_stokes_matrix()
-    S_unpol = np.array([1.0, 0.0, 0.0, 0.0], dtype=complex)  # I=1, Q=U=V=0
-    V_lin = T @ S_unpol
-    # XX = YY = I/2, XY = YX = 0
-    np.testing.assert_allclose(V_lin, [0.5, 0.0, 0.0, 0.5], atol=1e-12)
+def test_coherency_to_stokes_matches_inv_S():  # noqa: N802
+    """coherency_to_stokes_matrix() is inv(S) for the BDS mdv convention."""
+    S = np.array([[1, 1, 0, 0], [0, 0, 1, 1j], [0, 0, 1, -1j], [1, -1, 0, 0]], dtype=complex)
+    np.testing.assert_allclose(mueller.coherency_to_stokes_matrix(), np.linalg.inv(S), atol=1e-12)
 
 
 @pytest.mark.unit
-def test_T_maps_pure_Q_to_parallel_hand_difference():  # noqa: N802
-    T = mueller.linear_to_stokes_matrix()
-    S = np.array([0.0, 1.0, 0.0, 0.0], dtype=complex)  # pure Q
-    V_lin = T @ S
-    # XX = +Q/2, YY = -Q/2, XY = YX = 0
-    np.testing.assert_allclose(V_lin, [0.5, 0.0, 0.0, -0.5], atol=1e-12)
+def test_coherency_to_stokes_unpolarized():  # noqa: N802
+    """Equal parallel hands, zero cross hands -> Stokes I only."""
+    M = mueller.coherency_to_stokes_matrix()
+    coh = np.array([1.0, 0.0, 0.0, 1.0], dtype=complex)  # XX=YY=1, XY=YX=0
+    np.testing.assert_allclose(M @ coh, [1.0, 0.0, 0.0, 0.0], atol=1e-12)
 
 
 @pytest.mark.unit
-def test_T_maps_pure_V_to_imaginary_cross_hands():  # noqa: N802
-    T = mueller.linear_to_stokes_matrix()
-    S = np.array([0.0, 0.0, 0.0, 1.0], dtype=complex)  # pure V
-    V_lin = T @ S
-    # XY = +i V/2, YX = -i V/2, XX = YY = 0
-    np.testing.assert_allclose(V_lin, [0.0, 0.5j, -0.5j, 0.0], atol=1e-12)
+def test_coherency_to_stokes_pure_Q():  # noqa: N802
+    """XX = -YY -> pure Q."""
+    M = mueller.coherency_to_stokes_matrix()
+    coh = np.array([1.0, 0.0, 0.0, -1.0], dtype=complex)
+    np.testing.assert_allclose(M @ coh, [0.0, 1.0, 0.0, 0.0], atol=1e-12)
+
+
+@pytest.mark.unit
+def test_coherency_to_stokes_pure_V():  # noqa: N802
+    """Imaginary cross hands -> pure V."""
+    M = mueller.coherency_to_stokes_matrix()
+    coh = np.array([0.0, 1.0j, -1.0j, 0.0], dtype=complex)
+    np.testing.assert_allclose(M @ coh, [0.0, 0.0, 0.0, 1.0], atol=1e-12)
 
 
 @pytest.mark.unit
@@ -66,6 +70,28 @@ def test_solve_flags_ill_conditioned_bins():  # noqa: N802
     assert cond[0, 0] > 1e10
 
 
+@pytest.mark.unit
+def test_coherency_and_stokes_frames_are_equivalent():  # noqa: N802
+    """Solving in the coherency frame then converting to Stokes equals solving
+    directly in the Stokes frame, for a consistent Mueller pair M_S = Sinv·M_C·S.
+
+    This pins the refactor: the script may move to the coherency frame without
+    changing the recovered Stokes spectrum.
+    """
+    rng = np.random.default_rng(3)
+    coh2s = mueller.coherency_to_stokes_matrix()  # = inv(S)
+    S = np.linalg.inv(coh2s)  # noqa: N806
+    M_C = rng.standard_normal((2, 3, 4, 4)) + 1j * rng.standard_normal((2, 3, 4, 4))  # noqa: N806
+    V = rng.standard_normal((2, 3, 4)) + 1j * rng.standard_normal((2, 3, 4))  # noqa: N806
+    M_S = np.einsum("ij,tfjk,kl->tfil", coh2s, M_C, S)  # noqa: N806
+
+    B_coh, _ = mueller.solve_per_bin(M_C, V)  # noqa: N806
+    B_stokes_frame = np.einsum("ij,tfj->tfi", coh2s, B_coh)  # noqa: N806
+    B_direct, _ = mueller.solve_per_bin(M_S, np.einsum("ij,tfj->tfi", coh2s, V))  # noqa: N806
+
+    np.testing.assert_allclose(B_stokes_frame, B_direct, atol=1e-10)
+
+
 def _build_asymmetric_bds(path):
     """BDS whose nstokes diagonal is a Gaussian modulated by a tilted linear ramp.
 
@@ -87,6 +113,18 @@ def _build_asymmetric_bds(path):
         nstokes_arr[s, s] = plane
     stokes_arr = nstokes_arr.copy()
     jones = njones.copy()
+
+    # Complex coherency Mueller: diagonal = the (ramp-broken) plane, plus a
+    # purely-imaginary U<->V cross term so var="nmueller" is exercised on an
+    # asymmetric, complex beam.
+    x_ramp = np.broadcast_to(((x_idx - I0) / I0).astype(np.float32), plane.shape).copy()
+    cross = (0.5j * x_ramp * plane).astype(np.complex64)
+    nmueller_arr = np.zeros((4, 4, len(FREQS), N_XY, N_XY), dtype=np.complex64)
+    for s in range(4):
+        nmueller_arr[s, s] = plane
+    nmueller_arr[2, 3] = cross
+    nmueller_arr[3, 2] = -cross
+    mueller_arr = nmueller_arr.copy()
 
     degs = (np.arange(N_XY) - I0) * DELTA
     fits_header = {
@@ -118,6 +156,8 @@ def _build_asymmetric_bds(path):
             "njones": xarray.DataArray(njones, dims=("receptor_i", "receptor_j", "FREQ", "Y", "X"), coords=jcoords),
             "stokes": xarray.DataArray(stokes_arr, dims=("stokes_i", "stokes_j", "FREQ", "Y", "X"), coords=scoords),
             "nstokes": xarray.DataArray(nstokes_arr, dims=("stokes_i", "stokes_j", "FREQ", "Y", "X"), coords=scoords),
+            "mueller": xarray.DataArray(mueller_arr, dims=("stokes_i", "stokes_j", "FREQ", "Y", "X"), coords=scoords),
+            "nmueller": xarray.DataArray(nmueller_arr, dims=("stokes_i", "stokes_j", "FREQ", "Y", "X"), coords=scoords),
         }
     )
     xds.attrs["fits_header"] = fits_header
@@ -157,11 +197,22 @@ def test_assemble_mueller_shape_and_dtype(synthetic_bw, short_times):
 
 @pytest.mark.unit
 def test_assemble_mueller_on_axis_is_identity(synthetic_bw, short_times):
-    # Source at field centre → on-axis → normalised nstokes is the identity.
+    # Source at field centre → on-axis → normalised nmueller is the identity.
     src = SkyCoord(ra=RA0 * u.deg, dec=DEC0 * u.deg)
     M = mueller.assemble_mueller(synthetic_bw, src, short_times, FREQS)
     eye = np.broadcast_to(np.eye(4, dtype=complex), M.shape)
     np.testing.assert_allclose(M, eye, atol=1e-6)
+
+
+@pytest.mark.unit
+def test_assemble_mueller_nmueller_offaxis_is_complex(synthetic_bw, short_times):
+    """var='nmueller' (the default) yields the complex coherency Mueller: the
+    off-axis cross-hand (U,V) element carries a nonzero imaginary part."""
+    src = SkyCoord(ra=(RA0 + 0.3) * u.deg, dec=(DEC0 + 0.2) * u.deg)
+    M = mueller.assemble_mueller(synthetic_bw, src, short_times, FREQS, var="nmueller")
+    assert M.dtype == complex
+    # (U, V) is index (2, 3); the synthetic nmueller cross term is purely imaginary.
+    assert np.any(np.abs(M[:, :, 2, 3].imag) > 1e-6)
 
 
 @pytest.mark.unit

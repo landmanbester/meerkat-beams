@@ -7,14 +7,17 @@ End-to-end pipeline:
   2. Read visibilities, weights, UVW, freq, phase centre.
   3. Phase-rotate to PKS 1934-638 using a SIN-projection (Δl, Δm) offset
      computed from the (ra, dec) in tests/conftest.py.
-  4. Noise-weighted average over baselines.
-  5. Convert observed linear visibilities to observed Stokes.
-  6. For each perturbation in {"none", "flip_x", "flip_y", "swap_xy"}:
-       - assemble M_S(t, ν) from the cached L-band BDS
-       - solve B(t, ν) = M_S⁻¹ V̄_S
-       - write dynamic_spectrum.zarr
-       - write 6 PNG plots
-  7. Write a control_overlay.png across the four runs.
+  4. Noise-weighted average over baselines → coherency visibility V̄(t, ν).
+  5. For each perturbation in {"none", "flip_x", "flip_y", "swap_xy"}:
+       - assemble the complex coherency Mueller M_C(t, ν) from the cached L-band BDS
+       - solve the coherency dynamic spectrum B_C(t, ν) = M_C⁻¹ V̄
+       - convert to Stokes B = (coherency→Stokes) · B_C
+       - write dynamic_spectrum.zarr + the PNG plots
+  6. Write a control_overlay.png across the four runs.
+
+Working in the coherency frame (rather than converting the visibilities to
+Stokes up front) keeps the data in its native basis and uses the complex
+Mueller directly; the recovered Stokes spectrum is identical either way.
 
 The spec for this script is in
 docs/superpowers/specs/2026-05-15-beam-orientation-test-design.md.
@@ -26,7 +29,7 @@ from pathlib import Path
 
 import numpy as np
 import zarr
-from astropy.coordinates import EarthLocation, SkyCoord
+from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
 # Ensure scripts/ and project root are on sys.path when the script is run directly.
@@ -93,7 +96,11 @@ def main() -> None:
     dec_src_rad = float(srcpos.dec.rad)
 
     # SIN-projection direction-cosine offset from the original phase centre.
-    ra_pc, dec_pc = bundle.phase_centre
+    # ra_pc, dec_pc = bundle.phase_centre
+    ra_pc, dec_pc = 5.146178203219011, -1.1119958085589738  # Offset1
+    # ra_pc, dec_pc = 5.146178203219011, -1.0875611990310532  # Offset2
+    # ra_pc, dec_pc = 5.201372059151767, -1.1119958085589738  # Offset3
+    # ra_pc, dec_pc = 5.090979983963126, -1.1119958085589738  # Offset4
     dl = np.cos(dec_src_rad) * np.sin(ra_src_rad - ra_pc)
     dm = np.sin(dec_src_rad) * np.cos(dec_pc) - np.cos(dec_src_rad) * np.sin(dec_pc) * np.cos(ra_src_rad - ra_pc)
     log.info(f"phase-rotating to (dl, dm) = ({dl:.6e}, {dm:.6e}) rad")
@@ -104,19 +111,20 @@ def main() -> None:
     w = bundle.weight_spectrum.astype(float).copy()
     w[bundle.flag] = 0.0
 
-    # Noise-weighted average over baselines: V̄_lin(t, ν, corr).
+    # Noise-weighted average over baselines: V̄_coh(t, ν, corr), the observed
+    # coherency visibility (XX, XY, YX, YY) at the source.
     num = np.einsum("btfc,btfc->tfc", w, vis_rot)
     den = np.einsum("btfc->tfc", w)
     with np.errstate(invalid="ignore", divide="ignore"):
-        V_lin = np.where(den > 0, num / den, 0.0 + 0.0j)
+        V_coh = np.where(den > 0, num / den, 0.0 + 0.0j)
 
-    # Linear → Stokes (per spec Section 5 step 5).
-    T_inv = mueller.stokes_to_linear_matrix()
-    V_S = np.einsum("ij,tfj->tfi", T_inv, V_lin)
-
-    # Astropy Time vector and MeerKAT location for the Mueller assembly.
+    # Astropy Time vector for the Mueller assembly. The observer location comes
+    # from BeamWizard.default_location (EarthLocation.of_site("MeerKAT")), so we
+    # don't pass loc= below and avoid duplicating the site coordinates here.
     times = Time(bundle.time / 86400.0, format="mjd", scale="utc")
-    loc = EarthLocation.from_geodetic(lon=21.4 * np.pi / 180, lat=-30.7 * np.pi / 180, height=1054.0)
+
+    # Coherency (XX,XY,YX,YY) → Stokes (I,Q,U,V), matching the BDS convention.
+    coh_to_stokes = mueller.coherency_to_stokes_matrix()
 
     bw = BeamWizard(band="L")
     # Beam pointing centre = original MS phase centre (radians from MSBundle).
@@ -129,8 +137,10 @@ def main() -> None:
         run_dir.mkdir(parents=True, exist_ok=True)
         log.info(f"=== perturbation '{name}': signs={signs}, swap={swap} ===")
 
-        M_S = mueller.assemble_mueller(bw, srcpos, times, bundle.freq, loc=loc, signs=signs, swap=swap)
-        B, cond = mueller.solve_per_bin(M_S, V_S)
+        # Solve in the coherency frame, then convert the recovered spectrum to Stokes.
+        M_C = mueller.assemble_mueller(bw, srcpos, times, bundle.freq, signs=signs, swap=swap)
+        B_C, cond = mueller.solve_per_bin(M_C, V_coh)
+        B = np.einsum("ij,tfj->tfi", coh_to_stokes, B_C)
 
         _write_zarr(run_dir / "dynamic_spectrum.zarr", B, cond, bundle.time, bundle.freq, name)
         plots.waterfall(bundle.time, bundle.freq, B, cond, "I", run_dir / "dyn_spec_I.png")

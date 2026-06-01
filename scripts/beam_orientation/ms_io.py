@@ -13,12 +13,12 @@ from pathlib import Path
 
 import numpy as np
 
-# FIELD_ID, FIELD_NAME
-# 0    Offset1
-# 1    J1939-6342
-# 2    Offset2
-# 3    Offset3
-# 4    Offset4
+# FIELD_ID, FIELD_NAME, RA, DEC, ra_rad, ra_dec
+# 0    Offset1, 19:39:25.03, -63:42:45.60, 5.146178203219011, -1.1119958085589738
+# 1    J1939-6342, 19:39:25.03, -65:06:45.60, 5.146178203219011, -1.1364304180868943
+# 2    Offset2, 19:39:25.03, -62:18:45.60, 5.146178203219011, -1.0875611990310532
+# 3    Offset3, 19:52:04.00, -63:42:45.60, 5.201372059151767, -1.1119958085589738
+# 4    Offset4, 19:26:46.00, -63:42:45.60, 5.090979983963126, -1.1119958085589738
 
 
 @dataclass
@@ -43,7 +43,7 @@ def read_ms(path: str | Path) -> MSBundle:
         path,
         columns=("CORRECTED_DATA", "WEIGHT_SPECTRUM", "FLAG", "UVW", "TIME", "ANTENNA1", "ANTENNA2", "FLAG_ROW"),
         group_cols=("DATA_DESC_ID", "FIELD_ID"),
-        taql_where=("FIELD_ID == 0"),
+        taql_where=("FIELD_ID == 1"),
     )
     # make sure only a single DDID is present
     assert len(main) == 1, f"expected exactly one group in main table, got {len(main)}"
