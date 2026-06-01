@@ -2,11 +2,13 @@
 Diagnostic plots for the beam-orientation validation experiment.
 
 Each function takes a single fully-resolved ``(Nt, Nf)`` complex NumPy array,
-plots its real part via matplotlib's Agg backend, and writes one PNG. Profile
-means use ``nanmean`` so blanked (NaN) bins are ignored. Nothing is displayed
+plots its real part via matplotlib's Agg backend, and writes one PNG. Profiles
+average with ``nanmean`` and treat fully-flagged bins (exact complex ``0``) as
+missing, so they are excluded from the mean and not drawn. Nothing is displayed
 interactively and nothing is normalised.
 """
 
+import warnings
 from pathlib import Path
 
 import matplotlib
@@ -14,6 +16,20 @@ import matplotlib
 matplotlib.use("Agg")  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
+
+
+def _profile(data: np.ndarray, axis: int) -> np.ndarray:
+    """``Re(data)`` averaged along ``axis``, ignoring NaN and fully-flagged bins.
+
+    Fully-flagged samples arrive as exact complex ``0`` (the fill used when a
+    bin has no unflagged data); treat them as missing so they neither bias the
+    mean nor get plotted. A slice with no surviving bins reduces to ``NaN``.
+    """
+    val = np.real(data).astype(float)
+    val[data == 0] = np.nan
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN slice -> NaN
+        return np.nanmean(val, axis=axis)
 
 
 def dyn_spectrum(
@@ -49,9 +65,9 @@ def time_profile(
     ylabel: str,
 ) -> None:
     """``Re(data)`` averaged over frequency, plotted as a function of time."""
-    prof = np.nanmean(np.real(data), axis=1)
+    prof = _profile(data, axis=1)
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(times - times[0], prof)
+    ax.plot(times - times[0], prof, marker=".", linestyle="none")
     ax.set_xlabel("time (s)")
     ax.set_ylabel(ylabel)
     ax.set_title(title)
@@ -69,9 +85,9 @@ def freq_profile(
     ylabel: str,
 ) -> None:
     """``Re(data)`` averaged over time, plotted as a function of frequency."""
-    prof = np.nanmean(np.real(data), axis=0)
+    prof = _profile(data, axis=0)
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(freq * 1e-9, prof)
+    ax.plot(freq * 1e-9, prof, marker=".", linestyle="none")
     ax.set_xlabel("frequency (GHz)")
     ax.set_ylabel(ylabel)
     ax.set_title(title)

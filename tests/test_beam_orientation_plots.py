@@ -75,6 +75,21 @@ def test_profiles_ignore_nan_bins(tmp_path, fake_2d):
     out = tmp_path / "tp_nan.png"
     plots.time_profile(times, data, out, title="t", ylabel="Jy")
     assert out.exists() and out.stat().st_size > 0
-    # nanmean over time must not propagate the blanked row into every channel.
-    prof = np.nanmean(np.real(data), axis=0)
+    # The reduction must not propagate the blanked row into every channel.
+    prof = plots._profile(data, axis=0)
     assert np.isfinite(prof[1:]).all()
+
+
+@pytest.mark.unit
+def test_profile_excludes_fully_flagged_zeros():
+    # Exact complex zeros (fully-flagged fill) are dropped from the mean; a
+    # slice with no surviving bins reduces to NaN (so nothing is plotted there).
+    data = np.array(
+        [
+            [1.0 + 0j, 0.0 + 0j, 3.0 + 0j],  # mean over surviving (1, 3) = 2.0
+            [0.0 + 0j, 0.0 + 0j, 0.0 + 0j],  # all flagged -> NaN
+        ]
+    )
+    prof = plots._profile(data, axis=1)
+    assert prof[0] == pytest.approx(2.0)
+    assert np.isnan(prof[1])
