@@ -5,7 +5,6 @@ cabs:
     name: mdv_beams_to_bds
     info:
       Converts MdV-format primary beams to a beam dataset (BDS)
-    image: ghcr.io/landmanbester/meerkat-beams:dev001
     inputs:
       mdv-beams:
         info:
