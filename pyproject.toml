@@ -3,13 +3,17 @@ name = "meerkat-beams"
 version = "0.0.0"
 description = "MeerKAT beam interpolator"
 readme = "README.md"
-requires-python = ">=3.11, <3.14"
+# Python support policy: 3.10 is supported ONLY for the lightweight base
+# install (CLI + container dispatch via hip-cargo); the [full] scientific
+# stack targets 3.11-3.13 and the CI test matrix deliberately excludes 3.10.
+requires-python = ">=3.10, <3.14"
 license = "MIT"
 authors = [
     { name = "landmanbester", email = "lbester@sarao.ac.za" }
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -88,8 +92,9 @@ dev = [
     "mypy>=1.0.0",
     "ipdb",
 ]
+# Test deps are 3.11+ only: tests never run on 3.10 (lightweight-install-only).
 test = [
     "pytest>=8.0.0",
-    "xarray-ms>=0.5.4",
-    "msv4-utils>=0.0.3",
+    "xarray-ms>=0.5.4; python_version >= '3.11'",
+    "msv4-utils>=0.0.3; python_version >= '3.11'",
 ]

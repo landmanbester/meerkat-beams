@@ -87,7 +87,8 @@ processes are not guarded; warm the cache from a single process.
 
 ## Conventions
 
-- Python `>=3.10`. Runtime is `hip-cargo >= 0.2.0`; the scientific stack (`xarray`, `zarr<3`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask-ms`, `wget`) is under the `[full]` extra.
+- Python support policy: **3.11–3.13 full** (scientific stack, tested in CI); **3.10 lightweight only** — base install (CLI + hip-cargo container dispatch), no `[full]` stack, deliberately excluded from the CI test matrix (a dedicated `lightweight` CI job pins base-install + `mbeams --help` on 3.10 instead — do not add 3.10 to the test matrix). Test-group deps carry `python_version >= '3.11'` markers for the same reason.
+- Runtime dep is `hip-cargo` tracking **git main** (recent cli↔cab list-default/image fixes not yet in a tag; re-pin to the next release before upstreaming to suricat-beams — the Dockerfile installs `git` solely for this and that layer goes away on re-pin). The scientific stack (`xarray`, `zarr<3`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask-ms`, `wget`) is under the `[full]` extra.
 - Ruff: `line-length=120`, `target-version=py310`, rules `E,F,I,N,W` with `E741`/`N806` ignored (domain names: `l`, `m`, `I`, `S`, `Sinv`). Pre-commit runs `ruff-check --fix` and `ruff-format`.
 - Core function signatures mirror their CLI signatures (same names/defaults) with plain types. Don't move Typer conversions into core. CLI passes `parse_upath`-parsed path objects directly (no `str(...)` coercion); core accepts anything `str`-coercible / path-like.
 - Commits: conventional prefixes (`build:`, `chore:`, `feat:`, `fix:`…) based on recent history.
@@ -108,7 +109,7 @@ uv run mbeams --help                  # CLI
 bash scripts/genfuncs.sh
 ```
 
-CI (`.github/workflows/ci.yml`) runs ruff + pytest on Python 3.10–3.13. Commit message containing `[skip checks]` skips the CI job. Docker image built from `Dockerfile` (python:3.11-slim, installs `.[full]`).
+CI (`.github/workflows/ci.yml`) runs ruff + pytest on Python 3.11–3.13, plus a `lightweight` job that pins the 3.10 base-install guarantee (no test suite there — see the Python support policy above). Commit message containing `[skip checks]` skips the CI job. Docker image built from `Dockerfile` (python:3.11-slim, installs `.[full]`; includes `git` while hip-cargo is a git dependency).
 
 ## Tests
 
@@ -143,4 +144,4 @@ Flagged while reviewing `BeamWizard.interpolate_beam` and `get_time_freq_beam`. 
 
 ## Current branch
 
-`dev001` — the version of the package still in the hip-cargo transition (see `docs/progress.md`, "Remaining" section). CI matrix is 3.10–3.13 but `requires-python = ">=3.10"`.
+`dev001` — the version of the package still in the hip-cargo transition (see `docs/progress.md`, "Remaining" section). Merge tracked by PR #8, which carries the milestone checklist (beam-orientation validation is the blocking priority).

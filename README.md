@@ -10,6 +10,15 @@ pip install meerkat-beams[full]
 
 The `[full]` extra pulls in the scientific stack (`xarray`, `zarr<3`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask-ms`, `wget`, `gdown`). Use plain `meerkat-beams` only if you need the CLI metadata for Stimela without running the implementations locally.
 
+### Python support
+
+| Python | Support |
+|---|---|
+| 3.11 – 3.13 | Full: `[full]` scientific stack, tested in CI |
+| 3.10 | Lightweight only: base install (CLI + hip-cargo container dispatch via `--backend docker/podman/...`). The `[full]` stack is neither tested nor supported on 3.10. |
+
+On 3.10 the base install lets you run every `mbeams` command by dispatching the actual computation to the container image — nothing scientific runs natively. CI pins this with a dedicated lightweight-install job; the test matrix itself starts at 3.11 (do not add 3.10 to it).
+
 ## Quick start — auto-downloading cache
 
 The simplest path is to construct a `BeamWizard` with just the MeerKAT band code; the mean-beam zarr is downloaded from Google Drive on first use and cached locally:
