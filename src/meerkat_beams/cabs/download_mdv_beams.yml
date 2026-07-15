@@ -5,6 +5,7 @@ cabs:
     name: download_mdv_beams
     info:
       Downloads MdV-format primary beams from SARAO archive
+    image: ghcr.io/landmanbester/meerkat-beams:dev001
     inputs:
       source:
         info:
@@ -19,7 +20,9 @@ cabs:
         info:
           download locations (mirrors), multiple may be given
         dtype: List[str]
-        default: https://ratt-public-data.s3.af-south-1.amazonaws.com/MeerKATbeams/,https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/data/
+        default:
+        - https://ratt-public-data.s3.af-south-1.amazonaws.com/MeerKATbeams/
+        - https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/data/
         metavar: URL
     outputs:
       dest:

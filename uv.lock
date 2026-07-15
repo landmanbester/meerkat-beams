@@ -702,8 +702,8 @@ wheels = [
 
 [[package]]
 name = "hip-cargo"
-version = "0.2.1"
-source = { registry = "https://pypi.org/simple" }
+version = "0.2.2"
+source = { git = "https://github.com/landmanbester/hip-cargo.git?rev=main#1719a5e612da25c9a554b8ad5024dfbb9af5cd22" }
 dependencies = [
     { name = "fsspec" },
     { name = "libcst" },
@@ -712,10 +712,6 @@ dependencies = [
     { name = "typer" },
     { name = "typing-extensions" },
     { name = "universal-pathlib" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/aa/23/bd3aab52315a62184bcaa1a0c3e58eb02ab2e1029d7ae026a7cd1801c23a/hip_cargo-0.2.1.tar.gz", hash = "sha256:15d1a423c068d13607c9b0b0477845cd74ee357cc5f5b0294654b78debfa8928", size = 82034, upload-time = "2026-05-11T16:44:51.425Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/df/c7/1303596637946a6800ad256eb7519232b807d5bc4a62b85082fbe92deeb8/hip_cargo-0.2.1-py3-none-any.whl", hash = "sha256:db16e33dbeb13db1886543e377c88187861697dcc1136d7cf2cad7ad1c67f782", size = 93873, upload-time = "2026-05-11T16:44:49.236Z" },
 ]
 
 [[package]]
@@ -741,7 +737,7 @@ name = "importlib-metadata"
 version = "9.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp", marker = "python_full_version < '3.13'" },
+    { name = "zipp", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a9/01/15bb152d77b21318514a96f43af312635eb2500c96b55398d020c93d86ea/importlib_metadata-9.0.0.tar.gz", hash = "sha256:a4f57ab599e6a2e3016d7595cfd72eb4661a5106e787a95bcc90c7105b831efc", size = 56405, upload-time = "2026-03-20T06:42:56.999Z" }
 wheels = [
@@ -1162,7 +1158,7 @@ requires-dist = [
     { name = "astropy", marker = "extra == 'full'" },
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.23" },
     { name = "gdown", marker = "extra == 'full'", specifier = ">=5.0.0" },
-    { name = "hip-cargo", specifier = ">=0.2.1" },
+    { name = "hip-cargo", git = "https://github.com/landmanbester/hip-cargo.git?rev=main" },
     { name = "matplotlib", marker = "extra == 'full'" },
     { name = "numcodecs", marker = "extra == 'full'" },
     { name = "numpy", marker = "extra == 'full'" },

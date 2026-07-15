@@ -44,7 +44,10 @@ def download_mdv_beams(
         StimelaMeta(
             metavar="URL",
         ),
-    ] = "https://ratt-public-data.s3.af-south-1.amazonaws.com/MeerKATbeams/,https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/data/",
+    ] = [
+        "https://ratt-public-data.s3.af-south-1.amazonaws.com/MeerKATbeams/",
+        "https://archive-gw-1.kat.ac.za/public/repository/10.48479/wdb0-h061/data/",
+    ],
     dest: Annotated[
         File | None,
         typer.Option(

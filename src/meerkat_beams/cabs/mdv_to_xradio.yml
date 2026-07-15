@@ -5,6 +5,7 @@ cabs:
     name: mdv_to_xradio
     info:
       Converts raw MdV beam npz to an xradio-compatible zarr image
+    image: ghcr.io/landmanbester/meerkat-beams:dev001
     inputs:
       npz-path:
         info:
