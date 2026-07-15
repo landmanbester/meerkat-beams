@@ -108,7 +108,7 @@ jobs:
 
       - name: Install dependencies
         if: env.SKIP_CHECKS != 'true'
-        run: uv sync --group test
+        run: uv sync --group test --extra full
 
       - name: Smoke test CLI
         if: env.SKIP_CHECKS != 'true'
@@ -116,6 +116,10 @@ jobs:
 
       - name: Run tests
         if: env.SKIP_CHECKS != 'true'
+        # MBEAMS_OFFLINE=1 skips the L-band cache warm-up (a Google Drive
+        # download) so CI stays hermetic; integration tests needing data skip.
+        env:
+          MBEAMS_OFFLINE: "1"
         run: uv run pytest -v
 
   # Python 3.10 supports ONLY the lightweight base install: the CLI plus
