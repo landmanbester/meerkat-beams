@@ -699,6 +699,68 @@ def test_time_variable_beamgain_spi_collapses_freq(bw, times):
 
 
 @pytest.mark.unit
+def test_rotation_averaged_beam_1d_lm_returns_y_x_order(bw, times):
+    """1D l (NX) and m (NY) inputs produce (Y, X)-ordered maps — FITS convention.
+
+    Output shape is (NY, NX) (or (NFREQ, NY, NX)), never (NX, NY).
+    """
+    l = np.linspace(-DELTA, DELTA, 3)  # NX = 3
+    m = np.linspace(-DELTA, DELTA, 5)  # NY = 5
+
+    mean, var = bw.get_rotation_averaged_beam(
+        l=l,
+        m=m,
+        times=times,
+        freq=FREQS[:1],
+        pixel_stepping=1,
+        time_stepping=1,
+        verbose=0,
+    )
+    assert mean.shape == (5, 3)
+    assert var.shape == (5, 3)
+
+    mean_f, var_f = bw.get_rotation_averaged_beam(
+        l=l,
+        m=m,
+        times=times,
+        freq=FREQS,
+        pixel_stepping=1,
+        time_stepping=1,
+        verbose=0,
+    )
+    assert mean_f.shape == (len(FREQS), 5, 3)
+    assert var_f.shape == (len(FREQS), 5, 3)
+
+
+@pytest.mark.unit
+def test_rotation_averaged_beam_map_indexes_as_y_x(bw, times):
+    """mean[y_idx, x_idx] equals the single-point evaluation at (l[x_idx], m[y_idx]).
+
+    Uses the x-ramp nmueller (U, V) element so a transposed map would place
+    the wrong values at off-diagonal grid points.
+    """
+    l = np.array([0.0, 2 * DELTA])  # NX = 2
+    m = np.array([-2 * DELTA, 0.0, 2 * DELTA])  # NY = 3
+    kwargs = dict(
+        times=times,
+        freq=FREQS[:1],
+        pixel_stepping=1,
+        time_stepping=1,
+        var="nmueller",
+        i="U",
+        j="V",
+        verbose=0,
+    )
+
+    full_mean, _ = bw.get_rotation_averaged_beam(l=l, m=m, **kwargs)
+    assert full_mean.shape == (3, 2)
+    for yi in range(len(m)):
+        for xj in range(len(l)):
+            point_mean, _ = bw.get_rotation_averaged_beam(l=l[xj : xj + 1], m=m[yi : yi + 1], **kwargs)
+            np.testing.assert_allclose(full_mean[yi, xj], point_mean[0, 0], atol=1e-6)
+
+
+@pytest.mark.unit
 def test_rotation_averaged_beam_2d_lm(bw, times):
     """2D l/m grids must propagate to a matching 2D output."""
     l = np.linspace(-DELTA, DELTA, 3)[None, :].repeat(5, axis=0)

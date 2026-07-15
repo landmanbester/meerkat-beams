@@ -469,11 +469,13 @@ class BeamWizard(object):
             i, j: Stokes or Jones indices (e.g., "I", "Q", 0, 1)
 
         Returns:
-            Tuple of (mean_beam, variance_beam) as np.ndarray:
-                - If spi is None and len(freq) > 1: both arrays have shape (NFREQ, NL, NM)
-                - If spi is not None or len(freq) == 1: both arrays have shape (NL, NM)
-                Where NL and NM are the dimensions of the l/m grid, corresponding to
-                the lengths of the l and m axes respectively (matching indexing='ij').
+            Tuple of (mean_beam, variance_beam) as np.ndarray in (Y, X) index
+            order (FITS convention: axis 0 is m/north, axis 1 is l/east):
+                - If spi is None and len(freq) > 1: both arrays have shape (NFREQ, NY, NX)
+                - If spi is not None or len(freq) == 1: both arrays have shape (NY, NX)
+                Where NX = len(l) and NY = len(m) for 1D inputs. 2D l/m inputs
+                must already be (Y, X)-shaped grids (e.g. from np.meshgrid(l, m))
+                and are passed through in that orientation.
 
         Raises:
             RuntimeError: If times are not available and not provided.
@@ -498,12 +500,15 @@ class BeamWizard(object):
         if m is None:
             m = self.m_grid
 
-        # Set up l/m grid:
-        # - if both are 1D, create a meshgrid;
-        # - if both are 2D, use them directly (shapes must match);
+        # Set up l/m grid in (Y, X) index order — FITS convention, matching the
+        # cubes produced by breifast and the pfb-imaging hci command:
+        # - if both are 1D, create a meshgrid (default indexing="xy" gives
+        #   shape (len(m), len(l)) = (NY, NX));
+        # - if both are 2D, use them directly as (Y, X)-shaped grids
+        #   (shapes must match);
         # - otherwise, raise an error.
         if l.ndim == 1 and m.ndim == 1:
-            ll, mm = np.meshgrid(l, m, indexing="ij")
+            ll, mm = np.meshgrid(l, m)
         elif l.ndim == 2 and m.ndim == 2:
             if l.shape != m.shape:
                 raise ValueError(
