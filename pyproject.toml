@@ -91,7 +91,7 @@ markers = [
 dev = [
     "ruff>=0.9.0",
     "tbump>=6.11.0",
-    "pre-commit>=4.0.0",
+    "pre-commit>=4.5.1",
     "mypy>=1.0.0",
     "ipdb",
 ]

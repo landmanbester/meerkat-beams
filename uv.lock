@@ -1485,7 +1485,7 @@ provides-extras = ["full"]
 dev = [
     { name = "ipdb" },
     { name = "mypy", specifier = ">=1.0.0" },
-    { name = "pre-commit", specifier = ">=4.0.0" },
+    { name = "pre-commit", specifier = ">=4.5.1" },
     { name = "ruff", specifier = ">=0.9.0" },
     { name = "tbump", specifier = ">=6.11.0" },
 ]
