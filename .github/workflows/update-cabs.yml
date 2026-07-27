@@ -15,9 +15,9 @@ jobs:
     steps:
       - name: Generate Token
         id: generate_token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.APP_ID }}
+          client-id: ${{ secrets.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Check out code
@@ -58,7 +58,7 @@ jobs:
           "
 
       - name: Regenerate cab definitions with latest tag
-        run: uv run mbeams generate-cabs --module 'src/meerkat_beams/cli/*.py' --output-dir src/meerkat_beams/cabs
+        run: uv run hip-cargo generate-cabs --module 'src/meerkat_beams/cli/*.py' --output-dir src/meerkat_beams/cabs
 
       - name: Check for changes
         id: check_changes
