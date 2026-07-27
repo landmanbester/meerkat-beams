@@ -199,9 +199,12 @@ Pinned by `tests/test_beam_orientation_ms_io.py`,
   ascending — useful context if you're chasing the "BDS Y-axis flip" knob
   above. That page does **not** cover the physical beam-orientation
   convention question above; that is owned here (PR #8's M1).
-- issue #13 — make pfb-imaging `hci` fully conformant with the `(ny, nx)`
-  order this package now returns (some call sites there still assume the
-  pre-`616906b` `(nx, ny)` order).
+- issue #13 (this repo) — track pfb-imaging `hci` conformance with the
+  `(ny, nx)` order this package now returns. Per pfb-imaging's own
+  `docs/wiki/image-and-beam-orientation.md` §7, the corrected `(Y, X)`
+  construction is already implemented and validated there as of its
+  `last_verified_commit`; treat issue #13 as a cross-repo tracking item to
+  re-check, not evidence of a known-open bug in pfb-imaging today.
 - issue #14 — drop breifast's on-receipt transpose once it adopts this
   package (see post-mortem above).
 - issue #15 — port killick's per-pixel time-covariance accumulation and
