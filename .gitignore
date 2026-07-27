@@ -43,10 +43,11 @@ htmlcov/
 .tox/
 .nox/
 tests/data
-
-# Docs
-docs
+scratch
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Ephemeral brainstorming/planning scratch (folded into docs/wiki/)
+docs/superpowers/

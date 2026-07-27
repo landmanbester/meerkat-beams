@@ -1,15 +1,15 @@
 from pathlib import Path
-from typing import Annotated, NewType
+from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import stimela_cab, stimela_output
+from hip_cargo import StimelaMeta, parse_upath, stimela_cab, stimela_output
 
 Directory = NewType("Directory", Path)
 File = NewType("File", Path)
 
 
 @stimela_cab(
-    name="mdv-to-xradio",
+    name="mdv_to_xradio",
     info="Converts raw MdV beam npz to an xradio-compatible zarr image",
 )
 @stimela_output(
@@ -24,14 +24,12 @@ def mdv_to_xradio(
         File,
         typer.Option(
             ...,
-            parser=Path,
+            parser=parse_upath,
             help="input MdV beam npz file",
         ),
-        {
-            "stimela": {
-                "metavar": "NPZ_PATH",
-            },
-        },
+        StimelaMeta(
+            metavar="NPZ_PATH",
+        ),
     ],
     antenna: Annotated[
         int,
@@ -84,31 +82,100 @@ def mdv_to_xradio(
     output: Annotated[
         Directory | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="output xradio zarr dataset",
         ),
-        {
-            "stimela": {
-                "metavar": "OUTPUT",
-                "mkdir": False,
-            },
-        },
+        StimelaMeta(
+            mkdir=False,
+        ),
     ] = None,
+    backend: Annotated[
+        Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
+        typer.Option(
+            help="Execution backend.",
+        ),
+        StimelaMeta(
+            skip=True,
+        ),
+    ] = "auto",
+    always_pull_images: Annotated[
+        bool,
+        typer.Option(
+            help="Always pull container images, even if cached locally.",
+        ),
+        StimelaMeta(
+            skip=True,
+        ),
+    ] = False,
 ):
     """
     Converts raw MdV beam npz to an xradio-compatible zarr image
     """
-    from meerkat_beams.core.mdv_to_xradio import mdv_to_xradio as _impl
+    if backend == "native" or backend == "auto":
+        try:
+            # Pre-flight must_exist for remote URIs before dispatching.
+            from hip_cargo.utils.runner import preflight_remote_must_exist  # noqa: E402
 
-    _impl(
-        str(npz_path),
-        str(output),
-        antenna=antenna,
-        jones=jones,
-        part=part,
-        output_var=output_var,
-        chunks_freq=chunks_freq,
-        chunks_x=chunks_x,
-        chunks_y=chunks_y,
-        compress=compress,
+            preflight_remote_must_exist(
+                mdv_to_xradio,
+                dict(
+                    npz_path=npz_path,
+                    antenna=antenna,
+                    jones=jones,
+                    part=part,
+                    output_var=output_var,
+                    chunks_freq=chunks_freq,
+                    chunks_x=chunks_x,
+                    chunks_y=chunks_y,
+                    compress=compress,
+                    output=output,
+                ),
+            )
+
+            # Lazy import the core implementation
+            from meerkat_beams.core.mdv_to_xradio import mdv_to_xradio as mdv_to_xradio_core  # noqa: E402
+
+            # Call the core function with all parameters
+            mdv_to_xradio_core(
+                npz_path,
+                output,
+                antenna=antenna,
+                jones=jones,
+                part=part,
+                output_var=output_var,
+                chunks_freq=chunks_freq,
+                chunks_x=chunks_x,
+                chunks_y=chunks_y,
+                compress=compress,
+            )
+            return
+        except ImportError:
+            if backend == "native":
+                raise
+
+    # Resolve container image from installed package metadata
+    from hip_cargo.utils.config import get_container_image  # noqa: E402
+    from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    image = get_container_image("meerkat-beams")
+    if image is None:
+        raise RuntimeError("No Container URL in meerkat-beams metadata.")
+
+    run_in_container(
+        mdv_to_xradio,
+        dict(
+            npz_path=npz_path,
+            antenna=antenna,
+            jones=jones,
+            part=part,
+            output_var=output_var,
+            chunks_freq=chunks_freq,
+            chunks_x=chunks_x,
+            chunks_y=chunks_y,
+            compress=compress,
+            output=output,
+        ),
+        image=image,
+        backend=backend,
+        always_pull_images=always_pull_images,
     )

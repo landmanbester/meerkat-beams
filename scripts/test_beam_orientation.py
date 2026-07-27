@@ -1,0 +1,234 @@
+#!/usr/bin/env python
+"""
+Beam-orientation validation experiment.
+
+End-to-end pipeline:
+  1. Download the calibrator MS (cached) if not provided via --ms.
+  2. Read visibilities, weights, UVW, freq, phase centre.
+  3. Phase-rotate to PKS 1934-638 using a SIN-projection (Δl, Δm) offset
+     computed from the (ra, dec) in tests/conftest.py.
+  4. Noise-weighted average over baselines → coherency visibility V̄(t, ν).
+  5. For each perturbation in {"none", "flip_x", "flip_y", "swap_xy"}:
+       - assemble the complex coherency Mueller M_C(t, ν) from the cached L-band BDS
+       - solve the coherency dynamic spectrum B_C(t, ν) = M_C⁻¹ V̄
+       - convert to Stokes B = (coherency→Stokes) · B_C
+       - write dynamic_spectrum.zarr
+       - per Stokes parameter, write the dynamic spectrum, time profile, and
+         frequency profile of the apparent source, the recovered source, and the
+         beam (Stokes-Mueller diagonal) into <perturbation>/<Stokes>/.
+
+Working in the coherency frame (rather than converting the visibilities to
+Stokes up front) keeps the data in its native basis and uses the complex
+Mueller directly; the recovered Stokes spectrum is identical either way.
+
+The spec for this script is in
+docs/superpowers/specs/2026-05-15-beam-orientation-test-design.md.
+"""
+
+import argparse
+import sys
+from pathlib import Path
+
+import numpy as np
+import zarr
+from astropy.coordinates import SkyCoord
+from astropy.time import Time
+
+# Ensure scripts/ and project root are on sys.path when the script is run directly.
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _SCRIPTS_DIR.parent
+sys.path.insert(0, str(_SCRIPTS_DIR))
+sys.path.insert(0, str(_PROJECT_ROOT))
+
+from beam_orientation import mueller, phase_rotate, plots  # noqa: E402
+from beam_orientation.download import ensure_ms  # noqa: E402
+from beam_orientation.ms_io import read_ms  # noqa: E402
+
+from meerkat_beams.utils import BeamWizard, log  # noqa: E402
+from tests.conftest import dec as DEC_STR  # noqa: E402, N812
+from tests.conftest import ra as RA_STR  # noqa: E402, N812
+
+PERTURBATIONS: dict[str, tuple[tuple[int, int], bool]] = {
+    "none": ((1, 1), False),
+    "flip_x": ((-1, 1), False),
+    "flip_y": ((1, -1), False),
+    "swap_xy": ((1, 1), True),
+}
+
+STOKES = ("I", "Q", "U", "V")
+COND_THRESHOLD = 1e6  # recovered bins with cond above this are blanked (NaN)
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--out-dir",
+        type=Path,
+        default=Path("scratch/orientation_test"),
+        help="output directory; one subdir per perturbation will be created here.",
+    )
+    p.add_argument(
+        "--ms",
+        type=Path,
+        default=None,
+        help="override path to the calibrator MS; defaults to the cached download.",
+    )
+    p.add_argument(
+        "--field-id",
+        type=int,
+        default=0,
+        help="FIELD_ID to select; also chooses the original pointing direction.",
+    )
+    p.add_argument(
+        "--perturbations",
+        nargs="+",
+        choices=list(PERTURBATIONS),
+        default=list(PERTURBATIONS),
+        help="which perturbation runs to execute (default: all four).",
+    )
+    return p.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+
+    ms_path = args.ms or ensure_ms()
+    log.info(f"reading MS from {ms_path}")
+    bundle = read_ms(ms_path, field_id=args.field_id)
+    log.info(
+        f"MS shape Nb={bundle.vis.shape[0]} Nt={bundle.vis.shape[1]} "
+        f"Nf={bundle.vis.shape[2]} corr={bundle.vis.shape[3]}"
+    )
+
+    # Source position from conftest constants (HMS/DMS strings).
+    srcpos = SkyCoord(RA_STR, DEC_STR.replace(".", ":", 2), unit=("hourangle", "deg"))
+    ra_src_rad = float(srcpos.ra.rad)
+    dec_src_rad = float(srcpos.dec.rad)
+
+    # SIN-projection direction-cosine offset from the MS phase centre. For the
+    # pre-rephased MS this centre is already the source, so (dl, dm) ~= 0 and
+    # phase_rotate is a no-op; for a non-rephased MS it rephases correctly.
+    ra_pc, dec_pc = bundle.phase_centre
+    dl = np.cos(dec_src_rad) * np.sin(ra_src_rad - ra_pc)
+    dm = np.sin(dec_src_rad) * np.cos(dec_pc) - np.cos(dec_src_rad) * np.sin(dec_pc) * np.cos(ra_src_rad - ra_pc)
+    log.info(f"phase-rotating to (dl, dm) = ({dl:.6e}, {dm:.6e}) rad")
+
+    vis_rot = phase_rotate.phase_rotate(bundle.vis, bundle.uvw, bundle.freq, dl=dl, dm=dm)
+
+    # Mask flagged samples by zeroing their weight.
+    w = bundle.weight_spectrum.astype(float).copy()
+    w[bundle.flag] = 0.0
+
+    # Noise-weighted average over baselines: V̄_coh(t, ν, corr), the observed
+    # coherency visibility (XX, XY, YX, YY) at the source.
+    num = np.einsum("btfc,btfc->tfc", w, vis_rot)
+    den = np.einsum("btfc->tfc", w)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        V_coh = np.where(den > 0, num / den, 0.0 + 0.0j)
+
+    # Astropy Time vector for the Mueller assembly. The observer location comes
+    # from BeamWizard.default_location (EarthLocation.of_site("MeerKAT")), so we
+    # don't pass loc= below and avoid duplicating the site coordinates here.
+    times = Time(bundle.time / 86400.0, format="mjd", scale="utc")
+
+    # Coherency (XX,XY,YX,YY) → Stokes (I,Q,U,V), matching the BDS convention.
+    coh_to_stokes = mueller.coherency_to_stokes_matrix()
+    S = np.linalg.inv(coh_to_stokes)  # noqa: N806  Stokes → coherency
+
+    # Observed apparent Stokes from the data — the beam-modulated spectrum the
+    # model should reproduce. Depends only on the data, not the perturbation, so
+    # it is identical in every perturbation folder.
+    apparent = np.einsum("ij,tfj->tfi", coh_to_stokes, V_coh)
+
+    bw = BeamWizard(band="L")
+    # Beam pointing centre = original dish pointing for this field (radians).
+    bw.set_field_centre(SkyCoord(*bundle.pointing_centre, unit="rad", frame="icrs"))
+
+    for name in args.perturbations:
+        signs, swap = PERTURBATIONS[name]
+        run_dir = args.out_dir / name
+        run_dir.mkdir(parents=True, exist_ok=True)
+        log.info(f"=== perturbation '{name}': signs={signs}, swap={swap} ===")
+
+        # Solve in the coherency frame, then convert the recovered spectrum to Stokes.
+        M_C = mueller.assemble_mueller(bw, srcpos, times, bundle.freq, signs=signs, swap=swap)
+        B_C, cond = mueller.solve_per_bin(M_C, V_coh)
+        B = np.einsum("ij,tfj->tfi", coh_to_stokes, B_C)
+
+        # Stokes Mueller and its per-Stokes diagonal (the beam gain per Stokes).
+        M_S = np.einsum("ij,tfjk,kl->tfil", coh_to_stokes, M_C, S)  # noqa: N806
+        beam_diag = np.einsum("tfpp->tfp", M_S)
+
+        _write_zarr(run_dir / "dynamic_spectrum.zarr", B, cond, bundle.time, bundle.freq, name)
+        _write_stokes_plots(run_dir, bundle.time, bundle.freq, apparent, B, cond, beam_diag)
+
+
+def _write_stokes_plots(
+    run_dir: Path,
+    times: np.ndarray,
+    freq: np.ndarray,
+    apparent: np.ndarray,  # (Nt, Nf, 4) complex, observed apparent Stokes
+    B: np.ndarray,  # noqa: N803  (Nt, Nf, 4) complex, recovered Stokes
+    cond: np.ndarray,  # (Nt, Nf) float
+    beam_diag: np.ndarray,  # (Nt, Nf, 4) complex, Stokes-Mueller diagonal
+) -> None:
+    """Write the 9 per-Stokes diagnostic PNGs (apparent / recovered / beam) per folder."""
+    for p_idx, p in enumerate(STOKES):
+        sdir = run_dir / p
+        sdir.mkdir(parents=True, exist_ok=True)
+        app = apparent[..., p_idx]
+        # Blank ill-conditioned recovered bins so solve outliers don't dominate.
+        rec = np.where(cond > COND_THRESHOLD, np.nan, B[..., p_idx])
+        bem = beam_diag[..., p_idx]
+
+        plots.dyn_spectrum(
+            times, freq, app, sdir / "apparent_dyn_spec.png", title=f"apparent Stokes {p}", cbar_label="Jy"
+        )
+        plots.time_profile(
+            times, app, sdir / "apparent_time_profile.png", title=f"apparent Stokes {p} — time profile", ylabel="Jy"
+        )
+        plots.freq_profile(
+            freq, app, sdir / "apparent_freq_profile.png", title=f"apparent Stokes {p} — freq profile", ylabel="Jy"
+        )
+
+        plots.dyn_spectrum(
+            times, freq, rec, sdir / "recovered_dyn_spec.png", title=f"recovered Stokes {p}", cbar_label="Jy"
+        )
+        plots.time_profile(
+            times, rec, sdir / "recovered_time_profile.png", title=f"recovered Stokes {p} — time profile", ylabel="Jy"
+        )
+        plots.freq_profile(
+            freq, rec, sdir / "recovered_freq_profile.png", title=f"recovered Stokes {p} — freq profile", ylabel="Jy"
+        )
+
+        plots.dyn_spectrum(times, freq, bem, sdir / "beam_dyn_spec.png", title=f"beam Stokes {p}", cbar_label="gain")
+        plots.time_profile(
+            times, bem, sdir / "beam_time_profile.png", title=f"beam Stokes {p} — time profile", ylabel="gain"
+        )
+        plots.freq_profile(
+            freq, bem, sdir / "beam_freq_profile.png", title=f"beam Stokes {p} — freq profile", ylabel="gain"
+        )
+
+
+def _write_zarr(
+    path: Path,
+    B: np.ndarray,  # noqa: N803
+    cond: np.ndarray,
+    times_sec: np.ndarray,
+    freq: np.ndarray,
+    perturbation: str,
+) -> None:
+    root = zarr.open(str(path), mode="w")
+    root.create_dataset("B", data=B.astype(np.complex64), chunks=False)
+    root.create_dataset("cond_M", data=cond.astype(np.float32), chunks=False)
+    root.create_dataset("time", data=times_sec.astype(np.float64), chunks=False)
+    root.create_dataset("frequency", data=freq.astype(np.float64), chunks=False)
+    root.attrs["source"] = "PKS 1934-638"
+    root.attrs["polarization"] = ["I", "Q", "U", "V"]
+    root.attrs["band"] = "L"
+    root.attrs["perturbation"] = perturbation
+
+
+if __name__ == "__main__":
+    main()

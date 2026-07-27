@@ -3,21 +3,28 @@ name = "meerkat-beams"
 version = "0.0.0"
 description = "MeerKAT beam interpolator"
 readme = "README.md"
-requires-python = ">=3.10"
-license = { text = "MIT" }
+# Python support policy: 3.10 is supported ONLY for the lightweight base
+# install (CLI + container dispatch via hip-cargo); the [full] scientific
+# stack targets 3.11-3.13 and the CI test matrix deliberately excludes 3.10.
+requires-python = ">=3.10, <3.14"
+license = "MIT"
 authors = [
     { name = "landmanbester", email = "lbester@sarao.ac.za" }
 ]
 classifiers = [
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "hip-cargo == 0.2.0rc2",
-    "stimela>=2.0",
+    "hip-cargo>=0.3.0",
+]
+
+[project.optional-dependencies]
+# Full scientific stack
+full = [
     "xarray",
     "xarray-fits",
     "zarr<3",
@@ -27,6 +34,7 @@ dependencies = [
     "scipy",
     "matplotlib",
     "wget",
+    "gdown>=5.0.0",
     "requests>=2.33.1",
     "dask-ms[s3,xarray,zarr]>=0.2.23",
 ]
@@ -42,12 +50,17 @@ mbeams = "meerkat_beams.cli:app"
 [build-system]
 # NOTE: This uv_build constraint is intentionally aligned with hip-cargo's own pyproject.toml.
 # If you bump uv_build in hip-cargo, update this template constraint to match.
-requires = ["uv_build>=0.8.3,<0.11.0"]
+requires = ["uv_build>=0.8.3,<0.12.0"]
 build-backend = "uv_build"
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
+# "*.md": ruff 0.16+ formats Python code blocks embedded in Markdown; our
+# README/wiki snippets are illustrative signature fragments (e.g. `] = 10,`)
+# that ruff would rewrite into standalone-valid but misleading code
+# (`] = (10,)`). Keep the formatter to real Python files only.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
@@ -59,6 +72,7 @@ indent-style = "space"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["scripts"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -75,12 +89,15 @@ markers = [
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0.0",
     "ruff>=0.9.0",
     "tbump>=6.11.0",
     "pre-commit>=4.0.0",
+    "mypy>=1.0.0",
+    "ipdb",
 ]
+# Test deps are 3.11+ only: tests never run on 3.10 (lightweight-install-only).
 test = [
     "pytest>=8.0.0",
-    "pytest-cov>=5.0.0",
+    "xarray-ms>=0.5.4; python_version >= '3.11'",
+    "msv4-utils>=0.0.3; python_version >= '3.11'",
 ]

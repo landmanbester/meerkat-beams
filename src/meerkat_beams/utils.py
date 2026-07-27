@@ -5,7 +5,6 @@ Contains:
 - Logging setup (log, LOGGER, set_console_logging_level)
 - PowerBeam dataclass
 - BeamWizard class for beam interpolation
-- beamplots utilities
 - xradio zarr enrichment helpers
 - Zarr compression defaults
 """
@@ -81,7 +80,15 @@ class PowerBeam(object):
 
 
 class BeamWizard(object):
-    """Attaches to a BDS and provides various convenienece functions"""
+    """Attaches to a BDS and provides beam-interpolation conveniences.
+
+    ``image_name`` is optional. Without an image the wizard runs in BDS-only
+    mode: ``interpolate_beam`` and the prefilter/frequency helpers work, but
+    ``centre``/``wcs``/``l_grid``/``m_grid`` raise ``RuntimeError`` and
+    ``times`` is ``None``. Call ``attach_image(image_name)`` to populate all
+    image-derived state from a FITS/xradio image, or ``set_field_centre(centre)``
+    to supply just a pointing centre (e.g. for beam gain at a fixed source).
+    """
 
     Eband: np.ndarray  # per-band power beam
     Emean: np.ndarray  # mean MFS beam
@@ -93,7 +100,19 @@ class BeamWizard(object):
     ra0: float  # field centre in degrees
     dec0: float
 
-    def __init__(self, bds_name: str, image_name: str):
+    def __init__(
+        self,
+        bds_name: Optional[str] = None,
+        image_name: Optional[str] = None,
+        *,
+        band: Optional[str] = None,
+    ):
+        if (bds_name is None) == (band is None):
+            raise ValueError("exactly one of bds_name or band must be provided")
+        if band is not None:
+            from meerkat_beams import cache
+
+            bds_name = cache.ensure_band_bds(band)
         self.log = log
         log.info(f"opening BDS {bds_name}")
         self.bds = xarray.open_zarr(bds_name)
@@ -102,53 +121,145 @@ class BeamWizard(object):
         self.index_to_freq = scipy.interpolate.interp1d(np.arange(len(freqs)), freqs)
         self.freq_to_index = scipy.interpolate.interp1d(freqs, np.arange(len(freqs)))
 
-        if image_name.endswith(".fits"):
-            log.info(f"obtaining WCS from FITS image {image_name}")
-            fitshdr = fits.open(image_name)[0].header
-            self.wcs = WCS(fitshdr)
-            self.time = None
-        elif (Path(image_name) / ".zgroup").exists():
-            log.info(f"obtaining WCS from dataset {image_name}")
-            ds = xarray.open_zarr(image_name)
-            fitshdr = fits.Header(dict(ds.attrs["fits_header"]))
-            self.wcs = WCS(fitshdr)
-            self.times = Time(ds.coords["TIME"].values / (24 * 3600), format="mjd")
-            log.info(f"time axis is {self.times[0].iso} to {self.times[-1].iso}")
-        else:
-            raise RuntimeError(f"unable to determine type of image {image_name}")
-        # drop WCS axes >2
-        while len(self.wcs.axis_type_names) > 2:
-            log.debug(f"dropping WCS axis {self.wcs.axis_type_names[-1]}")
-            self.wcs = self.wcs.dropaxis(len(self.wcs.axis_type_names) - 1)
-        self.centre = self.wcs.pixel_to_world(fitshdr["CRPIX1"] - 1, fitshdr["CRPIX2"] - 1)
-        log.info(f"image centre is at {self.centre}")
-
-        # Construct default l/m grid from image pixels
-        nx, ny = fitshdr["NAXIS1"], fitshdr["NAXIS2"]
-        crpix1, crpix2 = fitshdr["CRPIX1"], fitshdr["CRPIX2"]
-        cdelt1, cdelt2 = fitshdr["CDELT1"], fitshdr["CDELT2"]
-        # l/m are offsets from center in degrees (l increases to the east, m to the north)
-        self.l_grid: np.ndarray = (np.arange(nx) - (crpix1 - 1)) * cdelt1
-        self.m_grid: np.ndarray = (np.arange(ny) - (crpix2 - 1)) * cdelt2
-        log.info(
-            f"default l/m grid: {nx}x{ny} pixels, "
-            f"l=[{self.l_grid[0]:.4f}, {self.l_grid[-1]:.4f}], "
-            f"m=[{self.m_grid[0]:.4f}, {self.m_grid[-1]:.4f}] deg"
-        )
-
         # location could be made configurable
         self.default_location = EarthLocation.of_site("MeerKAT")
         log.info(f"location is MeerKAT ({self.default_location})")
         self._prefilters = {}
 
-    def _get_prefilter(self, var: str, i: Union[str, int], j: Union[str, int]):
-        key = var, i, j
+        # Image-derived state; unset until an image is attached or a field
+        # centre is supplied. See attach_image() / set_field_centre().
+        self._wcs = None
+        self._centre = None
+        self._times = None
+        self._l_grid = None
+        self._m_grid = None
+
+        if image_name is not None:
+            self.attach_image(image_name)
+        else:
+            log.warning(
+                "BeamWizard constructed without an image: operating in BDS-only mode. "
+                "Methods needing a field centre, time axis, or default l/m grid "
+                "(get_source_coordinates, get_rotation_averaged_beam, get_time_freq_beam) "
+                "will raise until you call attach_image(image_name) or set_field_centre(centre=...)."
+            )
+
+    @property
+    def centre(self):
+        if self._centre is None:
+            raise RuntimeError(
+                "BeamWizard.centre is unavailable: this wizard was constructed without an image. "
+                "Call attach_image(image_name) or set_field_centre(centre=...) first."
+            )
+        return self._centre
+
+    @property
+    def wcs(self):
+        if self._wcs is None:
+            raise RuntimeError(
+                "BeamWizard.wcs is unavailable: this wizard was constructed without an image. "
+                "Call attach_image(image_name) first."
+            )
+        return self._wcs
+
+    @property
+    def l_grid(self):
+        if self._l_grid is None:
+            raise RuntimeError(
+                "BeamWizard.l_grid is unavailable: this wizard was constructed without an image. "
+                "Call attach_image(image_name) first, or pass l/m explicitly."
+            )
+        return self._l_grid
+
+    @property
+    def m_grid(self):
+        if self._m_grid is None:
+            raise RuntimeError(
+                "BeamWizard.m_grid is unavailable: this wizard was constructed without an image. "
+                "Call attach_image(image_name) first, or pass l/m explicitly."
+            )
+        return self._m_grid
+
+    @property
+    def times(self):
+        # None is a valid state (FITS images and BDS-only wizards have no time
+        # axis). Callers handle None by requiring an explicit times= argument.
+        return self._times
+
+    def attach_image(self, image_name: str) -> None:
+        """Attach an image (FITS or xradio zarr), populating the field centre,
+        time axis, and default l/m grid from its WCS.
+
+        May be called after construction to upgrade a BDS-only wizard, or to
+        swap the image on an existing wizard.
+        """
+        if image_name.endswith(".fits"):
+            log.info(f"obtaining WCS from FITS image {image_name}")
+            with fits.open(image_name) as hdul:
+                fitshdr = hdul[0].header
+            wcs = WCS(fitshdr)
+            self._times = None
+        elif (Path(image_name) / ".zgroup").exists():
+            log.info(f"obtaining WCS from dataset {image_name}")
+            ds = xarray.open_zarr(image_name)
+            fitshdr = fits.Header(dict(ds.attrs["fits_header"]))
+            wcs = WCS(fitshdr)
+            self._times = Time(ds.coords["TIME"].values / (24 * 3600), format="mjd")
+            log.info(f"time axis is {self._times[0].iso} to {self._times[-1].iso}")
+        else:
+            raise RuntimeError(f"unable to determine type of image {image_name}")
+        # drop WCS axes >2
+        while len(wcs.axis_type_names) > 2:
+            log.debug(f"dropping WCS axis {wcs.axis_type_names[-1]}")
+            wcs = wcs.dropaxis(len(wcs.axis_type_names) - 1)
+        self._wcs = wcs
+        self._centre = wcs.pixel_to_world(fitshdr["CRPIX1"] - 1, fitshdr["CRPIX2"] - 1)
+        log.info(f"image centre is at {self._centre}")
+
+        # Construct default l/m grid from image pixels
+        nx, ny = fitshdr["NAXIS1"], fitshdr["NAXIS2"]
+        crpix1, crpix2 = fitshdr["CRPIX1"], fitshdr["CRPIX2"]
+        cdelt1, cdelt2 = fitshdr["CDELT1"], fitshdr["CDELT2"]
+        # l/m are offsets from center in degrees (l increases east, m north)
+        self._l_grid = (np.arange(nx) - (crpix1 - 1)) * cdelt1
+        self._m_grid = (np.arange(ny) - (crpix2 - 1)) * cdelt2
+        log.info(
+            f"default l/m grid: {nx}x{ny} pixels, "
+            f"l=[{self._l_grid[0]:.4f}, {self._l_grid[-1]:.4f}], "
+            f"m=[{self._m_grid[0]:.4f}, {self._m_grid[-1]:.4f}] deg"
+        )
+
+    def set_field_centre(self, centre: SkyCoord, times: Optional[Time] = None) -> None:
+        """Set the field (pointing) centre — and optionally the time axis —
+        without attaching an image.
+
+        Use this for workflows that only need beam values at explicit source
+        positions (e.g. beam gain at a calibrator). ``centre`` is an astropy
+        ``SkyCoord``; ``times`` an astropy ``Time``. The WCS and default l/m
+        grid stay unavailable, so methods that fall back to the image grid
+        still require explicit l/m.
+        """
+        self._centre = centre
+        if times is not None:
+            self._times = times
+        log.info(f"field centre set to {centre}")
+
+    def _get_prefilter(self, var: str, i: Union[str, int], j: Union[str, int], order: int = 3, verbose=1):
+        # order is included in the cache key: spline_filter coefficients depend on
+        # the spline order, so callers requesting different orders must not collide.
+        key = var, i, j, order
         if key not in self._prefilters:
-            self.log.debug(f"computing spline prefilter for {var}[{i},{j}]")
+            if verbose > 0:
+                self.log.debug(f"computing spline prefilter for {var}[{i},{j}] (order={order})")
             da = self.bds[var]
             # Use the variable's actual first two dims (receptor_i/j or stokes_i/j)
             sel = {da.dims[0]: i, da.dims[1]: j}
-            self._prefilters[key] = spline_filter(da.sel(**sel))
+            # Mirror the variable's dtype: float32 for real beams (stokes/nstokes),
+            # complex64 for complex ones (jones/njones/mueller/nmueller). Passing a
+            # real output dtype for complex input makes scipy implicitly promote it
+            # (UserWarning, version-dependent), so pick the dtype explicitly here.
+            out_dtype = np.complex64 if np.iscomplexobj(da) else np.float32
+            self._prefilters[key] = spline_filter(da.sel(**sel), order=order, output=out_dtype)
         return self._prefilters[key]
 
     def get_source_coordinates(
@@ -194,13 +305,34 @@ class BeamWizard(object):
         var: str = "nstokes",
         i="I",
         j="I",
+        order: int = 3,
     ):
         # beam is I,J,FREQ,Y,X
+        freq = np.asarray(freq, dtype=float)
+        bds_freqs = self.bds.coords["FREQ"].values
+        fmin, fmax = float(bds_freqs.min()), float(bds_freqs.max())
+        if freq.size and (freq.min() < fmin or freq.max() > fmax):
+            raise ValueError(
+                f"requested frequencies [{freq.min() * 1e-6:.3f}, {freq.max() * 1e-6:.3f}] MHz "
+                f"fall outside the BDS frequency range [{fmin * 1e-6:.3f}, {fmax * 1e-6:.3f}] MHz"
+            )
         freq = self.freq_to_index(freq)
-        fx = np.meshgrid(freq, xpyp[0], indexing="ij")  # mesh freq,x
-        fy = np.meshgrid(freq, xpyp[1], indexing="ij")  # mesh freq,y
-        coords = np.vstack([fy] + [fx[1:]])  # mesh freq,yx
-        return map_coordinates(self._get_prefilter(var, i, j), coords, prefilter=True)
+        nfreq = len(freq)
+        n_xy = xpyp.shape[1]
+        freq_grid = np.broadcast_to(freq[:, None], (nfreq, n_xy))
+        x_grid = np.broadcast_to(xpyp[0], (nfreq, n_xy))
+        y_grid = np.broadcast_to(xpyp[1], (nfreq, n_xy))
+        coords = np.array([freq_grid, y_grid, x_grid])
+        # prefilter=False because _get_prefilter already applied spline_filter;
+        # mode="constant", cval=0.0 makes the off-cube extrapolation policy explicit.
+        return map_coordinates(
+            self._get_prefilter(var, i, j, order=order),
+            coords,
+            order=order,
+            prefilter=False,
+            mode="constant",
+            cval=0.0,
+        )
 
     def _resolve_freqs(
         self, freq: Optional[np.ndarray] = None, num_freq: Optional[int] = None, spi: Optional[float] = None
@@ -306,6 +438,7 @@ class BeamWizard(object):
         var: str = "nstokes",
         i: str = "I",
         j: str = "I",
+        verbose: int = 1,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute the rotation-averaged beam at specified l/m coordinates.
@@ -336,11 +469,13 @@ class BeamWizard(object):
             i, j: Stokes or Jones indices (e.g., "I", "Q", 0, 1)
 
         Returns:
-            Tuple of (mean_beam, variance_beam) as np.ndarray:
-                - If spi is None and len(freq) > 1: both arrays have shape (NFREQ, NL, NM)
-                - If spi is not None or len(freq) == 1: both arrays have shape (NL, NM)
-                Where NL and NM are the dimensions of the l/m grid, corresponding to
-                the lengths of the l and m axes respectively (matching indexing='ij').
+            Tuple of (mean_beam, variance_beam) as np.ndarray in (Y, X) index
+            order (FITS convention: axis 0 is m/north, axis 1 is l/east):
+                - If spi is None and len(freq) > 1: both arrays have shape (NFREQ, NY, NX)
+                - If spi is not None or len(freq) == 1: both arrays have shape (NY, NX)
+                Where NX = len(l) and NY = len(m) for 1D inputs. 2D l/m inputs
+                must already be (Y, X)-shaped grids (e.g. from np.meshgrid(l, m))
+                and are passed through in that orientation.
 
         Raises:
             RuntimeError: If times are not available and not provided.
@@ -365,12 +500,15 @@ class BeamWizard(object):
         if m is None:
             m = self.m_grid
 
-        # Set up l/m grid:
-        # - if both are 1D, create a meshgrid;
-        # - if both are 2D, use them directly (shapes must match);
+        # Set up l/m grid in (Y, X) index order — FITS convention, matching the
+        # cubes produced by breifast and the pfb-imaging hci command:
+        # - if both are 1D, create a meshgrid (default indexing="xy" gives
+        #   shape (len(m), len(l)) = (NY, NX));
+        # - if both are 2D, use them directly as (Y, X)-shaped grids
+        #   (shapes must match);
         # - otherwise, raise an error.
         if l.ndim == 1 and m.ndim == 1:
-            ll, mm = np.meshgrid(l, m, indexing="ij")
+            ll, mm = np.meshgrid(l, m)
         elif l.ndim == 2 and m.ndim == 2:
             if l.shape != m.shape:
                 raise ValueError(
@@ -411,34 +549,41 @@ class BeamWizard(object):
         n_pixels = len(ll_flat)
         n_chunks = (n_pixels + chunk_size - 1) // chunk_size
         stepping_info = f", pixel_stepping={pixel_stepping}" if pixel_stepping > 1 else ""
-        self.log.info(
-            f"computing rotation-averaged beam over {n_times} times, "
-            f"PA range {pa.min().deg:.1f} to {pa.max().deg:.1f} deg, "
-            f"{len(freq)} frequency planes, {n_pixels} pixels in {n_chunks} chunks"
-            f"{stepping_info}"
-        )
+        if verbose > 0:
+            self.log.info(
+                f"computing rotation-averaged beam over {n_times} times, "
+                f"PA range {pa.min().deg:.1f} to {pa.max().deg:.1f} deg, "
+                f"{len(freq)} frequency planes, {n_pixels} pixels in {n_chunks} chunks"
+                f"{stepping_info}"
+            )
 
         # Precompute the spline filter to ensure it's cached
         self._get_prefilter(var, i, j)
 
-        # Allocate output arrays
+        # Allocate output arrays. For complex beams the running sum is complex
+        # so the mean stays complex; the sum of squares accumulates |b|^2 so the
+        # returned variance is real and non-negative. For real beams |b|^2 == b**2,
+        # so behaviour is unchanged.
+        is_complex = np.iscomplexobj(self.bds[var])
         out_shape = (n_pixels,) if spi is not None else (len(freq), n_pixels)
-        beam_sum = np.zeros(out_shape)
-        beam_sum_sq = np.zeros(out_shape)
+        beam_sum = np.zeros(out_shape, dtype=complex if is_complex else float)
+        beam_sum_sq = np.zeros(out_shape)  # |b|^2 is always real
 
         # Process in spatial chunks to limit memory
         for chunk_idx in range(n_chunks):
             chunk_start = chunk_idx * chunk_size
             chunk_end = min(chunk_start + chunk_size, n_pixels)
-            self.log.info(f"processing chunk {chunk_idx + 1}/{n_chunks} (pixels {chunk_start}-{chunk_end})")
+            if verbose > 0:
+                self.log.info(f"processing chunk {chunk_idx + 1}/{n_chunks} (pixels {chunk_start}-{chunk_end})")
             ll_chunk = ll_flat[chunk_start:chunk_end]
             mm_chunk = mm_flat[chunk_start:chunk_end]
 
             # Accumulate over time for this chunk
             chunk_sum = np.zeros(
-                (chunk_end - chunk_start,) if spi is not None else (len(freq), chunk_end - chunk_start)
+                (chunk_end - chunk_start,) if spi is not None else (len(freq), chunk_end - chunk_start),
+                dtype=complex if is_complex else float,
             )
-            chunk_sum_sq = np.zeros_like(chunk_sum)
+            chunk_sum_sq = np.zeros_like(chunk_sum, dtype=float)
 
             for t_idx in range(n_times):
                 pa_t = pa[t_idx].rad
@@ -458,7 +603,7 @@ class BeamWizard(object):
                     beam_vals = (beam_vals * norm_weights[:, np.newaxis]).sum(axis=0)
 
                 chunk_sum += beam_vals
-                chunk_sum_sq += beam_vals**2
+                chunk_sum_sq += np.abs(beam_vals) ** 2
 
             # Store chunk results
             if spi is not None:
@@ -468,9 +613,11 @@ class BeamWizard(object):
                 beam_sum[:, chunk_start:chunk_end] = chunk_sum
                 beam_sum_sq[:, chunk_start:chunk_end] = chunk_sum_sq
 
-        # Compute mean and variance over time
+        # Compute mean and variance over time. Variance uses |E[b]|^2 so it is
+        # real and non-negative for complex beams (and identical to mean**2 for
+        # real beams).
         beam_mean = beam_sum / n_times
-        beam_var = beam_sum_sq / n_times - beam_mean**2
+        beam_var = beam_sum_sq / n_times - np.abs(beam_mean) ** 2
 
         # Reshape to coarse grid
         if spi is not None or len(freq) == 1:
@@ -491,8 +638,8 @@ class BeamWizard(object):
                 beam_mean = map_coordinates(beam_mean, coords, order=1, mode="nearest").reshape(full_shape)
                 beam_var = map_coordinates(beam_var, coords, order=1, mode="nearest").reshape(full_shape)
             else:
-                mean_full = np.empty((len(freq),) + full_shape)
-                var_full = np.empty((len(freq),) + full_shape)
+                mean_full = np.empty((len(freq),) + full_shape, dtype=beam_mean.dtype)
+                var_full = np.empty((len(freq),) + full_shape)  # variance is real
                 for f_idx in range(len(freq)):
                     mean_full[f_idx] = map_coordinates(beam_mean[f_idx], coords, order=1, mode="nearest").reshape(
                         full_shape
@@ -509,7 +656,7 @@ class BeamWizard(object):
         self,
         filename: str,
         var_name: str,
-        dim_names: Tuple[str, str, str, str, str] = ("time", "freq", "ij", "x", "y"),
+        dim_names: Tuple[str, str, str, str, str] = ("time", "frequency", "polarization", "l", "m"),
         ds: Optional[xarray.Dataset] = None,
         l: Optional[np.ndarray] = None,
         m: Optional[np.ndarray] = None,
@@ -527,6 +674,7 @@ class BeamWizard(object):
         ij_list: Optional[List[Tuple]] = None,
         compressor=None,
         filters=None,
+        verbose: int = 1,
     ):
         """
         Compute the beam per time and frequency and write to a zarr dataset.
@@ -565,12 +713,31 @@ class BeamWizard(object):
         """
         import zarr
 
+        # dim_names is positionally interpreted: index 0 is the time-axis name,
+        # 1 the frequency-axis name, 2 the polarization/ij-axis name, 3 the
+        # x/l-axis name, 4 the y/m-axis name. The data is always laid out in
+        # that canonical role order. Passing a permuted tuple would relabel
+        # the dims without reordering the data -- silent corruption. Until we
+        # implement real permutation, accept only the canonical xradio order.
+        _CANONICAL_DIM_NAMES = ("time", "frequency", "polarization", "l", "m")
+        if tuple(dim_names) != _CANONICAL_DIM_NAMES:
+            raise ValueError(
+                f"dim_names must equal the canonical xradio order "
+                f"{_CANONICAL_DIM_NAMES!r}, got {tuple(dim_names)!r}. "
+                f"Non-canonical orderings are not currently supported."
+            )
+
         dim_time, dim_freq, dim_ij, dim_x, dim_y = dim_names
 
         if loc is None:
             loc = self.default_location
         if ij_list is None:
             ij_list = [("I", "I")]
+
+        # Output dtype mirrors the source variable: complex64 for complex beams
+        # (jones/njones/mueller/nmueller), float32 for real ones (stokes/nstokes).
+        # Hardcoding float32 here silently drops the imaginary part of complex beams.
+        out_dtype = np.complex64 if np.iscomplexobj(self.bds[var]) else np.float32
 
         # Resolve parameters from ds or defaults
         if ds is not None:
@@ -657,12 +824,13 @@ class BeamWizard(object):
         if chunks_freq is None:
             chunks_freq = n_freq
 
-        self.log.info(
-            f"computing time-freq beam: {n_ij} ij elements, {n_times} times, "
-            f"PA range {pa.min().deg:.1f} to {pa.max().deg:.1f} deg, "
-            f"{n_freq} freqs, {nx}x{ny} pixels"
-            f"{f', pixel_stepping={pixel_stepping}' if pixel_stepping > 1 else ''}"
-        )
+        if verbose > 0:
+            self.log.info(
+                f"computing time-freq beam: {n_ij} ij elements, {n_times} times, "
+                f"PA range {pa.min().deg:.1f} to {pa.max().deg:.1f} deg, "
+                f"{n_freq} freqs, {nx}x{ny} pixels"
+                f"{f', pixel_stepping={pixel_stepping}' if pixel_stepping > 1 else ''}"
+            )
 
         # Precompute spline filters for all ij pairs
         for ii, jj in ij_list:
@@ -697,8 +865,8 @@ class BeamWizard(object):
                 var_name,
                 shape=shape,
                 chunks=chunks,
-                dtype="float32",
-                fill_value=0,
+                dtype=out_dtype,
+                fill_value=None,
                 compressor=compressor,
                 filters=filters,
             )
@@ -706,7 +874,7 @@ class BeamWizard(object):
             # Write coordinate arrays
             for dim_idx, dim in enumerate(dim_names):
                 coord_data = np.asarray(coords[dim])
-                store.create_dataset(dim, data=coord_data, overwrite=True)
+                store.create_dataset(dim, data=coord_data, overwrite=True, fill_value=None)
                 store[dim].attrs["_ARRAY_DIMENSIONS"] = [dim]
             zarr.consolidate_metadata(filename)
 
@@ -721,14 +889,14 @@ class BeamWizard(object):
             beam_2d = beam_vals.reshape((n_freq,) + compute_shape)
 
             if upsample_coords is not None:
-                beam_full = np.empty((n_freq,) + full_shape, dtype=np.float32)
+                beam_full = np.empty((n_freq,) + full_shape, dtype=out_dtype)
                 for f_idx in range(n_freq):
                     beam_full[f_idx] = map_coordinates(
                         beam_2d[f_idx], upsample_coords, order=1, mode="nearest"
                     ).reshape(full_shape)
                 return beam_full
 
-            return beam_2d.astype(np.float32)
+            return beam_2d.astype(out_dtype)
 
         # Sequential computation across (time, ij); write to zarr after each plane
         done_count = 0
@@ -744,7 +912,7 @@ class BeamWizard(object):
                 idx[ij_axis] = ij_idx
                 zarr_arr[tuple(idx)] = plane
                 done_count += 1
-                if done_count % max(1, total // 10) == 0 or done_count == total:
+                if (done_count % max(1, total // 10) == 0 or done_count == total) and verbose > 0:
                     self.log.info(f"  written {done_count}/{total} planes")
 
 
@@ -825,49 +993,3 @@ def enrich_bds_xradio(zarr_path: str, bw: BeamWizard, output_var: str, polarizat
 
     # Re-consolidate metadata so open_zarr works without consolidated=False
     zarr.consolidate_metadata(zarr_path)
-
-
-# ---------------------------------------------------------------------------
-# beamplots utilities
-# ---------------------------------------------------------------------------
-
-
-def collect_beam_gain_to_source(
-    bds_name,
-    image_name,
-    coord: Union[SkyCoord, str],
-    freq: Union[float, str, List[float], List[str]],
-    time: Optional[Union[str, Time]] = None,
-):
-    from astropy.units import Quantity
-
-    bw = BeamWizard(bds_name, image_name)
-    if type(coord) is str:
-        coord = SkyCoord(coord)
-    log.info(f"computing beam gain towards {coord}")
-    if time is not None:
-        if type(time) is str:
-            time = Time(time)
-        log.info(f"explicit time specified as {time}")
-    # compute freqs
-    if isinstance(freq, (list, tuple)):
-        freq = [Quantity(f).to_value(u.Hz) if type(f) is str else f for f in freq]
-    elif isinstance(freq, str):
-        freq = [Quantity(freq).to_value(u.Hz)]
-    else:
-        freq = [freq]
-    log.info(f"{len(freq)} channels from {min(freq)} to {max(freq)}")
-
-    xpyp, seps, angles = bw.get_source_coordinates(coord, time)
-    log.info(f"coordinates are {xpyp}")
-    log.info(f"distances are {seps}")
-    log.info(f"angles are {angles}")
-
-    beams = {}
-    beams["I beam"] = bw.interpolate_beam(xpyp, freq, i="I", j="I")
-    beams["V beam"] = bw.interpolate_beam(xpyp, freq, i="V", j="V")
-    beams["I->Q leakage"] = bw.interpolate_beam(xpyp, freq, i="Q", j="I")
-    beams["I->U leakage"] = bw.interpolate_beam(xpyp, freq, i="U", j="I")
-    beams["I->V leakage"] = bw.interpolate_beam(xpyp, freq, i="V", j="I")
-
-    return beams

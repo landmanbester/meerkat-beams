@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 import xarray
 
-from tests.conftest import BAND_INPUT_ZARR, test_data_path
+from meerkat_beams import cache
 
 # Bands to test -- add new bands here as data becomes available
 ALL_BANDS = ["U", "L", "S0", "S1", "S2", "S3", "S4"]
@@ -44,11 +44,10 @@ def _ref_bds_path(band: str) -> str | None:
 
 
 def _input_zarr_path(band: str) -> Path | None:
-    """Return the input zarr path in tests/data/, or None if missing."""
-    name = BAND_INPUT_ZARR.get(band)
-    if name is None:
+    """Return the cached input zarr path, or None if absent."""
+    if band not in cache.SUPPORTED_BANDS:
         return None
-    p = test_data_path / name
+    p = cache.input_zarr_path(band)
     return p if p.exists() else None
 
 
@@ -199,3 +198,79 @@ class TestBdsDataVariables:
             rtol=RTOL,
             err_msg=f"[{band}] {var} values differ",
         )
+
+
+# ---------------------------------------------------------------------------
+# Hermetic unit tests: NPZ branch + compress=True
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_mdv_beams_to_bds_npz_branch(tmp_path):
+    """Synthetic NPZ -> mdv_beams_to_bds -> BDS with all four variables."""
+    import xarray as xr
+
+    from meerkat_beams.core.mdv_beams_to_bds import mdv_beams_to_bds
+
+    n_pol, n_ant, n_freq, n_y, n_x = 4, 1, 3, 11, 11
+    beam = np.zeros((n_pol, n_ant, n_freq, n_y, n_x), dtype=np.complex64)
+    i0 = n_x // 2
+    # Pol order is [HH, HV, VH, VV]; keep HV/VH zero at centre so the 2x2
+    # Jones matrix is the identity (invertible) for the normalisation step.
+    for f in range(n_freq):
+        beam[0, 0, f, i0, i0] = 1.0 + 0.0j  # HH
+        beam[3, 0, f, i0, i0] = 1.0 + 0.0j  # VV
+
+    npz_path = tmp_path / "synthetic_mdv.npz"
+    np.savez(
+        str(npz_path),
+        beam=beam,
+        freq_MHz=np.linspace(1000.0, 1200.0, n_freq),
+        margin_deg=np.linspace(-0.5, 0.5, n_x),
+        pols=np.array([b"HH", b"HV", b"VH", b"VV"]),
+        antnames=np.array([b"array_average"]),
+    )
+
+    out = tmp_path / "out.bds.zarr"
+    mdv_beams_to_bds(mdv_beams=str(npz_path), bds=str(out), compress=False)
+
+    xds = xr.open_zarr(str(out))
+    for v in ("jones", "njones", "stokes", "nstokes"):
+        assert v in xds.data_vars, f"{v} missing from BDS"
+    assert "fits_header" in xds.attrs
+
+
+@pytest.mark.unit
+def test_mdv_beams_to_bds_compress_uses_blosc(tmp_path):
+    """compress=True must apply the Blosc compressor to each beam variable."""
+    import zarr
+
+    from meerkat_beams.core.mdv_beams_to_bds import mdv_beams_to_bds
+
+    n_pol, n_ant, n_freq, n_y, n_x = 4, 1, 3, 11, 11
+    beam = np.zeros((n_pol, n_ant, n_freq, n_y, n_x), dtype=np.complex64)
+    i0 = n_x // 2
+    # Pol order is [HH, HV, VH, VV]; keep HV/VH zero at centre so the 2x2
+    # Jones matrix is the identity (invertible) for the normalisation step.
+    for f in range(n_freq):
+        beam[0, 0, f, i0, i0] = 1.0 + 0.0j  # HH
+        beam[3, 0, f, i0, i0] = 1.0 + 0.0j  # VV
+
+    npz_path = tmp_path / "synthetic_mdv.npz"
+    np.savez(
+        str(npz_path),
+        beam=beam,
+        freq_MHz=np.linspace(1000.0, 1200.0, n_freq),
+        margin_deg=np.linspace(-0.5, 0.5, n_x),
+        pols=np.array([b"HH", b"HV", b"VH", b"VV"]),
+        antnames=np.array([b"array_average"]),
+    )
+
+    out = tmp_path / "compressed.bds.zarr"
+    mdv_beams_to_bds(mdv_beams=str(npz_path), bds=str(out), compress=True)
+
+    z = zarr.open(str(out), mode="r")
+    for v in ("jones", "njones", "stokes", "nstokes"):
+        compressor = z[v].compressor
+        assert compressor is not None, f"{v} not compressed"
+        assert "blosc" in str(type(compressor)).lower(), f"{v} compressor is {compressor}"

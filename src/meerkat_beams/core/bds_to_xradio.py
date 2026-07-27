@@ -1,8 +1,61 @@
 """Core implementation for bds-to-xradio command."""
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from meerkat_beams.utils import ZARR_COMPRESSOR, ZARR_FILTERS, BeamWizard, enrich_bds_xradio
+
+_JONES_MAP = {"X": 0, "Y": 1}
+_JONES_OUTPUT_POL = {"X": "I", "Y": "Q"}
+
+
+def _resolve_elements(
+    beam_type: str,
+    elements: Optional[List[str]],
+    output_pol: Optional[List[str]],
+) -> Tuple[list, list]:
+    """Resolve the (ij_list, output_pol) pair for a beam_type and its elements.
+
+    - ``stokes``/``nstokes``: IQUV element pairs; default ``["II"]``; the output
+      polarization label is the output Stokes (``e[1]``) for backward compatibility.
+    - ``mueller``/``nmueller``: complex coherency Mueller, same IQUV labels; default
+      ``["II"]``; labelled by the full 2-char element (e.g. ``"IQ"``) so a 16-term
+      cube has unique polarization labels.
+    - ``jones``/``njones``: XY element pairs; default ``["XX"]``; labelled via
+      ``{X: I, Y: Q}``.
+    """
+    elements = list(elements) if elements else []
+    output_pol = list(output_pol) if output_pol else []
+    ij_list: list = []
+    output_pol_auto: list = []
+
+    if beam_type in ("nstokes", "stokes", "mueller", "nmueller"):
+        if not elements:
+            elements = ["II"]
+        label_by_element = beam_type in ("mueller", "nmueller")
+        for e in elements:
+            if len(e) != 2 or e[0] not in "IQUV" or e[1] not in "IQUV":
+                raise ValueError(f"Invalid Stokes matrix element '{e}'")
+            ij_list.append(tuple(e))
+            output_pol_auto.append(e if label_by_element else e[1])
+    elif beam_type in ("njones", "jones"):
+        if not elements:
+            elements = ["XX"]
+        for e in elements:
+            if len(e) != 2 or e[0] not in "XY" or e[1] not in "XY":
+                raise ValueError(f"Invalid Jones matrix element '{e}'")
+            ij_list.append(tuple(_JONES_MAP[c] for c in e))
+            output_pol_auto.append(_JONES_OUTPUT_POL[e[1]])
+    else:
+        raise ValueError(
+            f"Unknown beam_type '{beam_type}', expected 'nstokes', 'stokes', "
+            f"'mueller', 'nmueller', 'njones', or 'jones'"
+        )
+
+    if not output_pol:
+        output_pol = output_pol_auto
+    elif len(output_pol) != len(output_pol_auto):
+        raise ValueError("Length of output_pol must match length of elements")
+    return ij_list, output_pol
 
 
 def bds_to_xradio(
@@ -44,42 +97,12 @@ def bds_to_xradio(
     Returns:
         Path to the output zarr dataset.
     """
-    if elements is None:
-        elements = []
-    if output_pol is None:
-        output_pol = []
+    # Validate beam_type/elements (and resolve pol labels) before opening files.
+    ij_list, output_pol = _resolve_elements(beam_type, elements, output_pol)
 
     bw = BeamWizard(bds_path, image_path)
 
-    ij_list = []
-    output_pol_auto = []
-    _jones_map = {"X": 0, "Y": 1}
-    _output_pol = {"X": "I", "Y": "Q"}
-
-    if beam_type in ["nstokes", "stokes"]:
-        if not elements:
-            elements = ["II"]
-        for e in elements:
-            if len(e) != 2 or e[0] not in "IQUV" or e[1] not in "IQUV":
-                raise ValueError(f"Invalid Stokes matrix element '{e}'")
-            ij_list.append(tuple(e))
-            output_pol_auto.append(e[1])
-    elif beam_type in ["njones", "jones"]:
-        if not elements:
-            elements = ["XX"]
-        for e in elements:
-            if len(e) != 2 or e[0] not in "XY" or e[1] not in "XY":
-                raise ValueError(f"Invalid Jones matrix element '{e}'")
-            ij_list.append(tuple([_jones_map[e1] for e1 in e]))
-            output_pol_auto.append(_output_pol[e[1]])
-    else:
-        raise ValueError(f"Unknown beam_type '{beam_type}', expected 'nstokes', 'stokes', 'njones', or 'jones'")
-    if not output_pol:
-        output_pol = output_pol_auto
-    elif len(output_pol) != len(output_pol_auto):
-        raise ValueError("Length of output_pol must match length of elements")
-
-    bw.log.info(f"Rendering {beam_type} elements {elements} using pol labels {output_pol}")
+    bw.log.info(f"Rendering {beam_type} elements {ij_list} using pol labels {output_pol}")
     bw.log.info(f"Using ij_list: {ij_list}")
 
     bw.get_time_freq_beam(

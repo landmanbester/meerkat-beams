@@ -78,16 +78,27 @@ def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
     # Sinv converts coherency to Stokes
     Sinv = numpy.linalg.inv(S)
 
-    # compute Stokes matrices from FREQ,Y,X,ROW,COLUMN Jones matrices
-    def stokes(jones):
+    def mueller_func(jones):
         mshape = list(jones.shape[:-2]) + [4, 4]
         mueller = np.einsum("fyxij,fyxkl->fyxikjl", jones, np.conj(jones)).reshape(mshape)
+        return mueller
+
+    # compute Stokes matrices from FREQ,Y,X,ROW,COLUMN Jones matrices
+    def stokes_func(mueller):
         return Sinv @ mueller @ S
 
-    # compute Stokes and normalized Stokes
-    st = stokes(jjt).transpose((3, 4, 0, 1, 2)).astype(np.float32)
-    stnorm = stokes(jnorm).transpose((3, 4, 0, 1, 2)).astype(np.float32)
-    jnorm = jnorm.transpose((3, 4, 0, 1, 2))  # back to ROW,COLUMN,FREQ,Y,X
+    # compute Mueller and and normalized Mueller
+    mueller = mueller_func(jjt)
+    muellernorm = mueller_func(jnorm)
+    # convert to Stokes and transpose back to FREQ,Y,X,STOKES_i,STOKES_j
+    stokes = stokes_func(mueller).transpose((3, 4, 0, 1, 2)).real.astype(np.float32)
+    stokesnorm = stokes_func(muellernorm).transpose((3, 4, 0, 1, 2)).real.astype(np.float32)
+    # transpose Mueller and Jones back to (i, j, FREQ, Y, X)
+    mueller = mueller.transpose((3, 4, 0, 1, 2)).astype(np.complex64)
+    muellernorm = muellernorm.transpose((3, 4, 0, 1, 2)).astype(np.complex64)
+    # jj is already ROW,COL,FREQ,Y,X from the reshape above; jnorm is FREQ,Y,X,ROW,COL.
+    jj = jj.astype(np.complex64)
+    jnorm = jnorm.transpose((3, 4, 0, 1, 2)).astype(np.complex64)
 
     LOGGER.info(f"saving output dataset {bds}")
     # write to dataset
@@ -100,8 +111,10 @@ def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
         dict(
             jones=xarray.DataArray(jj, dims=("receptor_i", "receptor_j", "FREQ", "Y", "X"), coords=jcoords),
             njones=xarray.DataArray(jnorm, dims=["receptor_i", "receptor_j", "FREQ", "Y", "X"], coords=jcoords),
-            stokes=xarray.DataArray(st, dims=["stokes_i", "stokes_j", "FREQ", "Y", "X"], coords=scoords),
-            nstokes=xarray.DataArray(stnorm, dims=["stokes_i", "stokes_j", "FREQ", "Y", "X"], coords=scoords),
+            stokes=xarray.DataArray(stokes, dims=["stokes_i", "stokes_j", "FREQ", "Y", "X"], coords=scoords),
+            nstokes=xarray.DataArray(stokesnorm, dims=["stokes_i", "stokes_j", "FREQ", "Y", "X"], coords=scoords),
+            mueller=xarray.DataArray(mueller, dims=["stokes_i", "stokes_j", "FREQ", "Y", "X"], coords=scoords),
+            nmueller=xarray.DataArray(muellernorm, dims=["stokes_i", "stokes_j", "FREQ", "Y", "X"], coords=scoords),
         )
     )
     xds.attrs["fits_header"] = hdr
@@ -113,6 +126,6 @@ def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
 
         compressor = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
         filters = [Delta(dtype="float32")]
-        for var in ["jones", "njones", "stokes", "nstokes"]:
+        for var in ["jones", "njones", "stokes", "nstokes", "mueller", "nmueller"]:
             encoding[var] = dict(compressor=compressor, filters=filters)
     xds.to_zarr(bds, mode="w", encoding=encoding)

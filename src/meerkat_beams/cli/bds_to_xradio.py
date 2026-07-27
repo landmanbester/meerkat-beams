@@ -1,14 +1,21 @@
 from pathlib import Path
-from typing import Annotated, NewType
+from typing import Annotated, Literal, NewType
 
 import typer
-from hip_cargo import ListStr, parse_list_str, stimela_cab, stimela_output
+from hip_cargo import (
+    ListStr,
+    StimelaMeta,
+    parse_list_str,
+    parse_upath,
+    stimela_cab,
+    stimela_output,
+)
 
 Directory = NewType("Directory", Path)
 
 
 @stimela_cab(
-    name="bds-to-xradio",
+    name="bds_to_xradio",
     info="Renders a beam dataset (BDS) to an xradio-compatible zarr image",
 )
 @stimela_output(
@@ -23,27 +30,23 @@ def bds_to_xradio(
         Directory,
         typer.Option(
             ...,
-            parser=Path,
+            parser=parse_upath,
             help="input beam dataset (.bds.zarr)",
         ),
-        {
-            "stimela": {
-                "metavar": "BDS_PATH",
-            },
-        },
+        StimelaMeta(
+            metavar="BDS_PATH",
+        ),
     ],
     image_path: Annotated[
         Directory,
         typer.Option(
             ...,
-            parser=Path,
+            parser=parse_upath,
             help="image/dataset for WCS and time info",
         ),
-        {
-            "stimela": {
-                "metavar": "IMAGE_PATH",
-            },
-        },
+        StimelaMeta(
+            metavar="IMAGE_PATH",
+        ),
     ],
     output_var: Annotated[
         str,
@@ -122,39 +125,115 @@ def bds_to_xradio(
     output: Annotated[
         Directory | None,
         typer.Option(
-            parser=Path,
+            parser=parse_upath,
             help="output xradio zarr dataset",
         ),
-        {
-            "stimela": {
-                "metavar": "OUTPUT",
-                "mkdir": False,
-            },
-        },
+        StimelaMeta(
+            mkdir=False,
+        ),
     ] = None,
+    backend: Annotated[
+        Literal["auto", "native", "apptainer", "singularity", "docker", "podman"],
+        typer.Option(
+            help="Execution backend.",
+        ),
+        StimelaMeta(
+            skip=True,
+        ),
+    ] = "auto",
+    always_pull_images: Annotated[
+        bool,
+        typer.Option(
+            help="Always pull container images, even if cached locally.",
+        ),
+        StimelaMeta(
+            skip=True,
+        ),
+    ] = False,
 ):
     """
     Renders a beam dataset (BDS) to an xradio-compatible zarr image
     """
-    from meerkat_beams.core.bds_to_xradio import bds_to_xradio as _impl
+    if backend == "native" or backend == "auto":
+        try:
+            # Pre-flight must_exist for remote URIs before dispatching.
+            from hip_cargo.utils.runner import preflight_remote_must_exist  # noqa: E402
 
-    elements_list = elements.split(",") if isinstance(elements, str) else (list(elements) if elements else [])
-    output_pol_list = output_pol.split(",") if isinstance(output_pol, str) else (list(output_pol) if output_pol else [])
+            preflight_remote_must_exist(
+                bds_to_xradio,
+                dict(
+                    bds_path=bds_path,
+                    image_path=image_path,
+                    output_var=output_var,
+                    pixel_stepping=pixel_stepping,
+                    time_stepping=time_stepping,
+                    num_freq=num_freq,
+                    chunks_time=chunks_time,
+                    chunks_freq=chunks_freq,
+                    chunks_x=chunks_x,
+                    chunks_y=chunks_y,
+                    elements=elements,
+                    output_pol=output_pol,
+                    beam_type=beam_type,
+                    compress=compress,
+                    output=output,
+                ),
+            )
 
-    _impl(
-        str(bds_path),
-        str(image_path),
-        str(output),
-        output_var=output_var,
-        pixel_stepping=pixel_stepping,
-        time_stepping=time_stepping,
-        num_freq=num_freq,
-        chunks_time=chunks_time,
-        chunks_freq=chunks_freq,
-        chunks_x=chunks_x,
-        chunks_y=chunks_y,
-        elements=elements_list,
-        output_pol=output_pol_list,
-        beam_type=beam_type,
-        compress=compress,
+            # Lazy import the core implementation
+            from meerkat_beams.core.bds_to_xradio import bds_to_xradio as bds_to_xradio_core  # noqa: E402
+
+            # Call the core function with all parameters
+            bds_to_xradio_core(
+                bds_path,
+                image_path,
+                output,
+                output_var=output_var,
+                pixel_stepping=pixel_stepping,
+                time_stepping=time_stepping,
+                num_freq=num_freq,
+                chunks_time=chunks_time,
+                chunks_freq=chunks_freq,
+                chunks_x=chunks_x,
+                chunks_y=chunks_y,
+                elements=elements,
+                output_pol=output_pol,
+                beam_type=beam_type,
+                compress=compress,
+            )
+            return
+        except ImportError:
+            if backend == "native":
+                raise
+
+    # Resolve container image from installed package metadata
+    from hip_cargo.utils.config import get_container_image  # noqa: E402
+    from hip_cargo.utils.runner import run_in_container  # noqa: E402
+
+    image = get_container_image("meerkat-beams")
+    if image is None:
+        raise RuntimeError("No Container URL in meerkat-beams metadata.")
+
+    run_in_container(
+        bds_to_xradio,
+        dict(
+            bds_path=bds_path,
+            image_path=image_path,
+            output_var=output_var,
+            pixel_stepping=pixel_stepping,
+            time_stepping=time_stepping,
+            num_freq=num_freq,
+            chunks_time=chunks_time,
+            chunks_freq=chunks_freq,
+            chunks_x=chunks_x,
+            chunks_y=chunks_y,
+            elements=elements,
+            output_pol=output_pol,
+            beam_type=beam_type,
+            compress=compress,
+            output=output,
+        ),
+        image=image,
+        backend=backend,
+        always_pull_images=always_pull_images,
     )

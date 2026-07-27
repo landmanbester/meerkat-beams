@@ -1,77 +1,49 @@
-import tarfile
+"""
+pytest session-level setup.
+
+Ensures the L-band BDS cache is populated before tests run so the
+integration suite (which uses an L-band test MS) has data available.
+Set MBEAMS_OFFLINE=1 to skip the download (for air-gapped CI).
+"""
+
+import os
 from pathlib import Path
 
-import requests
+from meerkat_beams import cache
 
 test_root_path = Path(__file__).resolve().parent
-test_data_path = Path(test_root_path, "data")
+test_data_path = test_root_path / "data"
 test_data_path.mkdir(parents=True, exist_ok=True)
 
-_data_tar_name = "MeerKAT_UHF.zarr.tgz"
-_beam_name = "MeerKAT_UHF.zarr"
+# Kept for fixtures that pair the BDS with a test measurement set.
+# https://drive.google.com/file/d/1mCTrC3IbMUqu0Adu1DWOjhwvzQS6gseo/view?usp=drive_link
+test_ms_gdrive_id = "1mCTrC3IbMUqu0Adu1DWOjhwvzQS6gseo"
 
-data_tar_path = Path(test_data_path, _data_tar_name)
-beam_path = Path(test_data_path, _beam_name)
+# Primary calibrator location
+ra = "19:39:25.027"
+dec = "-63.42.45.626"
 
-# Band code -> input zarr filename in tests/data/
-BAND_INPUT_ZARR = {
-    "U": "MeerKAT_UHF.zarr",
-    "L": "MeerKAT_L.zarr",
-    # S-band sub-bands can be added as data becomes available
-    # "S0": "MeerKAT_S0.zarr",
-    # "S1": "MeerKAT_S1.zarr",
-    # "S2": "MeerKAT_S2.zarr",
-    # "S3": "MeerKAT_S3.zarr",
-    # "S4": "MeerKAT_S4.zarr",
+# Primary calibrator (PKS 1934-638) spectral model.
+# I(nu) = I0 * (nu/nu0) ** (a + b*x + c*x**2 + d*x**3 + e*x**4)   where x = log10(nu/nu0)
+CALIBRATOR_SPECTRUM = {
+    "I0": 15.088731791006047,
+    "nu0": 1283791015.625,
+    "a": -1.2369319597991164,
+    "b": -7.995603882017982,
+    "c": 11.605973123430397,
+    "d": -15.787559501497967,
+    "e": -3.928824456855068,
 }
-
-# https://drive.google.com/file/d/13k5WyyQFdcNG8FqsBAz3mAvhuaVZ2FlW/view?usp=sharing
-
-gdrive_id = "13k5WyyQFdcNG8FqsBAz3mAvhuaVZ2FlW"
-
-url = "https://drive.google.com/uc?id={id}".format(id=gdrive_id)
 
 
 def pytest_sessionstart(session):
-    """Called after Session object has been created, before run test loop."""
-
-    if beam_path.exists():
-        print("Test data already present - not downloading.")
-    else:
-        print("Test data not found - downloading...")
-        download = requests.get(url)  # , params={"dl": 1}
-        with open(data_tar_path, "wb") as f:
-            f.write(download.content)
-        with tarfile.open(data_tar_path, "r:gz") as tar:
-            tar.extractall(path=test_data_path)
-        data_tar_path.unlink()
-        print("Test data successfully downloaded.")
-
-
-# def download_file_from_google_drive(id, destination):
-#     URL = "https://docs.google.com/uc?export=download"
-#     session = requests.Session()
-
-#     # First request to check for the 'large file' warning
-#     response = session.get(URL, params={'id': id}, stream=True)
-#     token = get_confirm_token(response)
-
-#     # Second request with the confirmation token
-#     if token:
-#         params = {'id': id, 'confirm': token}
-#         response = session.get(URL, params=params, stream=True)
-
-#     save_response_content(response, destination)
-
-# def get_confirm_token(response):
-#     for key, value in response.cookies.items():
-#         if key.startswith('download_warning'):
-#             return value
-#     return None
-
-# def save_response_content(response, destination):
-#     CHUNK_SIZE = 32768
-#     with open(destination, "wb") as f:
-#         for chunk in response.iter_content(CHUNK_SIZE):
-#             if chunk: # filter out keep-alive new chunks
-#                 f.write(chunk)
+    """Populate the L-band cache once per session if it isn't there yet."""
+    if os.environ.get("MBEAMS_OFFLINE") == "1":
+        print("MBEAMS_OFFLINE=1 - skipping L-band cache warm-up.")
+        return
+    if cache.bds_path("L").exists():
+        print(f"L-band BDS already cached at {cache.bds_path('L')}.")
+        return
+    print("L-band BDS not in cache - downloading and converting...")
+    cache.ensure_band_bds("L")
+    print(f"L-band BDS ready at {cache.bds_path('L')}.")
