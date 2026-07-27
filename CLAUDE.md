@@ -93,8 +93,9 @@ Full field/variable/dtype tables for all three formats:
 - Runtime dep is `hip-cargo>=0.3.0`, resolved from PyPI — the transitional git-main pin is retired (see `docs/wiki/design-decisions.md` D8). The `Dockerfile`'s `git` install layer predates that re-pin and has **not** been removed yet as of this commit (still present, per its own inline comment) — don't assume it's gone. The scientific stack (`xarray`, `zarr<3`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask-ms`, `wget`) is under the `[full]` extra.
 - Ruff: `line-length=120`, `target-version=py310`, rules `E,F,I,N,W` with `E741`/`N806` ignored (domain names: `l`, `m`, `I`, `S`, `Sinv`). Pre-commit runs `ruff-check --fix` and `ruff-format`.
 - Core function signatures mirror their CLI signatures (same names/defaults) with plain types. Don't move Typer conversions into core. CLI passes `parse_upath`-parsed path objects directly (no `str(...)` coercion); core accepts anything `str`-coercible / path-like.
-- Commits: conventional prefixes (`build:`, `chore:`, `feat:`, `fix:`…) based on recent history.
-- Version bumping via `tbump` (config in `tbump.toml`).
+- Commits: conventional prefixes, **enforced** by `conventional-pre-commit` at the `commit-msg` stage. Allowed types: `feat fix refactor perf docs deps chore ci style test build`. Fresh clones need `pre-commit install --hook-type commit-msg` — plain `pre-commit install` does not wire up the `commit-msg` hook.
+- Version bumping via `tbump` (config in `tbump.toml`), **PEP 440**: `X.Y.Z`, optional `aN`/`bN`/`rcN`, optional `.postN`.
+- `CHANGELOG.md` is **generated, not hand-edited**: a `tbump` `before_commit` hook runs `uvx git-cliff --tag v<new> -o CHANGELOG.md` and stages it, so the changelog lands inside the release commit. `-o` rewrites the whole file from git history every time, so hand edits do not survive a release — fix changelog problems in `cliff.toml` (grouping rules, `commit_preprocessors`), never in `CHANGELOG.md`.
 
 ## Running things
 
