@@ -19,9 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    # Track hip-cargo main until the next release; recent fixes to list-default
-    # round-tripping (cli <-> cab) are not yet in a tagged version.
-    "hip-cargo @ git+https://github.com/landmanbester/hip-cargo.git@main",
+    "hip-cargo>=0.3.0",
 ]
 
 [project.optional-dependencies]
