@@ -55,7 +55,12 @@ build-backend = "uv_build"
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
+# "*.md": ruff 0.16+ formats Python code blocks embedded in Markdown; our
+# README/wiki snippets are illustrative signature fragments (e.g. `] = 10,`)
+# that ruff would rewrite into standalone-valid but misleading code
+# (`] = (10,)`). Keep the formatter to real Python files only.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
