@@ -41,20 +41,29 @@ needed. With `spi` given (or a single frequency) the returned shape is
 `(Y, X)`-shaped grids and are passed through in that orientation
 (`utils.py:472-478` docstring).
 
-Downstream consumers — breifast and the pfb-imaging `hci` command — consume
-these maps as `(Y, X)` with **no on-receipt transpose**. See
-`docs/wiki/beamwizard.md` for the surrounding `BeamWizard` API.
+The pfb-imaging `hci` command consumes these maps as `(Y, X)` with **no
+on-receipt transpose** (confirmed by pfb-imaging's own
+`docs/wiki/image-and-beam-orientation.md`). See `docs/wiki/beamwizard.md`
+for the surrounding `BeamWizard` API.
+
+breifast is a separate case: it has **not adopted this package yet**.
+breifast's own beam-fetch path still produces the old `(X, Y)` order, so
+its existing on-receipt transpose (`killick-polishes-silver` @ `0a898bb`)
+is **currently correct** and must not be touched. Removing it now would
+introduce a bug, not fix one.
 
 **Post-mortem (why this took a while to notice):** the array order used to
-be `(X, Y)` (`np.meshgrid(l, m, indexing="ij")`). killick found the bug via
-a covariance-map reference pixel — `rho[x, y] = 1.000` vs `rho[y, x] =
--0.15` — and patched breifast to transpose on receipt
+be `(X, Y)` (`np.meshgrid(l, m, indexing="ij")`) in this package. killick
+found the bug via a covariance-map reference pixel — `rho[x, y] = 1.000` vs
+`rho[y, x] = -0.15` — and patched breifast to transpose on receipt
 (`killick-polishes-silver` @ `0a898bb`) as a stopgap. The bug was invisible
 almost everywhere else because the MeerKAT rotation-averaged beam is nearly
-circularly symmetric, so a transpose of the map barely changes it. Fixed at
-commit `616906b`; breifast's on-receipt transpose is now stale and tracked
-for removal by issue #14 (would double-transpose if left in place once
-breifast adopts this package).
+circularly symmetric, so a transpose of the map barely changes it. Fixed in
+this package at commit `616906b`. Per issue #14, breifast's on-receipt
+transpose will become stale — and should be removed — **once breifast
+switches to consuming this package's `(Y, X)` maps directly**; until then
+the transpose remains correct and issue #14 explicitly says not to action
+it yet.
 
 Pinned by (`tests/test_beam_wizard.py`):
 `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
@@ -136,10 +145,11 @@ through `assemble_mueller`, not the physical-correctness question):
 `tests/test_beam_orientation_mueller.py::test_assemble_mueller_signs_swap_propagate`.
 
 **Convention knobs still under investigation** (per PR #8's M1 checklist):
-phase-rotation exponent sign, w-term sign (see the docstring in
-`scripts/beam_orientation/phase_rotate.py`, which validates
-`V' = V * exp(+2πi(uΔl + vΔm + w(Δn-1))/λ)` as the convention being tested),
-`T` vs `T*`, and a possible BDS Y-axis flip.
+phase-rotation exponent sign, w-term sign — `scripts/beam_orientation/phase_rotate.py`'s
+docstring records the sign convention currently being validated (a `+2πi`
+exponent, `w·(Δn − 1)` w-term) and flags both signs as candidate flips if
+the parallactic-angle controls above don't isolate the issue — `T` vs
+`T*`, and a possible BDS Y-axis flip.
 
 **Deferred to:**
 - issue #9 — diagnose why the recovered offset-field spectra aren't flat
@@ -205,8 +215,11 @@ Pinned by `tests/test_beam_orientation_ms_io.py`,
   construction is already implemented and validated there as of its
   `last_verified_commit`; treat issue #13 as a cross-repo tracking item to
   re-check, not evidence of a known-open bug in pfb-imaging today.
-- issue #14 — drop breifast's on-receipt transpose once it adopts this
-  package (see post-mortem above).
+- issue #14 — breifast has not adopted this package yet; its current
+  on-receipt transpose remains correct (do not touch it). The transpose
+  will become stale, and should be dropped, once breifast adopts this
+  package — see post-mortem above and issue #14's explicit "do not action
+  until breifast actually switches" note.
 - issue #15 — port killick's per-pixel time-covariance accumulation and
   chase an outstanding ~24x amplitude discrepancy between per-channel and
   frequency-averaged beam tracks.
@@ -222,4 +235,6 @@ Sources: `src/meerkat_beams/utils.py:265-299` (`get_source_coordinates`),
 `tests/test_beam_orientation_mueller.py::test_assemble_mueller_signs_swap_propagate`,
 `tests/test_beam_orientation_ms_io.py`, `tests/test_beam_orientation_plots.py`,
 commit `616906b`, PR #8 (merge note, M1 checklist), issues #9, #10, #11,
-#12, #13, #14, #15, `~/software/pfb-imaging/docs/wiki/image-and-beam-orientation.md`.
+#12, #13, #14 (`gh issue view 14`: breifast not yet adopted, transpose
+currently correct, "do not action until breifast actually switches"), #15,
+`~/software/pfb-imaging/docs/wiki/image-and-beam-orientation.md`.
