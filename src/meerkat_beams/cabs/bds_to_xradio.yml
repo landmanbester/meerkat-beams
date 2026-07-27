@@ -5,7 +5,7 @@ cabs:
     name: bds_to_xradio
     info:
       Renders a beam dataset (BDS) to an xradio-compatible zarr image
-    image: ghcr.io/landmanbester/meerkat-beams:0.0.1
+    image: ghcr.io/landmanbester/meerkat-beams:latest
     inputs:
       bds-path:
         info:
