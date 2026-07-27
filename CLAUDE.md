@@ -53,7 +53,7 @@ Two generators, inverse of each other:
 | command | core | purpose |
 |---|---|---|
 | `mbeams download-mdv-beams` | `core/download_mdv_beams.py` | fetch an MdV `.npz` from SARAO mirrors (band code `L`/`U`/`S0`…`S4`, filename, or full URL) |
-| `mbeams mdv-beams-to-bds` | `core/mdv_beams_to_bds.py` | convert MdV `.npz` (or per-antenna mean-beam zarr) to a BDS (zarr) containing `jones`, `njones`, `stokes`, `nstokes` |
+| `mbeams mdv-beams-to-bds` | `core/mdv_beams_to_bds.py` | convert MdV `.npz` (or per-antenna mean-beam zarr) to a BDS (zarr) holding `jones`/`njones`/`stokes`/`nstokes` plus `mueller`/`nmueller` — see `docs/wiki/data-model.md` |
 | `mbeams bds-to-xradio` | `core/bds_to_xradio.py` | render a BDS into a full `(time, frequency, polarization, l, m)` xradio zarr by interpolating the beam along parallactic-angle-rotated tracks, using a WCS image for pointing/time |
 | `mbeams mdv-to-xradio` | `core/mdv_to_xradio.py` | shortcut: dump one Jones element / component of an MdV `.npz` directly into an xradio-shaped zarr (no time axis, no rotation) |
 
@@ -80,7 +80,7 @@ cache (`cache.py`) backing `BeamWizard(band=...)` is covered by
 ## Domain concepts
 
 - **MdV beams**: raw voltage beams from the SARAO archive, `.npz` with `beam` (pol, ant, freq, y, x) complex64, `freq_MHz`, `margin_deg`, `pols` (`HH`/`HV`/`VH`/`VV`), `antnames`. Last antenna index (`-1`) is `array_average`.
-- **BDS (beam dataset)**: zarr holding normalised & unnormalised Jones and Stokes (Mueller-row) beams + a synthesized FITS header in `.attrs["fits_header"]` and scalar attrs `x0`, `y0`, `dx`, `dy`, `freqs`. Produced by `mdv-beams-to-bds`.
+- **BDS (beam dataset)**: zarr holding normalised & unnormalised Jones, Stokes, and Mueller-coherency beams (`jones`/`njones`, `stokes`/`nstokes`, `mueller`/`nmueller`) + a synthesized FITS header in `.attrs["fits_header"]` and scalar attrs `x0`, `y0`, `dx`, `dy`, `freqs`. Produced by `mdv-beams-to-bds` — full schema in `docs/wiki/data-model.md`.
 - **xradio zarr**: schema-compatible primary-beam image `(time, frequency, polarization, l, m)` with `l`/`m` in radians and a `direction` attribute block. Produced by `bds-to-xradio` or `mdv-to-xradio`.
 - **Normalised vs not**: `njones` / `nstokes` are pre-multiplied by the inverse of the central-pixel Jones matrix so the on-axis beam is the identity; use these unless you specifically need raw voltage beams.
 
@@ -90,7 +90,7 @@ Full field/variable/dtype tables for all three formats:
 ## Conventions
 
 - Python support policy: **3.11–3.13 full** (scientific stack, tested in CI); **3.10 lightweight only** — base install (CLI + hip-cargo container dispatch), no `[full]` stack, deliberately excluded from the CI test matrix (a dedicated `lightweight` CI job pins base-install + `mbeams --help` on 3.10 instead — do not add 3.10 to the test matrix). Test-group deps carry `python_version >= '3.11'` markers for the same reason.
-- Runtime dep is `hip-cargo` tracking **git main** (recent cli↔cab list-default/image fixes not yet in a tag; re-pin to the next release before upstreaming to suricat-beams — the Dockerfile installs `git` solely for this and that layer goes away on re-pin). The scientific stack (`xarray`, `zarr<3`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask-ms`, `wget`) is under the `[full]` extra.
+- Runtime dep is `hip-cargo>=0.3.0`, resolved from PyPI — the transitional git-main pin is retired (see `docs/wiki/design-decisions.md` D8). The `Dockerfile`'s `git` install layer predates that re-pin and has **not** been removed yet as of this commit (still present, per its own inline comment) — don't assume it's gone. The scientific stack (`xarray`, `zarr<3`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask-ms`, `wget`) is under the `[full]` extra.
 - Ruff: `line-length=120`, `target-version=py310`, rules `E,F,I,N,W` with `E741`/`N806` ignored (domain names: `l`, `m`, `I`, `S`, `Sinv`). Pre-commit runs `ruff-check --fix` and `ruff-format`.
 - Core function signatures mirror their CLI signatures (same names/defaults) with plain types. Don't move Typer conversions into core. CLI passes `parse_upath`-parsed path objects directly (no `str(...)` coercion); core accepts anything `str`-coercible / path-like.
 - Commits: conventional prefixes (`build:`, `chore:`, `feat:`, `fix:`…) based on recent history.
@@ -111,7 +111,7 @@ uv run mbeams --help                  # CLI
 bash scripts/genfuncs.sh
 ```
 
-CI (`.github/workflows/ci.yml`) runs ruff + pytest on Python 3.11–3.13, plus a `lightweight` job that pins the 3.10 base-install guarantee (no test suite there — see the Python support policy above). Commit message containing `[skip checks]` skips the CI job. Docker image built from `Dockerfile` (python:3.11-slim, installs `.[full]`; includes `git` while hip-cargo is a git dependency).
+CI (`.github/workflows/ci.yml`) runs ruff + pytest on Python 3.11–3.13, plus a `lightweight` job that pins the 3.10 base-install guarantee (no test suite there — see the Python support policy above). Commit message containing `[skip checks]` skips the CI job. Docker image built from `Dockerfile` (python:3.11-slim, installs `.[full]`; still installs `git`, a leftover from the retired hip-cargo git-main pin — see `docs/wiki/design-decisions.md` D8).
 
 ## Tests
 
@@ -131,7 +131,8 @@ Tests silently skip when env vars / data are unavailable — if you expect a tes
 
 Interpolation/rendering gotchas (prefilter double-filtering, off-cube
 policy, dtype-aware prefilter cache, the settled `(Y, X)` rotation-averaged
-map order, etc.) and the load-bearing decisions behind them are tracked as
+map order — see [`docs/wiki/beam-orientation.md`](docs/wiki/beam-orientation.md)
+— etc.) and the load-bearing decisions behind them are tracked as
 a Context/Decision/Rationale/Consequences ledger in
 [`docs/wiki/design-decisions.md`](docs/wiki/design-decisions.md), with the
 implementation-level detail in
