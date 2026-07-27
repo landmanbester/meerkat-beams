@@ -21,25 +21,22 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           token: ${{ steps.generate_token.outputs.token }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.10"
 
+      # setup-uv owns the uv cache. Its key already covers platform, resolved
+      # Python version, and hashes of uv.lock / pyproject.toml, so a separate
+      # actions/cache step on ~/.cache/uv would just duplicate it.
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Cache uv dependencies
-        uses: actions/cache@v5
+        uses: astral-sh/setup-uv@v9.0.0
         with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-
+          enable-cache: true
 
       - name: Install dependencies
         run: uv sync

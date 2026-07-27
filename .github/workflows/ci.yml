@@ -26,26 +26,22 @@ jobs:
 
       - name: Check out code
         if: env.SKIP_CHECKS != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
         if: env.SKIP_CHECKS != 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.10"
 
+      # setup-uv owns the uv cache. Its key already covers platform, resolved
+      # Python version, and hashes of uv.lock / pyproject.toml, so a separate
+      # actions/cache step on ~/.cache/uv would just duplicate it.
       - name: Set up uv
         if: env.SKIP_CHECKS != 'true'
-        uses: astral-sh/setup-uv@v5
-
-      - name: Cache uv dependencies
-        if: env.SKIP_CHECKS != 'true'
-        uses: actions/cache@v4
+        uses: astral-sh/setup-uv@v9.0.0
         with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-
+          enable-cache: true
 
       - name: Install dependencies
         if: env.SKIP_CHECKS != 'true'
@@ -84,27 +80,19 @@ jobs:
 
       - name: Check out code
         if: env.SKIP_CHECKS != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
         if: env.SKIP_CHECKS != 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Set up uv
         if: env.SKIP_CHECKS != 'true'
-        uses: astral-sh/setup-uv@v5
-
-      - name: Cache uv dependencies
-        if: env.SKIP_CHECKS != 'true'
-        uses: actions/cache@v4
+        uses: astral-sh/setup-uv@v9.0.0
         with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-py${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-py${{ matrix.python-version }}-
-            ${{ runner.os }}-uv-
+          enable-cache: true
 
       - name: Install dependencies
         if: env.SKIP_CHECKS != 'true'
@@ -131,15 +119,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.10
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.10"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v9.0.0
 
       - name: Install base package (no extras)
         run: |
