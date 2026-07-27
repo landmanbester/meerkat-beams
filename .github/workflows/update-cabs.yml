@@ -30,16 +30,13 @@ jobs:
         with:
           python-version: "3.10"
 
+      # setup-uv owns the uv cache. Its key already covers platform, resolved
+      # Python version, and hashes of uv.lock / pyproject.toml, so a separate
+      # actions/cache step on ~/.cache/uv would just duplicate it.
       - name: Set up uv
         uses: astral-sh/setup-uv@v9.0.0
-
-      - name: Cache uv dependencies
-        uses: actions/cache@v6
         with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-
+          enable-cache: true
 
       - name: Install dependencies
         run: uv sync
