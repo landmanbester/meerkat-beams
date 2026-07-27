@@ -1,6 +1,6 @@
 [project]
 name = "meerkat-beams"
-version = "0.0.0"
+version = "0.0.1"
 description = "MeerKAT beam interpolator"
 readme = "README.md"
 # Python support policy: 3.10 is supported ONLY for the lightweight base
