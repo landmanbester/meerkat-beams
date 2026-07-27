@@ -2,6 +2,24 @@
 
 MeerKAT primary-beam model handling: download MdV beam files from the SARAO archive, convert them to a beam dataset (BDS), and render time/frequency-resolved primary beams to `xradio`-compatible zarr stores. See https://doi.org/10.48479/wdb0-h061 for the upstream MdV beam data.
 
+## LLM wiki
+
+Deep reference for this repo lives in `docs/wiki/` — start at
+[`docs/wiki/index.md`](docs/wiki/index.md), which routes to the rest. Each
+page's frontmatter carries a `last_verified_commit`; a non-empty
+`git diff <that commit>..HEAD -- <files the page covers>` means re-verify
+the page before trusting it.
+
+Maintenance rules:
+
+- Read the relevant wiki page before working in a subsystem it covers.
+- If a change invalidates or extends a page, update that page plus its
+  `timestamp` and `last_verified_commit` **in the same session**, and add a
+  line to `docs/wiki/log.md`.
+- Specs and plans under `docs/superpowers/` are ephemeral working scratch —
+  gitignored, never cited. Fold any durable fact they contain into the wiki
+  before finishing a branch.
+
 ## Architecture — three layers + cabs
 
 ```
@@ -41,36 +59,17 @@ Two generators, inverse of each other:
 
 ## Key abstractions in `utils.py`
 
-### `BeamWizard`
-Attaches to a BDS (zarr) and, optionally, an image (FITS or xradio zarr) and provides beam interpolation. The image supplies WCS and (optionally) a time axis.
-
-`image_name` is optional. Without it the wizard is BDS-only: `interpolate_beam` works, but `centre`/`wcs`/`l_grid`/`m_grid` raise `RuntimeError` and `times` is `None`. Use `attach_image(image_name)` to populate image-derived state after construction, or `set_field_centre(centre, times=None)` to supply just a pointing centre (the image-free path used by `scripts/test_beam_orientation.py`).
-
-- `get_source_coordinates(srcpos, times, loc)` → (xpyp, seps, angles). Transforms sky → AltAz per time, computes sep/position-angle from field centre, converts to BDS pixel coords via `dx`/`dy`/`x0`/`y0` attrs.
-- `interpolate_beam(xpyp, freq, var, i, j)` → cubic-B-spline interpolation of the beam at (freq, y, x). Uses `_get_prefilter` to cache `spline_filter(var[i,j])`; the `map_coordinates` call passes `prefilter=False` because the input is already prefiltered. **Do not flip this back to `True`** — it silently double-filters.
-- `get_time_variable_beamgain(coord, times, freq, spi, …)` → beam gain along a source's track through the beam as parallactic angle rotates. With `spi`, returns frequency-averaged gain weighted by `(f/f0)**spi`.
-- `get_rotation_averaged_beam(l, m, times, freq, spi, time_stepping, pixel_stepping, chunk_size, …)` → `(mean, var)` over the parallactic-angle rotations for a grid of l/m offsets. Grid is in degrees; internal upsampling uses linear `map_coordinates` when `pixel_stepping > 1`. **Returned maps are (Y, X)-ordered** (FITS convention: axis 0 = m/north, axis 1 = l/east; shape `(NY, NX)` or `(NFREQ, NY, NX)`), matching the cubes produced by breifast and the pfb-imaging `hci` command. 2D l/m inputs must already be (Y, X)-shaped grids. Pinned by `test_rotation_averaged_beam_1d_lm_returns_y_x_order` and `test_rotation_averaged_beam_map_indexes_as_y_x` — do not flip this back to `(X, Y)`.
-- `get_time_freq_beam(filename, var_name, dim_names, …, ij_list, …)` → writes a `(time, frequency, polarization, l, m)`-shaped cube to a zarr store. `dim_names` is positionally interpreted (index 0 = time-axis name, 1 = freq, 2 = polarization/ij, 3 = x/l, 4 = y/m); only the canonical xradio order `("time", "frequency", "polarization", "l", "m")` is currently accepted — any other tuple raises `ValueError` (pinned by `test_time_freq_beam_rejects_non_canonical_dim_names`). Real permutation is not implemented; the data is always laid out in canonical role order.
-
-Convention: the beam cube in BDS is dim-ordered `(i, j, FREQ, Y, X)`; variable name picks Jones (`njones`/`jones`, dims `receptor_{i,j}` ∈ {0,1}) or Stokes (`nstokes`/`stokes`, dims `stokes_{i,j}` ∈ {I,Q,U,V}). `dx`, `dy` are degrees/pixel; `x0`, `y0` are the center pixel index.
-
-### `enrich_bds_xradio(zarr_path, bw, output_var, polarizations)`
-Post-processes a zarr store written by `get_time_freq_beam` into xradio schema: converts `l`/`m` from degrees to radians, sets polarization labels, adds a `direction` attribute block (`icrs`, SIN projection, reference = field centre), and re-consolidates metadata.
-
-### Cache (`cache.py`)
-
-`BeamWizard(band="L", image_name=...)` auto-downloads the MeerKAT
-mean-beam zarr for the named band from Google Drive and builds a
-compressed BDS locally, caching both under
-
-  `$MBEAMS_CACHE_DIR` or `$XDG_CACHE_HOME/meerkat-beams` or `~/.cache/meerkat-beams`
-
-as `inputs/MeerKAT_<BAND>.zarr/` and `bds/MeerKAT_<BAND>.bds.zarr/`.
-Subsequent constructions of `BeamWizard(band=...)` reuse the cached
-BDS. Supported bands: `U`, `L`, `S0`, `S4` (S1/S2/S3 have no published
-gdrive ID — request the band explicitly via `bds_name=` instead).
-Concurrent first-time downloads of the same band from multiple
-processes are not guarded; warm the cache from a single process.
+`BeamWizard` attaches to a BDS (zarr) and, optionally, an image (FITS or
+xradio zarr), and provides beam interpolation, time-variable beam gain,
+rotation-averaged beam maps, and full time/frequency zarr rendering
+(`get_time_freq_beam`, `enrich_bds_xradio`). Its method-by-method contract
+(prefilter caching and dtype, off-cube policy, spline order, the optional-
+image construction paths, canonical `dim_names`) is documented in
+[`docs/wiki/beamwizard.md`](docs/wiki/beamwizard.md); the BDS/xradio schema
+it reads and writes is documented in
+[`docs/wiki/data-model.md`](docs/wiki/data-model.md). The on-disk band
+cache (`cache.py`) backing `BeamWizard(band=...)` is covered by
+[`docs/wiki/design-decisions.md`](docs/wiki/design-decisions.md) (D6).
 
 ### Logging
 `LOGGER` / `log` (same object). Console handler is kept on the module-level `CONSOLE`; change level via `set_console_logging_level(level)`. Don't create additional handlers.
@@ -84,6 +83,9 @@ processes are not guarded; warm the cache from a single process.
 - **BDS (beam dataset)**: zarr holding normalised & unnormalised Jones and Stokes (Mueller-row) beams + a synthesized FITS header in `.attrs["fits_header"]` and scalar attrs `x0`, `y0`, `dx`, `dy`, `freqs`. Produced by `mdv-beams-to-bds`.
 - **xradio zarr**: schema-compatible primary-beam image `(time, frequency, polarization, l, m)` with `l`/`m` in radians and a `direction` attribute block. Produced by `bds-to-xradio` or `mdv-to-xradio`.
 - **Normalised vs not**: `njones` / `nstokes` are pre-multiplied by the inverse of the central-pixel Jones matrix so the on-axis beam is the identity; use these unless you specifically need raw voltage beams.
+
+Full field/variable/dtype tables for all three formats:
+[`docs/wiki/data-model.md`](docs/wiki/data-model.md).
 
 ## Conventions
 
@@ -127,20 +129,15 @@ Tests silently skip when env vars / data are unavailable — if you expect a tes
 
 ## Known minor issues
 
-Flagged while reviewing `BeamWizard.interpolate_beam` and `get_time_freq_beam`. Unit coverage for `BeamWizard` lives in `tests/test_beam_wizard.py` (hermetic — synthetic BDS + FITS in `tmp_path`); those tests are what pin the fixes below.
-
-**Fixed:**
-- **Double-prefiltering in `interpolate_beam`.** `_get_prefilter` already runs `spline_filter`, so the inner `map_coordinates` call now passes `prefilter=False`. Pinned by `test_subpixel_matches_direct_scipy`.
-- **Implicit off-cube policy.** `map_coordinates` in `interpolate_beam` now passes `mode="constant", cval=0.0` explicitly; out-of-X/Y coordinates still return 0 (pinned by `test_out_of_range_xy_returns_zero`).
-- **Spline order in the prefilter cache.** `_get_prefilter` now takes `order: int = 3` and includes it in the cache key; `interpolate_beam` accepts and forwards `order` to both `spline_filter` and `map_coordinates`.
-- **Silent out-of-range frequency.** `interpolate_beam` now raises `ValueError` with the requested vs. BDS frequency ranges (in MHz) before calling `freq_to_index`. Pinned by `test_out_of_range_freq_raises`.
-- **FITS-image branch `self.time` → `self.times` typo.** The FITS branch of `BeamWizard.__init__` now sets `self.times = None`, so `get_source_coordinates` with no explicit `times` raises the documented `RuntimeError` instead of an `AttributeError`. Pinned by `test_fits_branch_sets_times_none_raises_runtimeerror`.
-- **`get_time_freq_beam` fill_value pitfall.** Both the beam variable and the coord datasets now pass `fill_value=None` to `zarr.Group.create_dataset`. Default `xarray.open_zarr` no longer masks genuine `0.0` (coord or pixel) as `NaN`. Pinned by `test_time_freq_beam_open_default_keeps_real_zeros`.
-- **`_get_prefilter` cache widened float32 → float64.** `scipy.ndimage.spline_filter` defaults to float64 output even on float32 inputs, doubling the memory per cached entry. `_get_prefilter` now passes `output=np.float32`, so the cached prefilter mirrors the BDS dtype. Pinned by `test_prefilter_cached_dtype_is_float32`.
-- **Redundant meshgrid in `interpolate_beam`.** Replaced the two-`np.meshgrid` construction with explicit `np.broadcast_to` calls so the (freq, y, x) coordinate stack is built directly. No behaviour change; covered by all existing `interpolate_beam` tests.
-- **`get_rotation_averaged_beam` maps were (X, Y)-ordered.** The 1D-input meshgrid used `indexing="ij"`, so the returned mean/variance maps were indexed `[x, y]` — transposed relative to FITS-convention (Y, X) consumers (found by killick via a covariance-map reference pixel; the near-circular rotation-averaged beam hid it). Now `np.meshgrid(l, m)` (default `"xy"`) returns (Y, X)-ordered maps natively. This is the settled convention — downstream consumers (breifast, pfb-imaging `hci`) must consume the maps as (Y, X) with no on-receipt transpose. The rendered xradio zarr from `get_time_freq_beam` is unaffected (its dims are labeled and were always self-consistent). Pinned by `test_rotation_averaged_beam_1d_lm_returns_y_x_order` and `test_rotation_averaged_beam_map_indexes_as_y_x`.
-
-**Still open:** none.
+Interpolation/rendering gotchas (prefilter double-filtering, off-cube
+policy, dtype-aware prefilter cache, the settled `(Y, X)` rotation-averaged
+map order, etc.) and the load-bearing decisions behind them are tracked as
+a Context/Decision/Rationale/Consequences ledger in
+[`docs/wiki/design-decisions.md`](docs/wiki/design-decisions.md), with the
+implementation-level detail in
+[`docs/wiki/beamwizard.md`](docs/wiki/beamwizard.md). Unit coverage lives in
+`tests/test_beam_wizard.py` (hermetic — synthetic BDS + FITS in
+`tmp_path`). No open issues in this section as of this commit.
 
 ## Current branch
 
