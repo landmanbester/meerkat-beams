@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-07-27T10:35:37Z
+timestamp: 2026-07-27T11:12:28Z
 ---
 
 # Wiki changelog
@@ -13,7 +13,7 @@ timestamp: 2026-07-27T10:35:37Z
   `data-model.md`, `design-decisions.md`, `index.md`, `log.md`.
 - Folded the durable content of, and retired, `docs/superpowers/specs/*` and
   `docs/superpowers/plans/*` (point-in-time process artifacts; recoverable
-  from git history — last tracked at the pre-Task-8 commit).
+  from git history — last tracked at commit `c79f590`).
 - Context captured in `design-decisions.md` (D8/D9): the original "no PyPI
   release" plan from PR #8's merge note has been reversed — a release is now
   being cut, tracked by issue #17, which names the hip-cargo git dependency

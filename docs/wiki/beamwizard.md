@@ -3,7 +3,7 @@ type: reference
 title: BeamWizard interpolation and rendering internals
 description: interpolate_beam prefilter/off-cube/spline-order/freq-guard semantics, get_source_coordinates transforms, optional-image paths, get_time_freq_beam canonical dim_names, and enrich_bds_xradio.
 tags: [beamwizard, interpolation, scipy, zarr, xradio, utils]
-timestamp: 2026-07-27T09:38:10Z
+timestamp: 2026-07-27T11:12:28Z
 last_verified_commit: 3bb9b3d
 ---
 
@@ -161,7 +161,7 @@ if tuple(dim_names) != _CANONICAL_DIM_NAMES:
     raise ValueError(...)
 ```
 
-(`utils.py:722-726`). Real permutation of the data layout is not
+(`utils.py:722-728`). Real permutation of the data layout is not
 implemented — passing a differently-ordered tuple would relabel the dims
 without reordering the underlying array (silent corruption), so any
 non-canonical tuple raises `ValueError` instead. Pinned by

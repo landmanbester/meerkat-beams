@@ -3,7 +3,7 @@ type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr
 description: The three beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), and the xradio primary-beam schema.
 tags: [mdv, bds, xradio, zarr, schema, data-model]
-timestamp: 2026-07-27T10:19:03Z
+timestamp: 2026-07-27T11:12:28Z
 last_verified_commit: 56a57b7
 ---
 
@@ -168,7 +168,7 @@ script — not the BDS `mueller` variable itself).
 
 - `src/meerkat_beams/core/mdv_beams_to_bds.py:12-131` (`mdv_beams_to_bds`;
   antenna-branch asymmetry at `:22-35`, six-variable write at `:110-121`)
-- `src/meerkat_beams/core/bds_to_xradio.py:11-131` (`bds_to_xradio`,
+- `src/meerkat_beams/core/bds_to_xradio.py:11-130` (`bds_to_xradio`,
   `_resolve_elements`)
 - commit `2d6d0dc` ("feat(bds): add mueller term to bds")
 - commit `a4c8df7` ("fix: skip antenna selection for zarr input in

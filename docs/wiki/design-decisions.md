@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, decisions, conventions, gotchas, cache, hip-cargo, release]
-timestamp: 2026-07-27T10:29:33Z
+timestamp: 2026-07-27T11:12:28Z
 last_verified_commit: dcf5e24
 ---
 
@@ -178,8 +178,7 @@ special-cases band names elsewhere risks drifting from this registry.
 
 **Source:** `cache.py:26-32` (`BAND_GDRIVE_IDS`/`SUPPORTED_BANDS`),
 `cache.py:1-18` (module docstring: cache layout, resolution order,
-concurrency posture), `cache.py:54-69` (`ensure_band_bds`); verified
-`grep -n "hip-cargo>=0.3.0" pyproject.toml` → line 22;
+concurrency posture), `cache.py:54-69` (`ensure_band_bds`);
 `test_beam_wizard_band_routes_through_cache` (`tests/test_beam_wizard.py`),
 `test_registry_contains_expected_bands`,
 `test_ensure_band_bds_rejects_unknown_band`,
