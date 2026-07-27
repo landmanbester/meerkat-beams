@@ -5,7 +5,7 @@ cabs:
     name: download_mdv_beams
     info:
       Downloads MdV-format primary beams from SARAO archive
-    image: ghcr.io/landmanbester/meerkat-beams:dev001
+    image: ghcr.io/landmanbester/meerkat-beams:latest
     inputs:
       source:
         info:

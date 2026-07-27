@@ -1,1 +1,1 @@
-CONTAINER_IMAGE = "ghcr.io/landmanbester/meerkat-beams:dev001"
+CONTAINER_IMAGE = "ghcr.io/landmanbester/meerkat-beams:latest"
