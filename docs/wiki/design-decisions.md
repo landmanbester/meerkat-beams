@@ -2,9 +2,9 @@
 type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
-tags: [design, decisions, conventions, gotchas, cache, hip-cargo, release]
-timestamp: 2026-07-27T11:12:28Z
-last_verified_commit: dcf5e24
+tags: [design, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog]
+timestamp: 2026-07-27T13:10:48Z
+last_verified_commit: 0b4e799
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -263,6 +263,68 @@ do not assume a release has already shipped.
 
 **Source:** PR #8 merge note ("Update (2026-07-24): the original 'no
 PyPI release' plan has been reversed..."); issue #16; issue #17.
+
+## D10 — PEP 440 versions and a generated changelog
+
+**Context:** The release machinery was `hip-cargo init` scaffold that had
+drifted. `tbump.toml` declared a `[[file]]` entry searching for
+`ghcr.io/landmanbester/meerkat-beams:{current_version}` in
+`_container_image.py`, but that file holds `:latest` — and tbump validates
+every `[[file]]` search string before bumping. `tbump` therefore refused
+every version, failing with `Error: Current version string: (0.0.0) not
+found in src/meerkat_beams/_container_image.py`. Separately there was no
+changelog machinery, and the version regex matched bare semver only.
+
+**Decision:** Ported hip-cargo's arrangement. `tbump.toml` takes the PEP 440
+regex (optional `(a|b|rc)N`, optional `.postN`) plus `channel`/`release`/`post`
+fields defaulting to `""`; `message_template` becomes `chore(release): bump
+version to {new_version}`; the `[[file]]` entry for `_container_image.py` is
+**deleted** rather than repaired. `cliff.toml` (new) drives git-cliff from two
+`before_commit` hooks. `conventional-pre-commit` gates messages at
+`commit-msg`.
+
+**Rationale:** The deleted `[[file]]` entry was redundant, not just wrong —
+the tag is already rewritten by the `before_commit` regex hook, and
+`update-cabs.yml` resets it to `:latest` on `main` afterwards. That
+`:latest`-on-main / pinned-on-tag cycle is deliberate and was already correct;
+the `[[file]]` entry fought it. hip-cargo has the hook and no such entry.
+
+**Consequences:**
+
+- **`message_template` and the commit-msg hook are coupled.** The old
+  `"Bump version to {new_version}"` is not conventional; installing the hook
+  without changing it would make tbump's own release commit fail the gate it
+  just added. Verified directly: that exact string is rejected by
+  `conventional-pre-commit`, the new one passes. Do not revert one without
+  the other.
+- **`publish-container.yml` had to move from `type=semver` to `type=pep440`.**
+  `v0.1.0rc1` is not valid semver, so a pre-release tag would have produced no
+  container tags at all — silent until the first rc.
+- **Do not restore the `[[file]]` entry for `_container_image.py`,** and do not
+  "fix" that file to a version number on `main`. Both re-break `tbump`.
+- **`CHANGELOG.md` is generated and hand edits do not survive.** `git-cliff -o`
+  rewrites the file from full git history on every release, so it is not a
+  prepend. Changelog defects must be fixed in `cliff.toml`.
+- **Two `commit_preprocessors` deviate from hip-cargo's `cliff.toml`,** both
+  forced by this repo's pre-enforcement history. (1) `(?s)\r?\n.*` → `""`
+  strips commit bodies: conventional commits already expose only their subject
+  as `commit.message`, but `filter_unconventional = false` keeps unconventional
+  ones whole, and PR #8's squash body alone rendered 600 of the seeded
+  changelog's 640 lines. (2) ` \(#[0-9]+\)$` → `""` drops GitHub's trailing
+  squash suffix, which the body template already renders as a linked
+  reference. Both are no-ops for well-formed conventional commits, so they can
+  stay indefinitely.
+- Commits predating enforcement land under `### Other` in the changelog. This
+  is cosmetic and self-limiting — it cannot be tidied by hand (see above), and
+  new commits are gated.
+- git-cliff is invoked via `uvx`, not declared as a dependency — cutting a
+  release on a cold machine needs network access.
+- Issue #17 remains open: this lands the machinery only. No tag was cut, and
+  the version is still `0.0.0`.
+
+**Source:** `tbump.toml`; `cliff.toml`; `.pre-commit-config.yaml`;
+`.github/workflows/publish-container.yml`; `~/software/hip-cargo` at v0.3.0
+(reference implementation).
 
 ## Recurring gotchas
 
