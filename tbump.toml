@@ -22,7 +22,7 @@ cmd = "python -c \"import re; p = 'src/meerkat_beams/_container_image.py'; t = o
 
 [[before_commit]]
 name = "Regenerate cab definitions with release version"
-cmd = "mbeams generate-cabs --module 'src/meerkat_beams/cli/*.py' --output-dir src/meerkat_beams/cabs"
+cmd = "hip-cargo generate-cabs --module 'src/meerkat_beams/cli/*.py' --output-dir src/meerkat_beams/cabs"
 
 [[before_commit]]
 name = "Stage updated cab definitions"
