@@ -92,3 +92,117 @@ def require_model(model_name: str):
 def katbeam_freq_table(model_name: str) -> np.ndarray:
     """Frequencies (MHz) at which ``model_name``'s squint/FWHM table is defined."""
     return np.asarray(require_model(model_name).freqMHzlist, dtype=float)
+
+
+# --------------------------------------------------------------------------
+# Geometry and shape helpers (pure)
+# --------------------------------------------------------------------------
+
+# Maps are (..., NY, NX): axis -2 is Y/m/north, axis -1 is X/l/east. The
+# sweep's whole interpretation rests on flip_x touching X and flip_y Y, so
+# tests pin that explicitly.
+ORIENTATIONS = {
+    "none": lambda a: a,
+    "flip_x": lambda a: a[..., :, ::-1],
+    "flip_y": lambda a: a[..., ::-1, :],
+    "swap_xy": lambda a: np.swapaxes(a, -1, -2),
+}
+
+
+def apply_orientation(arr: np.ndarray, name: str) -> np.ndarray:
+    """Apply a named axis perturbation to the trailing (Y, X) axes of ``arr``."""
+    try:
+        transform = ORIENTATIONS[name]
+    except KeyError:
+        raise ValueError(f"unknown orientation {name!r}, expected one of {sorted(ORIENTATIONS)}") from None
+    return np.ascontiguousarray(transform(np.asarray(arr)))
+
+
+def measure_fwhm(coord: np.ndarray, profile: np.ndarray) -> float:
+    """Full width at half maximum of ``profile``, in ``coord`` units.
+
+    Locates the peak, then linearly interpolates the half-power crossing on
+    each side and returns their separation. Returns NaN when half power is not
+    bracketed on both sides (e.g. a monotonic slice, or a beam wider than the
+    sampled field).
+    """
+    coord = np.asarray(coord, dtype=float)
+    profile = np.asarray(profile, dtype=float)
+    if coord.shape != profile.shape:
+        raise ValueError(f"coord and profile must have the same shape, got {coord.shape} and {profile.shape}")
+    if not np.any(np.isfinite(profile)):
+        return float("nan")
+
+    ipk = int(np.nanargmax(profile))
+    half = profile[ipk] / 2.0
+
+    left = float("nan")
+    for i in range(ipk, 0, -1):
+        if profile[i - 1] <= half <= profile[i]:
+            # np.interp needs ascending xp; profile[i-1] <= profile[i] here.
+            left = float(np.interp(half, [profile[i - 1], profile[i]], [coord[i - 1], coord[i]]))
+            break
+
+    right = float("nan")
+    for i in range(ipk, profile.size - 1):
+        if profile[i + 1] <= half <= profile[i]:
+            right = float(np.interp(half, [profile[i + 1], profile[i]], [coord[i + 1], coord[i]]))
+            break
+
+    if not (np.isfinite(left) and np.isfinite(right)):
+        return float("nan")
+    return right - left
+
+
+def _radius_grid(l_deg: np.ndarray, m_deg: np.ndarray) -> np.ndarray:
+    """Radial distance from the field centre on the (NY, NX) grid."""
+    ll, mm = np.meshgrid(np.asarray(l_deg, dtype=float), np.asarray(m_deg, dtype=float))
+    return np.sqrt(ll**2 + mm**2)
+
+
+def azimuthal_profile(arr: np.ndarray, l_deg: np.ndarray, m_deg: np.ndarray, nbins: int = 64):
+    """Azimuthally averaged radial profile of a single ``(NY, NX)`` map.
+
+    Returns ``(r_centres, mean, std, count)``. ``std`` is the azimuthal scatter
+    within each annulus: for a radially symmetric model it is ~0, so it
+    measures how much real azimuthal structure a symmetric model discards.
+    Non-finite samples are excluded rather than propagated, since katbeam's
+    removable singularity can inject NaN.
+    """
+    arr = np.asarray(arr, dtype=float)
+    r = _radius_grid(l_deg, m_deg)
+    edges = np.linspace(0.0, float(r.max()), int(nbins) + 1)
+    centres = 0.5 * (edges[:-1] + edges[1:])
+    bin_of = np.clip(np.digitize(r.ravel(), edges) - 1, 0, int(nbins) - 1)
+
+    flat = arr.ravel()
+    finite = np.isfinite(flat)
+    mean = np.full(int(nbins), np.nan)
+    std = np.full(int(nbins), np.nan)
+    count = np.zeros(int(nbins), dtype=int)
+    for b in range(int(nbins)):
+        sel = finite & (bin_of == b)
+        n = int(sel.sum())
+        count[b] = n
+        if n:
+            vals = flat[sel]
+            mean[b] = vals.mean()
+            std[b] = vals.std()
+    return centres, mean, std, count
+
+
+def region_masks(l_deg: np.ndarray, m_deg: np.ndarray, hwhm_deg: float) -> dict[str, np.ndarray]:
+    """Partition the field into mainlobe / near-sidelobe / far-sidelobe.
+
+    katbeam only claims mainlobe fidelity, and the BDS field spans roughly
+    8 HWHM at L-band, so a single field-wide residual would be dominated by a
+    region the model makes no claim about. The three regions are disjoint and
+    cover the field.
+    """
+    r = _radius_grid(l_deg, m_deg)
+    hwhm = float(hwhm_deg)
+    return {
+        "mainlobe": r < hwhm,
+        "near": (r >= hwhm) & (r < 3.0 * hwhm),
+        "far": r >= 3.0 * hwhm,
+    }
