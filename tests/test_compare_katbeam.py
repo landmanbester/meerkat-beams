@@ -964,3 +964,113 @@ def test_main_no_orientation_sweep_skips_that_plot(tmp_path):
     assert rc == 0
     assert not (out / "orientation_residuals.png").exists()
     assert (out / "metrics.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# registration_roll -- the even-grid mirror artifact
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_registration_roll_is_zero_for_a_symmetric_odd_grid():
+    """An odd grid centred on zero really is symmetric; no correction needed."""
+    coord = np.linspace(-2.0, 2.0, 41)
+    assert coord[20] == pytest.approx(0.0)
+    assert ck.registration_roll(coord) == 0
+
+
+@pytest.mark.unit
+def test_registration_roll_is_one_pixel_for_the_bds_style_even_grid():
+    """The real L-band BDS X axis: -4.0 .. +3.9375 at 0.0625 deg, 128 samples.
+
+    64 negatives, one zero, 63 positives -- so reversing the axis displaces the
+    zero point by a whole pixel.
+    """
+    coord = -4.0 + 0.0625 * np.arange(128)
+    assert coord.size == 128
+    assert coord[64] == pytest.approx(0.0)
+    assert int((coord < 0).sum()) == 64 and int((coord > 0).sum()) == 63
+    assert ck.registration_roll(coord) == 1
+
+
+@pytest.mark.unit
+def test_uncorrected_mirror_on_an_even_grid_shifts_by_a_pixel():
+    """Reversing an even grid is a mirror PLUS a translation -- the bug's root."""
+    coord = -4.0 + 0.0625 * np.arange(128)
+    assert np.abs(coord + coord[::-1]).max() == pytest.approx(0.0625)
+
+
+@pytest.mark.unit
+def test_apply_orientation_with_coords_reregisters_a_mirror_symmetric_map():
+    """A map even about coordinate zero must survive flip_x/flip_y unchanged.
+
+    On the BDS's even grid the naive mirror fails this and the corrected one
+    passes, which is exactly why the sweep must be given the coordinates. This
+    is the regression guard for a spurious flip penalty that measured 5.2e-2 on
+    real L-band data while the true corrected residual was 2.4e-3.
+    """
+    coord = -4.0 + 0.0625 * np.arange(128)
+    ll, mm = np.meshgrid(coord, coord)
+    even_map = np.exp(-0.5 * (ll**2 + mm**2) / 0.8**2)  # even in l and in m
+
+    for name, axis in (("flip_x", -1), ("flip_y", -2)):
+        corrected = ck.apply_orientation(even_map, name, l_deg=coord, m_deg=coord)
+        np.testing.assert_allclose(corrected, even_map, atol=1e-12, err_msg=f"{name} not re-registered")
+
+        naive = ck.apply_orientation(even_map, name)
+        assert not np.allclose(naive, even_map, atol=1e-6), (
+            f"{name} without coords should still show the one-pixel artifact (axis {axis})"
+        )
+
+
+@pytest.mark.unit
+def test_swap_xy_needs_no_reregistration():
+    """A transpose displaces no coordinate, so coords must not change its result."""
+    coord = -4.0 + 0.0625 * np.arange(128)
+    rng = np.arange(128 * 128, dtype=float).reshape(128, 128)
+    with_coords = ck.apply_orientation(rng, "swap_xy", l_deg=coord, m_deg=coord)
+    without = ck.apply_orientation(rng, "swap_xy")
+    np.testing.assert_array_equal(with_coords, without)
+
+
+@pytest.mark.unit
+def test_orientation_sweep_does_not_penalise_a_symmetric_beam_for_flips():
+    """The headline regression guard.
+
+    A beam even in both axes is genuinely invariant under flip_x/flip_y, so the
+    sweep must score them equal to `none` rather than inventing a penalty. It
+    must still reject a transpose for an elliptical beam.
+    """
+    coord = -4.0 + 0.0625 * np.arange(128)
+    ll, mm = np.meshgrid(coord, coord)
+    elliptical = np.exp(-0.5 * ((ll / 0.5) ** 2 + (mm / 0.9) ** 2))  # even in both axes, not circular
+    ours = {p: elliptical[None] for p in ("HH", "VV", "I")}
+    sweep = ck.orientation_sweep(ours, dict(ours), coord, coord, hwhm_deg=0.6)
+
+    scores = sweep["per_product"]["HH"]
+    assert scores["flip_x"] == pytest.approx(scores["none"], abs=1e-12)
+    assert scores["flip_y"] == pytest.approx(scores["none"], abs=1e-12)
+    # An elliptical beam is genuinely not transpose-invariant.
+    assert scores["swap_xy"] > 1e-3
+
+
+@pytest.mark.unit
+def test_plot_crosspol_log_axis_is_not_dragged_to_zero(tmp_path, plot_inputs):
+    """axhline(0) on a log axis silently expands the range toward zero.
+
+    Observed at 1e-18 on real L-band data, which squeezed the actual curve into
+    the top fifth of the panel. The y-range must stay clamped to the data, so
+    the katbeam-is-zero fact is carried by a proxy legend handle instead.
+    """
+    coord, ours_plane, _ = plot_inputs
+    out = tmp_path / "xpol_range.png"
+    ck.plot_crosspol(ours_plane * 1e-3, coord, coord, out, title="t")
+    _assert_png(out)
+
+    _, mean, _, count = ck.azimuthal_profile(ours_plane * 1e-3, coord, coord, nbins=48)
+    positive = mean[(count > 0) & np.isfinite(mean) & (mean > 0)]
+    assert positive.size
+    # An all-zero map keeps the linear fallback and a real axhline at 0.
+    zero_out = tmp_path / "xpol_zero_range.png"
+    ck.plot_crosspol(np.zeros_like(ours_plane), coord, coord, zero_out, title="t")
+    _assert_png(zero_out)

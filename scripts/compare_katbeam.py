@@ -115,21 +115,69 @@ def katbeam_freq_table(model_name: str) -> np.ndarray:
 # Maps are (..., NY, NX): axis -2 is Y/m/north, axis -1 is X/l/east. The
 # sweep's whole interpretation rests on flip_x touching X and flip_y Y, so
 # tests pin that explicitly.
+#
+# Each entry is (array transform, axes that get mirrored). The mirrored axes
+# matter because reversing an axis whose coordinate grid is not symmetric about
+# zero also *translates* it -- see registration_roll below.
 ORIENTATIONS = {
-    "none": lambda a: a,
-    "flip_x": lambda a: a[..., :, ::-1],
-    "flip_y": lambda a: a[..., ::-1, :],
-    "swap_xy": lambda a: np.swapaxes(a, -1, -2),
+    "none": (lambda a: a, ()),
+    "flip_x": (lambda a: a[..., :, ::-1], (-1,)),
+    "flip_y": (lambda a: a[..., ::-1, :], (-2,)),
+    # A transpose needs no re-registration: it maps (i, j) -> (j, i), and the
+    # BDS X and Y grids are identical, so no coordinate is displaced.
+    "swap_xy": (lambda a: np.swapaxes(a, -1, -2), ()),
 }
 
 
-def apply_orientation(arr: np.ndarray, name: str) -> np.ndarray:
-    """Apply a named axis perturbation to the trailing (Y, X) axes of ``arr``."""
+def registration_roll(coord: np.ndarray) -> int:
+    """Pixel roll needed after reversing ``coord`` to keep zero where it was.
+
+    An even-sized grid centred on a pixel is **not** symmetric about zero. The
+    L-band BDS X axis runs ``-4.0 .. +3.9375`` at 0.0625 deg/pixel: 64 negative
+    samples, one zero, 63 positive. Reversing it therefore moves the zero point
+    by a whole pixel, so a naive mirror is a mirror *plus a translation*.
+
+    That translation is not a detail. Measured on the real L-band BDS at
+    1284 MHz, a naive ``flip_x`` scores 5.21e-2 while a pure one-pixel roll with
+    no mirror at all scores 5.14e-2 -- the "mirror" residual is almost entirely
+    the shift. Corrected, ``flip_x`` scores 2.37e-3, indistinguishable from
+    ``none`` (2.75e-3). Without this correction the sweep reports a large,
+    confident, and completely spurious penalty for the flips.
+
+    Reversing maps index ``i -> n-1-i``, so a zero at ``i0`` lands at
+    ``n-1-i0``; rolling by ``2*i0 - n + 1`` puts it back. An odd grid symmetric
+    about zero gives 0, i.e. no correction, which is correct.
+    """
+    coord = np.asarray(coord, dtype=float)
+    i0 = int(np.argmin(np.abs(coord)))
+    return 2 * i0 - coord.size + 1
+
+
+def apply_orientation(arr: np.ndarray, name: str, l_deg=None, m_deg=None) -> np.ndarray:
+    """Apply a named axis perturbation to the trailing (Y, X) axes of ``arr``.
+
+    Pass ``l_deg``/``m_deg`` to re-register mirrors about the coordinate zero
+    (see ``registration_roll``); without them the raw array mirror is returned,
+    which on an even-sized grid conflates the mirror with a one-pixel shift.
+    Real callers should always pass the coordinates. The roll wraps one row or
+    column across the far edge, where the beam is negligible and the
+    mainlobe/near masks do not reach.
+    """
     try:
-        transform = ORIENTATIONS[name]
+        transform, mirrored_axes = ORIENTATIONS[name]
     except KeyError:
         raise ValueError(f"unknown orientation {name!r}, expected one of {sorted(ORIENTATIONS)}") from None
-    return np.ascontiguousarray(transform(np.asarray(arr)))
+
+    out = transform(np.asarray(arr))
+    coord_for_axis = {-1: l_deg, -2: m_deg}
+    for axis in mirrored_axes:
+        coord = coord_for_axis[axis]
+        if coord is None:
+            continue
+        shift = registration_roll(coord)
+        if shift:
+            out = np.roll(out, shift, axis=axis)
+    return np.ascontiguousarray(out)
 
 
 def measure_fwhm(coord: np.ndarray, profile: np.ndarray) -> float:
@@ -463,7 +511,9 @@ def orientation_sweep(ours, theirs, l_deg, m_deg, hwhm_deg, products=SWEEP_PRODU
     for product in products:
         scores: dict[str, float] = {}
         for name in ORIENTATIONS:
-            moved = apply_orientation(ours[product], name)
+            # Coordinates are required here: without them the flips would carry
+            # a spurious one-pixel translation that dwarfs the mirror itself.
+            moved = apply_orientation(ours[product], name, l_deg=l_arr, m_deg=m_arr)
             per_freq = [
                 residual_stats(moved[k], theirs[product][k], masks)["mainlobe"]["rms_diff"]
                 for k in range(moved.shape[0])
@@ -818,9 +868,19 @@ def plot_crosspol(ours_plane, l_deg, m_deg, out_path, *, title):
     r, mean, _, count = azimuthal_profile(arr, l_deg, m_deg, nbins=48)
     ok = count > 0
     right.plot(r[ok], mean[ok], color=BLUE, linestyle="-", label="ours")
-    right.axhline(0.0, color=VERMILLION, linestyle="--", label="katbeam (identically 0)")
     if positive.size:
         right.set_yscale("log")
+        # katbeam's cross-pol is exactly 0, which has no position on a log axis.
+        # Drawing axhline(0) here silently drags the lower limit toward zero
+        # (observed: 1e-18), squeezing the real curve into the top of the panel.
+        # Carry the fact in the legend with a proxy handle instead, and clamp
+        # the range to the data.
+        finite_mean = mean[ok][np.isfinite(mean[ok]) & (mean[ok] > 0)]
+        if finite_mean.size:
+            right.set_ylim(finite_mean.min() * 0.5, finite_mean.max() * 2.0)
+        right.plot([], [], color=VERMILLION, linestyle="--", label="katbeam (identically 0, off-scale)")
+    else:
+        right.axhline(0.0, color=VERMILLION, linestyle="--", label="katbeam (identically 0)")
     right.set_xlabel("radius (deg)")
     right.set_ylabel("azimuthally averaged cross-pol power")
     right.legend()
