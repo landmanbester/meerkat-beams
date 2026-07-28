@@ -5,11 +5,15 @@ Hermetic: pure helpers only. No katbeam import at module scope, no BDS on
 disk, no network, no env vars. Runs under MBEAMS_OFFLINE=1.
 """
 
+import logging
+
 import compare_katbeam as ck
 import numpy as np
 import pytest
+import xarray
 
 from meerkat_beams.cache import SUPPORTED_BANDS
+from tests._synthetic import I0, N_XY, build_synthetic_bds
 
 
 @pytest.mark.unit
@@ -383,3 +387,183 @@ def test_residual_stats_returns_nan_for_an_empty_region():
     stats = ck.residual_stats(np.ones((4, 4)), np.ones((4, 4)), masks)
     assert stats["empty"]["n_pixels"] == 0
     assert np.isnan(stats["empty"]["rms_diff"])
+
+
+# ---------------------------------------------------------------------------
+# load_ours (hermetic: synthetic BDS in tmp_path)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def synthetic_bds(tmp_path_factory):
+    """Synthetic BDS whose njones diagonal is a known Gaussian and off-diagonal 0."""
+    path = tmp_path_factory.mktemp("ck") / "synthetic.bds.zarr"
+    build_synthetic_bds(path)
+    return xarray.open_zarr(str(path))
+
+
+@pytest.mark.unit
+def test_load_ours_returns_all_four_products(synthetic_bds):
+    got = ck.load_ours(synthetic_bds, [0, 2])
+    assert set(got) == set(ck.PRODUCTS)
+    for name, arr in got.items():
+        assert arr.shape == (2, N_XY, N_XY), name
+
+
+@pytest.mark.unit
+def test_load_ours_squares_the_jones_terms(synthetic_bds):
+    """HH/VV must be |njones|**2 (power), not the voltage Jones itself."""
+    got = ck.load_ours(synthetic_bds, [0])
+    stokes_i = got["I"][0]
+    # The synthetic fixture sets njones[0,0] = njones[1,1] = nstokes[I,I] = gauss,
+    # so the power beams are exactly the square of the Stokes I map.
+    np.testing.assert_allclose(got["HH"][0], stokes_i**2, rtol=1e-6)
+    np.testing.assert_allclose(got["VV"][0], stokes_i**2, rtol=1e-6)
+
+
+@pytest.mark.unit
+def test_load_ours_crosspol_is_zero_for_a_diagonal_jones(synthetic_bds):
+    got = ck.load_ours(synthetic_bds, [0])
+    np.testing.assert_allclose(got["xpol"][0], 0.0, atol=1e-12)
+
+
+@pytest.mark.unit
+def test_load_ours_is_unity_on_axis(synthetic_bds):
+    """njones is normalised so the on-axis Jones matrix is the identity."""
+    got = ck.load_ours(synthetic_bds, [0])
+    assert got["I"][0][I0, I0] == pytest.approx(1.0, abs=1e-6)
+    assert got["HH"][0][I0, I0] == pytest.approx(1.0, abs=1e-6)
+
+
+@pytest.mark.unit
+def test_load_ours_selects_the_requested_channels(synthetic_bds):
+    got = ck.load_ours(synthetic_bds, [1, 3])
+    assert got["I"].shape[0] == 2
+    direct = synthetic_bds["nstokes"].isel(FREQ=[1, 3]).sel(stokes_i="I", stokes_j="I").values
+    np.testing.assert_allclose(got["I"], direct, rtol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# eval_katbeam (needs katbeam; skipped if absent)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_eval_katbeam_returns_ny_nx_for_non_square_grids():
+    """Pins the (NY, NX) convention: axis -2 is m, axis -1 is l.
+
+    A square grid would hide a transposed evaluation, and a transposed katbeam
+    map would invert the orientation sweep's conclusion.
+    """
+    pytest.importorskip("katbeam")
+    l_deg = np.linspace(-1.0, 1.0, 5)
+    m_deg = np.linspace(-1.0, 1.0, 7)
+    got = ck.eval_katbeam("MKAT-AA-L-JIM-2020", l_deg, m_deg, [1284.0])
+    assert got["I"].shape == (1, 7, 5)
+
+
+@pytest.mark.unit
+def test_eval_katbeam_stokes_i_is_the_mean_of_the_power_beams():
+    pytest.importorskip("katbeam")
+    coord = np.linspace(-1.0, 1.0, 21)
+    got = ck.eval_katbeam("MKAT-AA-L-JIM-2020", coord, coord, [1284.0])
+    np.testing.assert_allclose(got["I"], 0.5 * (got["HH"] + got["VV"]), rtol=1e-10)
+
+
+@pytest.mark.unit
+def test_eval_katbeam_crosspol_is_identically_zero():
+    """katbeam models no cross-pol at all; the product exists so plots can say so."""
+    pytest.importorskip("katbeam")
+    coord = np.linspace(-1.0, 1.0, 11)
+    got = ck.eval_katbeam("MKAT-AA-L-JIM-2020", coord, coord, [1284.0])
+    assert set(got) == set(ck.PRODUCTS)
+    np.testing.assert_array_equal(got["xpol"], np.zeros_like(got["I"]))
+
+
+@pytest.mark.unit
+def test_eval_katbeam_is_near_unity_on_axis():
+    """On axis the taper is 1 minus a small squint offset."""
+    pytest.importorskip("katbeam")
+    coord = np.array([0.0])
+    got = ck.eval_katbeam("MKAT-AA-L-JIM-2020", coord, coord, [1284.0])
+    assert got["I"][0, 0, 0] == pytest.approx(1.0, abs=5e-3)
+    assert got["I"][0, 0, 0] <= 1.0
+
+
+@pytest.mark.unit
+def test_eval_katbeam_hh_and_vv_differ_somewhere():
+    """The HH/VV anisotropy is what makes the orientation sweep discriminating.
+
+    If these were identical the sweep would be degenerate and the whole
+    experiment would be uninformative.
+    """
+    pytest.importorskip("katbeam")
+    coord = np.linspace(-1.5, 1.5, 61)
+    got = ck.eval_katbeam("MKAT-AA-L-JIM-2020", coord, coord, [1400.0])
+    assert np.max(np.abs(got["HH"] - got["VV"])) > 1e-3
+
+
+@pytest.mark.unit
+def test_eval_katbeam_is_anisotropic_between_l_and_m():
+    """The L-band table gives Hx fwhm 59.58' vs Hy fwhm 62.70' at 1400 MHz.
+
+    So a cut along l must be measurably narrower than a cut along m. This is
+    the signal the orientation sweep exploits.
+    """
+    pytest.importorskip("katbeam")
+    coord = np.linspace(-2.0, 2.0, 801)
+    got = ck.eval_katbeam("MKAT-AA-L-JIM-2020", coord, coord, [1400.0])
+    plane = got["HH"][0]
+    mid = coord.size // 2
+    fwhm_l = ck.measure_fwhm(coord, plane[mid, :])
+    fwhm_m = ck.measure_fwhm(coord, plane[:, mid])
+    assert np.isfinite(fwhm_l) and np.isfinite(fwhm_m)
+    assert abs(fwhm_l - fwhm_m) > 0.01  # degrees
+
+
+# ---------------------------------------------------------------------------
+# count_non_finite
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_count_non_finite_counts_nan_and_inf_per_product():
+    """katbeam's cos(pi*rr)/(1-4rr**2) is 0/0 at rr=0.5; NaN must be reported."""
+    maps = {
+        "I": np.array([[1.0, np.nan], [np.inf, 2.0]]),
+        "HH": np.ones((2, 2)),
+    }
+    assert ck.count_non_finite(maps) == {"I": 2, "HH": 0}
+
+
+# ---------------------------------------------------------------------------
+# resolve_bds
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_resolve_bds_requires_exactly_one_source():
+    with pytest.raises(ValueError, match="exactly one"):
+        ck.resolve_bds(None, None)
+    with pytest.raises(ValueError, match="exactly one"):
+        ck.resolve_bds("L", "/some/path.bds")
+
+
+@pytest.mark.unit
+def test_resolve_bds_rejects_unknown_band():
+    with pytest.raises(ValueError, match="no katbeam model"):
+        ck.resolve_bds("X9", None)
+
+
+@pytest.mark.unit
+def test_resolve_bds_explicit_path_warns_about_stale_conventions(tmp_path, caplog):
+    """--bds may point at a legacy BDS whose axis labelling predates 616906b.
+
+    The orientation sweep would then be confidently wrong, so the escape hatch
+    must warn loudly.
+    """
+    path = tmp_path / "legacy.bds.zarr"
+    path.mkdir()
+    with caplog.at_level(logging.WARNING):
+        assert ck.resolve_bds(None, str(path)) == str(path)
+    assert "orientation sweep" in caplog.text.lower()

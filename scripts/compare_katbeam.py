@@ -36,6 +36,8 @@ Requires the dev dependency group: `uv sync --group dev --extra full`.
 
 import numpy as np
 
+from meerkat_beams.utils import log
+
 # --------------------------------------------------------------------------
 # Band -> katbeam model
 # --------------------------------------------------------------------------
@@ -304,3 +306,97 @@ def residual_stats(
             "median_frac_diff": (float(np.median(diff[gate] / theirs[gate])) if gate.any() else float("nan")),
         }
     return out
+
+
+# --------------------------------------------------------------------------
+# Products
+# --------------------------------------------------------------------------
+
+# "xpol" is our cross-pol power. katbeam models it as identically zero, so it
+# is carried as its own product rather than folded into a residual.
+PRODUCTS: tuple[str, ...] = ("I", "HH", "VV", "xpol")
+
+
+def resolve_bds(band, bds) -> str:
+    """Resolve the BDS to compare against, from a band name or an explicit path.
+
+    ``band`` goes through ``cache.ensure_band_bds`` so the BDS is always built
+    by this repo's current ``mdv_beams_to_bds``. That matters: the orientation
+    sweep asks a question about the converter's axis convention, and a legacy
+    BDS (e.g. the ``MBEAMS_REFERENCE_BDS_*`` regression references, which
+    predate commit 616906b) may carry a stale convention of its own, which
+    would make the sweep's answer confidently wrong.
+    """
+    if (band is None) == (bds is None):
+        raise ValueError("exactly one of --band or --bds must be given")
+
+    if bds is not None:
+        log.warning(
+            "using an explicit --bds path: if this BDS was not produced by this repo's "
+            "current mdv_beams_to_bds, its axis convention may be stale and the "
+            "orientation sweep result must not be trusted. Prefer --band."
+        )
+        return str(bds)
+
+    if band not in KATBEAM_MODEL_FOR_BAND:
+        raise ValueError(f"no katbeam model for band {band!r}, known bands: {sorted(KATBEAM_MODEL_FOR_BAND)}")
+
+    from meerkat_beams import cache
+
+    return cache.ensure_band_bds(band)
+
+
+def load_ours(xds, chan_indices) -> dict[str, np.ndarray]:
+    """Read our four beam products straight out of the BDS at native channels.
+
+    Read directly rather than through ``BeamWizard.interpolate_beam``: the
+    question is how the two *models* differ, so spline error must not enter.
+    Returns ``(NFREQ, NY, NX)`` float64 arrays.
+    """
+    chans = [int(c) for c in chan_indices]
+    stokes_i = xds["nstokes"].isel(FREQ=chans).sel(stokes_i="I", stokes_j="I").values
+    njones = xds["njones"].isel(FREQ=chans).values  # (2, 2, NFREQ, NY, NX)
+
+    return {
+        "I": np.asarray(stokes_i, dtype=float),
+        "HH": np.abs(njones[0, 0]).astype(float) ** 2,
+        "VV": np.abs(njones[1, 1]).astype(float) ** 2,
+        "xpol": np.abs(njones[0, 1]).astype(float) ** 2 + np.abs(njones[1, 0]).astype(float) ** 2,
+    }
+
+
+def eval_katbeam(model_name: str, l_deg, m_deg, freqs_mhz) -> dict[str, np.ndarray]:
+    """Evaluate katbeam on the same grid, as power beams.
+
+    katbeam's ``HH``/``VV`` are voltage patterns, so they are squared here to
+    match our ``|njones|**2``. ``meshgrid(l, m)`` gives ``(NY, NX)``, matching
+    the BDS map order. Returns ``(NFREQ, NY, NX)`` arrays.
+    """
+    jb = require_model(model_name)
+    ll, mm = np.meshgrid(np.asarray(l_deg, dtype=float), np.asarray(m_deg, dtype=float))
+
+    hh_planes, vv_planes = [], []
+    for f in np.atleast_1d(np.asarray(freqs_mhz, dtype=float)):
+        hh = np.asarray(jb.HH(ll, mm, float(f)), dtype=float)
+        vv = np.asarray(jb.VV(ll, mm, float(f)), dtype=float)
+        hh_planes.append(np.abs(hh) ** 2)
+        vv_planes.append(np.abs(vv) ** 2)
+
+    hh_arr = np.stack(hh_planes)
+    vv_arr = np.stack(vv_planes)
+    return {
+        "I": 0.5 * (hh_arr + vv_arr),
+        "HH": hh_arr,
+        "VV": vv_arr,
+        "xpol": np.zeros_like(hh_arr),
+    }
+
+
+def count_non_finite(maps: dict[str, np.ndarray]) -> dict[str, int]:
+    """Per-product count of non-finite samples.
+
+    katbeam's ``cos(pi*rr)/(1 - 4*rr**2)`` is 0/0 at ``rr = 0.5``
+    (``r ~ 0.42053`` in FWHM units). A grid point landing there yields NaN,
+    which must be reported rather than silently skewing statistics.
+    """
+    return {name: int(np.count_nonzero(~np.isfinite(arr))) for name, arr in maps.items()}
