@@ -765,3 +765,202 @@ def test_format_summary_table_mentions_each_region(tiny_metrics_inputs):
     for region in ("mainlobe", "near", "far"):
         assert region in table
     assert "1000.0" in table
+
+
+# ---------------------------------------------------------------------------
+# palette (validated with the dataviz skill's validate_palette.js)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_orientation_colours_are_the_cvd_safe_set():
+    """Pins the CVD-validated palette against an accidental revert to mpl defaults.
+
+    matplotlib's default C0-C3 FAILS colourblind separation: #2ca02c green vs
+    #ff7f0e orange sit at deltaE 0.7 under protanopia, i.e. identical. The
+    Okabe-Ito subset below was validated at worst-all-pairs deltaE 13.1
+    (deuteranopia) in both light and dark mode.
+    """
+    assert list(ck.ORIENTATION_COLOURS) == list(ck.ORIENTATIONS)
+    assert set(ck.ORIENTATION_COLOURS.values()) == {"#0072B2", "#D55E00", "#56B4E9", "#E69F00"}
+    forbidden = {"#2ca02c", "#ff7f0e"}
+    assert not (set(ck.ORIENTATION_COLOURS.values()) & forbidden)
+
+
+@pytest.mark.unit
+def test_ours_and_katbeam_differ_by_linestyle_not_only_colour():
+    """Identity must never be carried by colour alone."""
+    assert ck.STYLE_OURS["color"] != ck.STYLE_KATBEAM["color"]
+    assert ck.STYLE_OURS["linestyle"] != ck.STYLE_KATBEAM["linestyle"]
+
+
+# ---------------------------------------------------------------------------
+# plots (smoke tests: each writes a non-trivial PNG)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def plot_inputs():
+    coord = np.linspace(-1.0, 1.0, 41)
+    ll, mm = np.meshgrid(coord, coord)
+    ours_plane = np.exp(-0.5 * (ll**2 + mm**2) / 0.3**2)
+    theirs_plane = np.exp(-0.5 * ((ll / 0.31) ** 2 + (mm / 0.29) ** 2))
+    return coord, ours_plane, theirs_plane
+
+
+def _assert_png(path):
+    assert path.exists(), f"{path} was not written"
+    assert path.stat().st_size > 1000, f"{path} looks empty ({path.stat().st_size} bytes)"
+    assert path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+@pytest.mark.unit
+def test_plot_maps_writes_png(tmp_path, plot_inputs):
+    coord, ours_plane, theirs_plane = plot_inputs
+    out = tmp_path / "maps.png"
+    ck.plot_maps(ours_plane, theirs_plane, coord, coord, out, title="t", cbar_label="c")
+    _assert_png(out)
+
+
+@pytest.mark.unit
+def test_plot_cuts_writes_png(tmp_path, plot_inputs):
+    coord, ours_plane, theirs_plane = plot_inputs
+    out = tmp_path / "cuts.png"
+    ck.plot_cuts(ours_plane, theirs_plane, coord, coord, 20, 20, out, title="t")
+    _assert_png(out)
+
+
+@pytest.mark.unit
+def test_plot_radial_writes_png(tmp_path, plot_inputs):
+    coord, ours_plane, theirs_plane = plot_inputs
+    out = tmp_path / "radial.png"
+    ck.plot_radial(ours_plane, theirs_plane, coord, coord, out, title="t", nbins=16)
+    _assert_png(out)
+
+
+@pytest.mark.unit
+def test_plot_hhvv_writes_png(tmp_path, plot_inputs):
+    coord, ours_plane, theirs_plane = plot_inputs
+    ours = {"HH": ours_plane[None], "VV": ours_plane[None]}
+    theirs = {"HH": theirs_plane[None], "VV": theirs_plane[None]}
+    out = tmp_path / "hhvv.png"
+    ck.plot_hhvv(ours, theirs, 0, coord, coord, out, title="t")
+    _assert_png(out)
+
+
+@pytest.mark.unit
+def test_plot_crosspol_writes_png(tmp_path, plot_inputs):
+    coord, ours_plane, _ = plot_inputs
+    out = tmp_path / "xpol.png"
+    ck.plot_crosspol(ours_plane * 1e-3, coord, coord, out, title="t")
+    _assert_png(out)
+
+
+@pytest.mark.unit
+def test_plot_crosspol_survives_an_all_zero_map(tmp_path, plot_inputs):
+    """A perfectly diagonal Jones gives identically zero cross-pol; log scale must cope."""
+    coord, _, _ = plot_inputs
+    out = tmp_path / "xpol_zero.png"
+    ck.plot_crosspol(np.zeros((41, 41)), coord, coord, out, title="t")
+    _assert_png(out)
+
+
+@pytest.mark.unit
+def test_plot_fwhm_vs_freq_writes_png(tmp_path):
+    freqs = np.linspace(0.9e9, 1.7e9, 12)
+    table = {
+        "ours_l": np.linspace(1.2, 0.6, 12),
+        "ours_m": np.linspace(1.25, 0.63, 12),
+        "katbeam_l": np.linspace(1.18, 0.58, 12),
+        "katbeam_m": np.linspace(1.24, 0.62, 12),
+    }
+    out = tmp_path / "fwhm.png"
+    ck.plot_fwhm_vs_freq(freqs, table, out)
+    _assert_png(out)
+
+
+@pytest.mark.unit
+def test_plot_orientation_residuals_writes_png(tmp_path):
+    sweep = {
+        "per_product": {
+            "HH": {"none": 1e-3, "flip_x": 2e-3, "flip_y": 3e-3, "swap_xy": 4e-3},
+            "VV": {"none": 1.1e-3, "flip_x": 2.1e-3, "flip_y": 3.1e-3, "swap_xy": 4.1e-3},
+            "I": {"none": 1.2e-3, "flip_x": 2.2e-3, "flip_y": 3.2e-3, "swap_xy": 4.2e-3},
+        },
+        "best": {"HH": "none", "VV": "none", "I": "none"},
+        "best_overall": "none",
+    }
+    out = tmp_path / "orient.png"
+    ck.plot_orientation_residuals(sweep, out)
+    _assert_png(out)
+
+
+# ---------------------------------------------------------------------------
+# main / argument parsing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_main_rejects_band_and_bds_together(tmp_path):
+    with pytest.raises(ValueError, match="exactly one"):
+        ck.main(["--band", "L", "--bds", str(tmp_path), "--output-dir", str(tmp_path)])
+
+
+@pytest.mark.unit
+def test_main_end_to_end_on_a_synthetic_bds(tmp_path):
+    """Full run against a synthetic BDS: no network, no cache, no real beam data."""
+    pytest.importorskip("katbeam")
+    bds = tmp_path / "synthetic.bds.zarr"
+    build_synthetic_bds(bds)
+    out = tmp_path / "out"
+    rc = ck.main(
+        [
+            "--bds",
+            str(bds),
+            "--band-model",
+            "L",
+            "--freqs",
+            "1000",
+            "1200",
+            "--output-dir",
+            str(out),
+            "--nbins",
+            "16",
+            "--fwhm-stride",
+            "2",
+        ]
+    )
+    assert rc == 0
+    assert (out / "metrics.json").exists()
+    assert (out / "summary.md").exists()
+    assert (out / "fwhm_vs_freq.png").exists()
+    assert (out / "orientation_residuals.png").exists()
+    assert (out / "stokesI_maps_1000MHz.png").exists()
+    assert (out / "stokesI_cuts_1000MHz.png").exists()
+    assert (out / "radial_1000MHz.png").exists()
+    assert (out / "hhvv_maps_1000MHz.png").exists()
+    assert (out / "crosspol_1000MHz.png").exists()
+
+
+@pytest.mark.unit
+def test_main_no_orientation_sweep_skips_that_plot(tmp_path):
+    pytest.importorskip("katbeam")
+    bds = tmp_path / "synthetic.bds.zarr"
+    build_synthetic_bds(bds)
+    out = tmp_path / "out"
+    rc = ck.main(
+        [
+            "--bds",
+            str(bds),
+            "--band-model",
+            "L",
+            "--freqs",
+            "1000",
+            "--output-dir",
+            str(out),
+            "--no-orientation-sweep",
+        ]
+    )
+    assert rc == 0
+    assert not (out / "orientation_residuals.png").exists()
+    assert (out / "metrics.json").exists()
