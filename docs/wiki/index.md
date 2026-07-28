@@ -2,8 +2,8 @@
 type: index
 title: meerkat-beams LLM wiki
 description: Progressive-disclosure listing of the in-repo knowledge bundle.
-timestamp: 2026-07-27T10:35:37Z
-last_verified_commit: 967be4d
+timestamp: 2026-07-28T14:35:00Z
+last_verified_commit: a62c7e1
 ---
 
 # meerkat-beams LLM wiki
@@ -30,7 +30,7 @@ agent output; cite code, tests, commits, or issues instead.
 | Page | Covers | Read when |
 |------|--------|-----------|
 | [beamwizard.md](beamwizard.md) | `interpolate_beam` prefilter/off-cube/spline-order/freq-guard semantics, `get_source_coordinates` transforms, optional-image paths, `get_time_freq_beam` canonical `dim_names`, and `enrich_bds_xradio`. | Before touching `BeamWizard` in `utils.py`, or when interpolation/rendering output looks wrong. |
-| [beam-orientation.md](beam-orientation.md) | The settled `(Y, X)` rotation-averaged map order, parallactic-angle rotation averaging, and the still-provisional beam-orientation convention with its open M1 validation. | Before touching orientation-sensitive code (`get_rotation_averaged_beam`, pointing-angle transforms), or when a beam map looks transposed/flipped. |
+| [beam-orientation.md](beam-orientation.md) | The settled `(Y, X)` rotation-averaged map order, parallactic-angle rotation averaging, the still-provisional beam-orientation convention with its open M1 validation, and the `scripts/compare_katbeam.py` probe (corroborates the BDS transpose; does **not** settle the sign flips) plus the one-pixel even-grid mirror trap. | Before touching orientation-sensitive code (`get_rotation_averaged_beam`, pointing-angle transforms), before writing any tooling that mirrors a beam axis, or when a beam map looks transposed/flipped. |
 | [data-model.md](data-model.md) | The three beam formats and their conversions — MdV `.npz` structure, the BDS zarr schema (`jones`/`njones`/`stokes`/`nstokes`/`mueller`/`nmueller`, `fits_header`, scalar attrs), and the xradio primary-beam schema. | Before touching `core/mdv_beams_to_bds.py`, `core/bds_to_xradio.py`, `core/mdv_to_xradio.py`, or when a schema field's meaning is unclear. |
 | [design-decisions.md](design-decisions.md) | Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions. | Asking "why is it built this way", before "fixing" something that looks wrong, or before re-litigating a past decision (e.g. the release policy or the hip-cargo dependency pin). |
 | [log.md](log.md) | Chronological record of wiki updates. | Checking what changed in the wiki and when. |

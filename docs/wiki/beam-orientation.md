@@ -1,16 +1,16 @@
 ---
 type: Subsystem Notes
 title: Beam orientation and (Y, X) map-order conventions
-description: The settled (Y, X) rotation-averaged map order, parallactic-angle rotation averaging, and the still-provisional beam-orientation convention with its open M1 validation.
-tags: [beam, orientation, conventions, rotation, parallactic, yx-order]
-timestamp: 2026-07-27T09:48:17Z
-last_verified_commit: 7dd4e67
+description: The settled (Y, X) rotation-averaged map order, parallactic-angle rotation averaging, the still-provisional beam-orientation convention with its open M1 validation, and the katbeam comparison probe that corroborates the BDS transpose but not the sign flips.
+tags: [beam, orientation, conventions, rotation, parallactic, yx-order, katbeam]
+timestamp: 2026-07-28T14:35:00Z
+last_verified_commit: a62c7e1
 ---
 
 # Beam orientation and (Y, X) map-order conventions
 
-Two independent questions live under "beam orientation" in this repo, and
-they must not be conflated:
+Three questions live under "beam orientation" in this repo, and they must not
+be conflated. The first two are independent of each other:
 
 1. **Index order of the rotation-averaged map arrays** — SETTLED. `(Y, X)`,
    pinned by tests, landed at commit `616906b`.
@@ -19,6 +19,13 @@ they must not be conflated:
    yet physically verified; the validation experiment currently does not
    recover a flat/unpolarised calibrator spectrum through the off-axis
    beam. Do not treat this as settled just because (1) is.
+
+A third, narrower question sits underneath both: **whether the BDS's on-disk
+trailing axes really are `(Y, X)`** as `mdv_beams_to_bds` labels them. That is
+the converter-level question, and it now has independent evidence — see
+"Independent probe: the katbeam comparison" below. Its transpose half is
+corroborated; its sign-flip half is not addressed. Keep it distinct from (2),
+which is about the sky→pixel transform, not the array layout.
 
 ## Settled: `(Y, X)` map order
 
@@ -160,6 +167,108 @@ the parallactic-angle controls above don't isolate the issue — `T` vs
 - issue #12 — add an `integration`/`slow` regression test pinning the
   verified convention so it can't silently regress
 
+## Independent probe: the katbeam comparison
+
+`scripts/compare_katbeam.py` compares this repo's MdV-derived BDS beams
+against `katbeam`'s analytic JimBeam model, and its orientation sweep is a
+second probe of the axis question above. It is independent of the M1
+experiment *in method* — an image-plane model comparison rather than a
+visibility-based calibrator solve — but the two beam models are **not**
+independent in data provenance; see "How well the two models actually agree"
+below before leaning on it. Re-run with:
+
+```bash
+uv sync --group dev --extra full          # katbeam is a dev/test dependency
+uv run python scripts/compare_katbeam.py --band L --freqs 900 1070 1284 1500 1650
+```
+
+It perturbs **our** maps (`none`/`flip_x`/`flip_y`/`swap_xy`) while holding
+katbeam fixed, so the winning label reads directly as a statement about the
+BDS convention. Scored by mainlobe RMS residual, averaged over frequency.
+
+**Verdict is split. Read both halves.**
+
+**1. The transpose is decisively rejected — `(Y, X)` corroborated.** Measured
+on a cache-built L-band BDS across 900–1650 MHz:
+
+| product | `none` | `swap_xy` | penalty |
+|---|---|---|---|
+| HH | 2.535e-3 | 1.440e-2 | ×5.68 |
+| VV | 2.822e-3 | 2.829e-2 | ×10.03 |
+| I | 2.544e-3 | 1.767e-2 | ×6.95 |
+
+All three products agree and the margin is large, so the BDS trailing axes
+are labelled the right way round — the `mdv_beams_to_bds.py:26`/`:130`
+`Y,X` assumption (whose inline comment flags itself as unverified) is
+corroborated. `fwhm_vs_freq.png` shows the same thing directly and more
+simply: **both** models put the m-axis FWHM above the l-axis, and `ours_l`
+tracks `katbeam_l` rather than `katbeam_m`. A transposed BDS would swap that
+pairing.
+
+**2. The sign flips are NOT discriminated. This probe says nothing about
+them.** `flip_x` on VV scores ×1.05 against `none` — indistinguishable.
+The reason is physical: MeerKAT's squint is ~0.05–1 arcmin while the BDS
+pixel is 0.0625 deg = 3.75 arcmin, so the beam is effectively even in both
+axes at this sampling and a mirror is nearly a no-op. **The `flip_x`/`flip_y`
+sign conventions remain entirely with the M1 experiment**; nothing here
+closes them.
+
+### The one-pixel mirror artifact (fixed; do not reintroduce)
+
+The sweep initially reported `flip_x`/`flip_y` penalties of ×17–21, which
+looked like strong evidence and was entirely spurious. An even-sized grid
+centred on a pixel is **not** symmetric about zero: the L-band X axis runs
+`-4.0 .. +3.9375` with 64 negative samples, one zero, and 63 positive, so
+reversing it displaces the zero point by a whole pixel. The naive mirror was
+therefore a mirror *plus a translation*, and the translation dominated —
+at 1284 MHz naive `flip_x` scored 5.21e-2 while a pure one-pixel roll with no
+mirror at all scored 5.14e-2. Corrected, `flip_x` scores 2.37e-3 against
+2.75e-3 for `none`.
+
+`registration_roll()` (`scripts/compare_katbeam.py`) now rolls by
+`2*i0 - n + 1` after a reverse; `orientation_sweep` always passes the
+coordinate arrays. `swap_xy` needs no correction, because it displaces no
+coordinate (the X and Y grids are identical) — which is why it stayed the
+only trustworthy control throughout. Pinned by
+`test_registration_roll_is_one_pixel_for_the_bds_style_even_grid`,
+`test_apply_orientation_with_coords_reregisters_a_mirror_symmetric_map`, and
+`test_orientation_sweep_does_not_penalise_a_symmetric_beam_for_flips`
+(`tests/test_compare_katbeam.py`).
+
+**Any future orientation tooling on this grid inherits the same trap.**
+
+### How well the two models actually agree
+
+Mainlobe (r < HWHM) Stokes I residuals are 1.4–3.5e-3 of peak, with
+`median_frac_diff` inside 0.2%, and FWHM agrees to 0.1–0.3% on both axes
+across 900–1650 MHz (±0.5% channel-to-channel, degrading to ±2–4% only at
+the extreme band edges). **This agreement is not fully independent**:
+katbeam's squint/FWHM tables were themselves measured by MeerKAT holography
+at 60 deg elevation, so both models trace back to the same measurement
+programme. Treat it as a consistency check, not as two independent models
+converging.
+
+Where they genuinely part company:
+
+- **Cross-polarisation.** katbeam models `|Jhv|²+|Jvh|²` as exactly zero. Ours
+  shows the expected four-lobe clover-leaf — nulling on axis, peaking off axis
+  diagonally at ~±0.7 deg — reaching 6.8e-4 of peak at 900 MHz and rising to
+  3.8e-3 at 1650 MHz.
+- **Sidelobes.** katbeam's cosine taper keeps ringing with a 1/r² envelope and
+  its own docstring disclaims sidelobe accuracy, so residuals are reported per
+  radial region (`mainlobe` / `near` / `far`) and never aggregated field-wide.
+  The BDS field spans ~8 HWHM, so a single number would be dominated by a
+  region katbeam makes no claim about.
+- **Azimuthal structure.** `radial_*.png` shades our ±1σ azimuthal scatter;
+  katbeam's is essentially zero-width by construction.
+
+katbeam caveats worth knowing: `cos(pi*rr)/(1-4*rr**2)` is 0/0 at `rr = 0.5`
+(`r ≈ 0.42053` in FWHM units) so a grid point landing exactly there yields
+NaN — non-finite samples are counted and reported (zero occurrences on this
+grid). And PyPI's only release (0.1) predates the S-band model and carries a
+narrower L table (900–1650 MHz vs 856–1712), which is why the dev/test groups
+pin katbeam from git main.
+
 ## Validation tooling (implemented as designed)
 
 The pieces below are implemented and tested; only the *physical-correctness
@@ -224,7 +333,15 @@ Pinned by `tests/test_beam_orientation_ms_io.py`,
   chase an outstanding ~24x amplitude discrepancy between per-channel and
   frequency-averaged beam tracks.
 
-Sources: `src/meerkat_beams/utils.py:265-299` (`get_source_coordinates`),
+Sources: `scripts/compare_katbeam.py` (band->model map, `registration_roll`,
+`apply_orientation`, `orientation_sweep`, `residual_stats`),
+`tests/test_compare_katbeam.py` (84 hermetic unit tests, including the
+one-pixel-mirror regression guards),
+`outputs/compare_katbeam/L/metrics.json` (generated, untracked -- regenerate
+with the command above), `pyproject.toml` (katbeam git-main pin in the `dev`
+and `test` groups), `src/meerkat_beams/core/mdv_beams_to_bds.py:26,130` (the
+`Y,X` assumption this probe tests),
+`src/meerkat_beams/utils.py:265-299` (`get_source_coordinates`),
 `src/meerkat_beams/utils.py:426-511` (`get_rotation_averaged_beam`),
 `tests/test_beam_wizard.py` (tests listed above),
 `scripts/test_beam_orientation.py:1-56`,
