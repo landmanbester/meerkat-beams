@@ -34,6 +34,9 @@ Usage:
 Requires the dev dependency group: `uv sync --group dev --extra full`.
 """
 
+import json
+from pathlib import Path
+
 import numpy as np
 
 from meerkat_beams.utils import log
@@ -400,3 +403,174 @@ def count_non_finite(maps: dict[str, np.ndarray]) -> dict[str, int]:
     which must be reported rather than silently skewing statistics.
     """
     return {name: int(np.count_nonzero(~np.isfinite(arr))) for name, arr in maps.items()}
+
+
+# --------------------------------------------------------------------------
+# HWHM, orientation sweep, metrics
+# --------------------------------------------------------------------------
+
+# Products used to score the orientation sweep. HH and VV carry the
+# discriminating power (katbeam's per-axis FWHM differ by ~5% and its squint is
+# one-sided); I is included as a control that is expected to be weakly
+# discriminating, because a nearly-symmetric beam barely changes under a
+# transpose. That degeneracy is exactly what let the earlier (X, Y)/(Y, X) bug
+# hide -- see docs/wiki/beam-orientation.md.
+SWEEP_PRODUCTS: tuple[str, ...] = ("HH", "VV", "I")
+
+
+def beam_hwhm(plane: np.ndarray, l_deg, m_deg, x0: int, y0: int) -> float:
+    """Half width at half maximum of a ``(NY, NX)`` beam plane, in degrees.
+
+    Averages the FWHM measured along the l and m cuts through the field centre
+    and halves it. Used to set the mainlobe/near/far region boundaries.
+    """
+    plane = np.asarray(plane, dtype=float)
+    fwhm_l = measure_fwhm(np.asarray(l_deg, dtype=float), plane[int(y0), :])
+    fwhm_m = measure_fwhm(np.asarray(m_deg, dtype=float), plane[:, int(x0)])
+    return 0.5 * float(np.nanmean([fwhm_l, fwhm_m]))
+
+
+def orientation_sweep(ours, theirs, l_deg, m_deg, hwhm_deg, products=SWEEP_PRODUCTS) -> dict:
+    """Score each axis perturbation of *our* maps against fixed katbeam maps.
+
+    katbeam's ``(ll_deg, mm_deg)`` contract is unambiguous and documented (SIN
+    projection, degrees), so it is the reference frame and the perturbation is
+    applied to our side. The winning label therefore reads directly as a
+    statement about the BDS axis convention.
+
+    Score is the mainlobe RMS residual averaged over the compared frequencies:
+    lower is better. Returns per-product scores, the per-product winner, and
+    the overall winner (summed across products).
+    """
+    l_arr = np.asarray(l_deg, dtype=float)
+    m_arr = np.asarray(m_deg, dtype=float)
+    if l_arr.size != m_arr.size:
+        raise ValueError(
+            f"orientation_sweep needs a square grid to score swap_xy, got len(l)={l_arr.size} and len(m)={m_arr.size}"
+        )
+
+    masks = region_masks(l_arr, m_arr, hwhm_deg)
+    per_product: dict[str, dict[str, float]] = {}
+    for product in products:
+        scores: dict[str, float] = {}
+        for name in ORIENTATIONS:
+            moved = apply_orientation(ours[product], name)
+            per_freq = [
+                residual_stats(moved[k], theirs[product][k], masks)["mainlobe"]["rms_diff"]
+                for k in range(moved.shape[0])
+            ]
+            scores[name] = float(np.nanmean(per_freq))
+        per_product[product] = scores
+
+    best = {p: min(s, key=lambda n: s[n]) for p, s in per_product.items()}
+    totals = {name: float(np.nansum([per_product[p][name] for p in per_product])) for name in ORIENTATIONS}
+    return {
+        "per_product": per_product,
+        "best": best,
+        "best_overall": min(totals, key=lambda n: totals[n]),
+        "totals": totals,
+    }
+
+
+def build_metrics(ours, theirs, l_deg, m_deg, freqs_hz, x0: int, y0: int) -> dict:
+    """Assemble the full per-frequency, per-product, per-region metric tree."""
+    l_arr = np.asarray(l_deg, dtype=float)
+    m_arr = np.asarray(m_deg, dtype=float)
+    freqs = np.asarray(freqs_hz, dtype=float)
+
+    per_freq = []
+    for k, f in enumerate(freqs):
+        hwhm = beam_hwhm(ours["I"][k], l_arr, m_arr, x0, y0)
+        masks = region_masks(l_arr, m_arr, hwhm)
+
+        fwhm_ours_l = measure_fwhm(l_arr, ours["I"][k][int(y0), :])
+        fwhm_ours_m = measure_fwhm(m_arr, ours["I"][k][:, int(x0)])
+        fwhm_kb_l = measure_fwhm(l_arr, theirs["I"][k][int(y0), :])
+        fwhm_kb_m = measure_fwhm(m_arr, theirs["I"][k][:, int(x0)])
+
+        per_freq.append(
+            {
+                "freq_mhz": float(f * 1e-6),
+                "hwhm_deg": float(hwhm),
+                "fwhm_deg": {
+                    "ours_l": float(fwhm_ours_l),
+                    "ours_m": float(fwhm_ours_m),
+                    "katbeam_l": float(fwhm_kb_l),
+                    "katbeam_m": float(fwhm_kb_m),
+                    "ratio_l": float(fwhm_ours_l / fwhm_kb_l),
+                    "ratio_m": float(fwhm_ours_m / fwhm_kb_m),
+                },
+                "peak": {
+                    p: {"ours": float(np.nanmax(ours[p][k])), "katbeam": float(np.nanmax(theirs[p][k]))}
+                    for p in PRODUCTS
+                },
+                "katbeam_non_finite": count_non_finite({p: theirs[p][k] for p in PRODUCTS}),
+                "residuals": {p: residual_stats(ours[p][k], theirs[p][k], masks) for p in PRODUCTS},
+            }
+        )
+
+    return {"per_freq": per_freq}
+
+
+def format_summary_table(metrics: dict) -> str:
+    """Fixed-width per-frequency residual table for stdout and summary.md."""
+    header = f"{'freq/MHz':>9} {'product':>8} {'region':>9} {'rms':>11} {'max|d|':>11} {'med frac':>10}"
+    lines = [header, "-" * len(header)]
+    for entry in metrics["per_freq"]:
+        for product, regions in entry["residuals"].items():
+            for region in ("mainlobe", "near", "far"):
+                s = regions[region]
+                lines.append(
+                    f"{entry['freq_mhz']:>9.1f} {product:>8} {region:>9} "
+                    f"{s['rms_diff']:>11.3e} {s['max_abs_diff']:>11.3e} {s['median_frac_diff']:>10.3f}"
+                )
+    return "\n".join(lines)
+
+
+def _json_safe(obj):
+    """Recursively replace non-finite floats with None so json stays valid."""
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, (float, np.floating)):
+        return float(obj) if np.isfinite(obj) else None
+    if isinstance(obj, (int, np.integer)):
+        return int(obj)
+    return obj
+
+
+def write_outputs(metrics: dict, sweep: dict, out_dir) -> None:
+    """Write metrics.json and summary.md into ``out_dir``."""
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    payload = dict(metrics)
+    payload["orientation_sweep"] = sweep
+    # allow_nan=False would raise; non-finite values become null instead.
+    (out / "metrics.json").write_text(json.dumps(_json_safe(payload), indent=2, allow_nan=False) + "\n")
+
+    table = format_summary_table(metrics)
+    body = [
+        "# compare_katbeam summary",
+        "",
+        "Residuals of our MdV-derived beam minus katbeam's analytic JimBeam,",
+        "partitioned by radius. katbeam only claims mainlobe fidelity, so the",
+        "`near` and `far` rows are context, not a verdict on the model.",
+        "",
+        "```",
+        table,
+        "```",
+        "",
+        "## Orientation sweep",
+        "",
+        "Mainlobe RMS residual with each axis perturbation applied to *our* maps",
+        "(katbeam held fixed). Lower is better; `none` winning is consistent with",
+        "the BDS axis convention being correct as written.",
+        "",
+        f"- best overall: **{sweep.get('best_overall', 'n/a')}**",
+    ]
+    for product, scores in sweep.get("per_product", {}).items():
+        rendered = ", ".join(f"{n}={v:.3e}" for n, v in scores.items())
+        body.append(f"- {product}: {rendered} -> best `{sweep['best'][product]}`")
+    (out / "summary.md").write_text("\n".join(body) + "\n")

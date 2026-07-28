@@ -5,6 +5,7 @@ Hermetic: pure helpers only. No katbeam import at module scope, no BDS on
 disk, no network, no env vars. Runs under MBEAMS_OFFLINE=1.
 """
 
+import json
 import logging
 
 import compare_katbeam as ck
@@ -567,3 +568,200 @@ def test_resolve_bds_explicit_path_warns_about_stale_conventions(tmp_path, caplo
     with caplog.at_level(logging.WARNING):
         assert ck.resolve_bds(None, str(path)) == str(path)
     assert "orientation sweep" in caplog.text.lower()
+
+
+# ---------------------------------------------------------------------------
+# beam_hwhm
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_beam_hwhm_recovers_half_the_gaussian_fwhm():
+    sigma = 0.35
+    coord = np.linspace(-2.0, 2.0, 401)
+    ll, mm = np.meshgrid(coord, coord)
+    plane = np.exp(-0.5 * (ll**2 + mm**2) / sigma**2)
+    centre = coord.size // 2
+    expected = 0.5 * 2.0 * np.sqrt(2.0 * np.log(2.0)) * sigma
+    assert ck.beam_hwhm(plane, coord, coord, centre, centre) == pytest.approx(expected, rel=1e-3)
+
+
+@pytest.mark.unit
+def test_beam_hwhm_averages_the_two_axes_for_an_elliptical_beam():
+    coord = np.linspace(-2.0, 2.0, 801)
+    ll, mm = np.meshgrid(coord, coord)
+    plane = np.exp(-0.5 * ((ll / 0.3) ** 2 + (mm / 0.6) ** 2))
+    centre = coord.size // 2
+    k = 2.0 * np.sqrt(2.0 * np.log(2.0))
+    expected = 0.5 * 0.5 * (k * 0.3 + k * 0.6)
+    assert ck.beam_hwhm(plane, coord, coord, centre, centre) == pytest.approx(expected, rel=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# orientation_sweep
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sweep_grid():
+    """Square grid for sweep tests; swap_xy needs matching axis lengths."""
+    return np.linspace(-1.0, 1.0, 41)
+
+
+@pytest.mark.unit
+def test_orientation_sweep_picks_none_when_maps_already_agree(sweep_grid):
+    coord = sweep_grid
+    ll, mm = np.meshgrid(coord, coord)
+    # Deliberately asymmetric in BOTH axes so every perturbation is a real change.
+    plane = np.exp(-0.5 * ((ll - 0.15) ** 2 / 0.3**2 + (mm - 0.35) ** 2 / 0.6**2))
+    ours = {"HH": plane[None], "VV": plane[None], "I": plane[None]}
+    theirs = {"HH": plane[None], "VV": plane[None], "I": plane[None]}
+    sweep = ck.orientation_sweep(ours, theirs, coord, coord, hwhm_deg=0.5)
+    assert sweep["best"]["HH"] == "none"
+    assert sweep["best_overall"] == "none"
+    assert sweep["per_product"]["HH"]["none"] == pytest.approx(0.0)
+
+
+@pytest.mark.unit
+def test_orientation_sweep_detects_a_transposed_map(sweep_grid):
+    """If our map were transposed relative to katbeam, swap_xy must win."""
+    coord = sweep_grid
+    ll, mm = np.meshgrid(coord, coord)
+    plane = np.exp(-0.5 * ((ll / 0.3) ** 2 + (mm / 0.6) ** 2))
+    theirs = {"HH": plane[None], "VV": plane[None], "I": plane[None]}
+    swapped = plane.T[None]
+    ours = {"HH": swapped, "VV": swapped, "I": swapped}
+    sweep = ck.orientation_sweep(ours, theirs, coord, coord, hwhm_deg=0.5)
+    assert sweep["best"]["HH"] == "swap_xy"
+    assert sweep["best_overall"] == "swap_xy"
+
+
+@pytest.mark.unit
+def test_orientation_sweep_detects_a_y_flipped_map(sweep_grid):
+    coord = sweep_grid
+    ll, mm = np.meshgrid(coord, coord)
+    plane = np.exp(-0.5 * ((ll / 0.4) ** 2 + (mm - 0.4) ** 2 / 0.3**2))
+    theirs = {"HH": plane[None], "VV": plane[None], "I": plane[None]}
+    flipped = plane[::-1, :][None]
+    ours = {"HH": flipped, "VV": flipped, "I": flipped}
+    sweep = ck.orientation_sweep(ours, theirs, coord, coord, hwhm_deg=0.5)
+    assert sweep["best"]["HH"] == "flip_y"
+
+
+@pytest.mark.unit
+def test_orientation_sweep_reports_every_orientation_for_every_product(sweep_grid):
+    coord = sweep_grid
+    plane = np.ones((coord.size, coord.size))
+    ours = {p: plane[None] for p in ("HH", "VV", "I")}
+    sweep = ck.orientation_sweep(ours, dict(ours), coord, coord, hwhm_deg=0.5)
+    assert set(sweep["per_product"]) == {"HH", "VV", "I"}
+    for scores in sweep["per_product"].values():
+        assert set(scores) == set(ck.ORIENTATIONS)
+
+
+@pytest.mark.unit
+def test_orientation_sweep_rejects_a_non_square_grid():
+    """swap_xy cannot be scored against a rectangular field; fail loudly."""
+    l_deg = np.linspace(-1.0, 1.0, 9)
+    m_deg = np.linspace(-1.0, 1.0, 13)
+    plane = np.ones((13, 9))
+    ours = {p: plane[None] for p in ("HH", "VV", "I")}
+    with pytest.raises(ValueError, match="square"):
+        ck.orientation_sweep(ours, dict(ours), l_deg, m_deg, hwhm_deg=0.5)
+
+
+# ---------------------------------------------------------------------------
+# build_metrics + outputs
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def tiny_metrics_inputs():
+    coord = np.linspace(-1.0, 1.0, 41)
+    ll, mm = np.meshgrid(coord, coord)
+    plane = np.exp(-0.5 * (ll**2 + mm**2) / 0.3**2)
+    ours = {p: np.stack([plane, plane]) for p in ck.PRODUCTS}
+    ours["xpol"] = np.zeros_like(ours["xpol"])
+    theirs = {p: np.stack([plane, plane]) for p in ck.PRODUCTS}
+    theirs["xpol"] = np.zeros_like(theirs["xpol"])
+    freqs = np.array([1.0e9, 1.2e9])
+    return ours, theirs, coord, freqs
+
+
+@pytest.mark.unit
+def test_build_metrics_covers_every_frequency_product_and_region(tiny_metrics_inputs):
+    ours, theirs, coord, freqs = tiny_metrics_inputs
+    centre = coord.size // 2
+    metrics = ck.build_metrics(ours, theirs, coord, coord, freqs, centre, centre)
+    assert len(metrics["per_freq"]) == 2
+    entry = metrics["per_freq"][0]
+    assert entry["freq_mhz"] == pytest.approx(1000.0)
+    assert set(entry["residuals"]) == set(ck.PRODUCTS)
+    assert set(entry["residuals"]["I"]) == {"mainlobe", "near", "far"}
+    assert "hwhm_deg" in entry
+    assert "fwhm_deg" in entry
+
+
+@pytest.mark.unit
+def test_build_metrics_records_fwhm_for_both_models_and_axes(tiny_metrics_inputs):
+    ours, theirs, coord, freqs = tiny_metrics_inputs
+    centre = coord.size // 2
+    metrics = ck.build_metrics(ours, theirs, coord, coord, freqs, centre, centre)
+    fwhm = metrics["per_freq"][0]["fwhm_deg"]
+    assert set(fwhm) == {"ours_l", "ours_m", "katbeam_l", "katbeam_m", "ratio_l", "ratio_m"}
+    assert fwhm["ratio_l"] == pytest.approx(1.0, rel=1e-6)
+
+
+@pytest.mark.unit
+def test_build_metrics_records_non_finite_counts(tiny_metrics_inputs):
+    ours, theirs, coord, freqs = tiny_metrics_inputs
+    theirs = {k: v.copy() for k, v in theirs.items()}
+    theirs["I"][0, 0, 0] = np.nan
+    centre = coord.size // 2
+    metrics = ck.build_metrics(ours, theirs, coord, coord, freqs, centre, centre)
+    assert metrics["per_freq"][0]["katbeam_non_finite"]["I"] == 1
+
+
+@pytest.mark.unit
+def test_write_outputs_emits_json_and_markdown(tmp_path, tiny_metrics_inputs):
+    ours, theirs, coord, freqs = tiny_metrics_inputs
+    centre = coord.size // 2
+    metrics = ck.build_metrics(ours, theirs, coord, coord, freqs, centre, centre)
+    sweep = ck.orientation_sweep(
+        {p: ours[p] for p in ("HH", "VV", "I")},
+        {p: theirs[p] for p in ("HH", "VV", "I")},
+        coord,
+        coord,
+        hwhm_deg=0.35,
+    )
+    ck.write_outputs(metrics, sweep, tmp_path)
+
+    payload = json.loads((tmp_path / "metrics.json").read_text())
+    assert payload["per_freq"][0]["freq_mhz"] == pytest.approx(1000.0)
+    assert payload["orientation_sweep"]["best_overall"] == "none"
+    assert "compare_katbeam" in (tmp_path / "summary.md").read_text()
+
+
+@pytest.mark.unit
+def test_write_outputs_json_is_finite_safe(tmp_path, tiny_metrics_inputs):
+    """NaN is not valid JSON; it must serialise as null, not crash a reader."""
+    ours, theirs, coord, freqs = tiny_metrics_inputs
+    centre = coord.size // 2
+    metrics = ck.build_metrics(ours, theirs, coord, coord, freqs, centre, centre)
+    metrics["per_freq"][0]["fwhm_deg"]["ours_l"] = float("nan")
+    sweep = {"per_product": {}, "best": {}, "best_overall": "none"}
+    ck.write_outputs(metrics, sweep, tmp_path)
+    text = (tmp_path / "metrics.json").read_text()
+    assert "NaN" not in text
+    assert json.loads(text)["per_freq"][0]["fwhm_deg"]["ours_l"] is None
+
+
+@pytest.mark.unit
+def test_format_summary_table_mentions_each_region(tiny_metrics_inputs):
+    ours, theirs, coord, freqs = tiny_metrics_inputs
+    centre = coord.size // 2
+    metrics = ck.build_metrics(ours, theirs, coord, coord, freqs, centre, centre)
+    table = ck.format_summary_table(metrics)
+    for region in ("mainlobe", "near", "far"):
+        assert region in table
+    assert "1000.0" in table
