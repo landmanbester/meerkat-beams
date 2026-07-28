@@ -94,10 +94,26 @@ dev = [
     "pre-commit>=4.5.1",
     "mypy>=1.0.0",
     "ipdb",
+    # Script-only: scripts/compare_katbeam.py compares our MdV-derived beam
+    # against katbeam's analytic JimBeam model. Not in the [full] runtime
+    # extra -- whether it belongs there is an issue #22 decision.
+    #
+    # Pinned to git main, NOT PyPI: the only PyPI release (0.1) predates the
+    # S-band model (MKAT-AA-S-JIM-2020) and carries a narrower L table
+    # (900-1650 MHz vs 856-1712). Note this reintroduces the git-dependency
+    # pattern that design-decisions.md D8 retired for hip-cargo; it is a
+    # deliberate, dev/test-only choice, and it makes lint/test CI depend on
+    # github.com/ska-sa/katbeam being reachable.
+    "katbeam @ git+https://github.com/ska-sa/katbeam@main",
 ]
 # Test deps are 3.11+ only: tests never run on 3.10 (lightweight-install-only).
 test = [
     "pytest>=8.0.0",
     "xarray-ms>=0.5.4; python_version >= '3.11'",
     "msv4-utils>=0.0.3; python_version >= '3.11'",
+    # Also in the dev group (see the note there for why it is a git pin).
+    # Duplicated here on purpose: the CI test job syncs `--group test --extra
+    # full` without `--group dev`, so without this the katbeam-backed tests in
+    # tests/test_compare_katbeam.py would silently skip in CI.
+    "katbeam @ git+https://github.com/ska-sa/katbeam@main; python_version >= '3.11'",
 ]

@@ -1112,6 +1112,19 @@ wheels = [
 ]
 
 [[package]]
+name = "katbeam"
+version = "0.2.dev44+master.f46f11e"
+source = { git = "https://github.com/ska-sa/katbeam?rev=main#f46f11ef7ec361e1d656178d4842fb6450022654" }
+dependencies = [
+    { name = "astropy", version = "6.1.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "astropy", version = "7.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+
+[[package]]
 name = "kiwisolver"
 version = "1.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1452,12 +1465,14 @@ full = [
 [package.dev-dependencies]
 dev = [
     { name = "ipdb" },
+    { name = "katbeam" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "ruff" },
     { name = "tbump" },
 ]
 test = [
+    { name = "katbeam", marker = "python_full_version >= '3.11'" },
     { name = "msv4-utils", marker = "python_full_version >= '3.11'" },
     { name = "pytest" },
     { name = "xarray-ms", marker = "python_full_version >= '3.11'" },
@@ -1484,12 +1499,14 @@ provides-extras = ["full"]
 [package.metadata.requires-dev]
 dev = [
     { name = "ipdb" },
+    { name = "katbeam", git = "https://github.com/ska-sa/katbeam?rev=main" },
     { name = "mypy", specifier = ">=1.0.0" },
     { name = "pre-commit", specifier = ">=4.5.1" },
     { name = "ruff", specifier = ">=0.9.0" },
     { name = "tbump", specifier = ">=6.11.0" },
 ]
 test = [
+    { name = "katbeam", marker = "python_full_version >= '3.11'", git = "https://github.com/ska-sa/katbeam?rev=main" },
     { name = "msv4-utils", marker = "python_full_version >= '3.11'", specifier = ">=0.0.3" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "xarray-ms", marker = "python_full_version >= '3.11'", specifier = ">=0.5.4" },
