@@ -206,3 +206,101 @@ def region_masks(l_deg: np.ndarray, m_deg: np.ndarray, hwhm_deg: float) -> dict[
         "near": (r >= hwhm) & (r < 3.0 * hwhm),
         "far": r >= 3.0 * hwhm,
     }
+
+
+# --------------------------------------------------------------------------
+# Frequency selection (pure)
+# --------------------------------------------------------------------------
+
+
+def overlap_indices(bds_freqs_hz: np.ndarray, model_freqs_mhz: np.ndarray, stride: int = 1) -> np.ndarray:
+    """BDS channel indices lying inside the katbeam table's frequency range.
+
+    katbeam interpolates its squint/FWHM table with ``np.interp``, which
+    silently clamps (extrapolates flat) outside the table. Restricting to the
+    overlap keeps that from being mistaken for a model difference.
+    """
+    bds = np.asarray(bds_freqs_hz, dtype=float)
+    model = np.asarray(model_freqs_mhz, dtype=float)
+    lo, hi = model.min() * 1e6, model.max() * 1e6
+    idx = np.flatnonzero((bds >= lo) & (bds <= hi))
+    if idx.size == 0:
+        raise ValueError(
+            f"no frequency overlap: BDS spans [{bds.min() * 1e-6:.1f}, {bds.max() * 1e-6:.1f}] MHz "
+            f"but the katbeam model table spans [{model.min():.1f}, {model.max():.1f}] MHz"
+        )
+    return idx[:: int(stride)]
+
+
+def select_native_freqs(
+    bds_freqs_hz: np.ndarray,
+    model_freqs_mhz: np.ndarray,
+    requested_mhz=None,
+    n: int = 5,
+):
+    """Pick BDS channels to compare at, snapping to native channel frequencies.
+
+    Returns ``(indices, freqs_hz)``. Requested frequencies are clipped to the
+    BDS/katbeam overlap and snapped to the nearest real channel, so no
+    frequency interpolation enters the comparison. Duplicates are collapsed.
+    """
+    bds = np.asarray(bds_freqs_hz, dtype=float)
+    usable = overlap_indices(bds, model_freqs_mhz)
+    lo, hi = bds[usable].min(), bds[usable].max()
+
+    if requested_mhz is None:
+        targets = np.linspace(lo, hi, int(n))
+    else:
+        targets = np.clip(np.atleast_1d(np.asarray(requested_mhz, dtype=float)) * 1e6, lo, hi)
+
+    chosen = np.unique([int(usable[np.argmin(np.abs(bds[usable] - t))]) for t in targets])
+    return chosen, bds[chosen]
+
+
+# --------------------------------------------------------------------------
+# Residual statistics (pure)
+# --------------------------------------------------------------------------
+
+
+def residual_stats(
+    ours: np.ndarray,
+    theirs: np.ndarray,
+    masks: dict[str, np.ndarray],
+    frac_floor: float = 0.1,
+) -> dict[str, dict[str, float]]:
+    """Residual statistics of ``ours - theirs``, per named region.
+
+    ``rms_diff_peaknorm`` repeats the RMS after dividing each map by its own
+    peak. Our ``njones`` is normalised to exactly 1 on axis while katbeam's
+    on-axis value is slightly below 1 because of squint, so the peak-normalised
+    figure separates that constant offset from a genuine shape difference.
+    ``median_frac_diff`` is gated to pixels where ``theirs > frac_floor`` so
+    ratios are not taken through katbeam's nulls.
+    """
+    ours = np.asarray(ours, dtype=float)
+    theirs = np.asarray(theirs, dtype=float)
+    diff = ours - theirs
+
+    def _peak_norm(arr):
+        peak = np.nanmax(np.abs(arr))
+        return arr / peak if np.isfinite(peak) and peak > 0 else arr
+
+    diff_norm = _peak_norm(ours) - _peak_norm(theirs)
+
+    out: dict[str, dict[str, float]] = {}
+    for name, mask in masks.items():
+        valid = mask & np.isfinite(diff)
+        d = diff[valid]
+        valid_norm = mask & np.isfinite(diff_norm)
+        dn = diff_norm[valid_norm]
+        gate = valid & (theirs > frac_floor)
+
+        out[name] = {
+            "n_pixels": int(valid.sum()),
+            "max_abs_diff": float(np.max(np.abs(d))) if d.size else float("nan"),
+            "rms_diff": float(np.sqrt(np.mean(d**2))) if d.size else float("nan"),
+            "rms_diff_peaknorm": float(np.sqrt(np.mean(dn**2))) if dn.size else float("nan"),
+            "n_pixels_frac": int(gate.sum()),
+            "median_frac_diff": (float(np.median(diff[gate] / theirs[gate])) if gate.any() else float("nan")),
+        }
+    return out

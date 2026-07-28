@@ -235,3 +235,151 @@ def test_region_masks_split_at_hwhm_and_three_hwhm():
     assert masks["near"][centre, j]
     # (l, m) = (4.0, 0.0) -> r = 4.0, beyond 3*hwhm
     assert masks["far"][centre, -1]
+
+
+# ---------------------------------------------------------------------------
+# frequency selection
+# ---------------------------------------------------------------------------
+
+# Stand-in for katbeam's L-band table bounds (856-1712 MHz).
+_MODEL_MHZ = np.array([856.0, 1200.0, 1712.0])
+
+
+@pytest.mark.unit
+def test_overlap_indices_excludes_channels_outside_the_model_table():
+    bds = np.array([700.0, 900.0, 1200.0, 1700.0, 1900.0]) * 1e6
+    idx = ck.overlap_indices(bds, _MODEL_MHZ)
+    np.testing.assert_array_equal(idx, [1, 2, 3])
+
+
+@pytest.mark.unit
+def test_overlap_indices_applies_stride():
+    bds = np.linspace(900.0, 1700.0, 41) * 1e6
+    idx = ck.overlap_indices(bds, _MODEL_MHZ, stride=10)
+    np.testing.assert_array_equal(idx, [0, 10, 20, 30, 40])
+
+
+@pytest.mark.unit
+def test_overlap_indices_raises_when_bands_do_not_overlap():
+    bds = np.array([2500.0, 2600.0]) * 1e6
+    with pytest.raises(ValueError, match="no frequency overlap"):
+        ck.overlap_indices(bds, _MODEL_MHZ)
+
+
+@pytest.mark.unit
+def test_select_native_freqs_returns_native_channel_values():
+    """Requested frequencies snap to real channels: no frequency interpolation."""
+    bds = np.linspace(900.0, 1700.0, 41) * 1e6
+    idx, freqs = ck.select_native_freqs(bds, _MODEL_MHZ, requested_mhz=[1000.0, 1500.0])
+    assert np.all(np.isin(freqs, bds))
+    np.testing.assert_array_equal(bds[idx], freqs)
+
+
+@pytest.mark.unit
+def test_select_native_freqs_clips_requests_to_the_overlap():
+    """katbeam's np.interp would silently extrapolate flat outside its table."""
+    bds = np.linspace(700.0, 1900.0, 121) * 1e6
+    _, freqs = ck.select_native_freqs(bds, _MODEL_MHZ, requested_mhz=[100.0, 5000.0])
+    assert freqs.min() >= 856.0e6
+    assert freqs.max() <= 1712.0e6
+
+
+@pytest.mark.unit
+def test_select_native_freqs_spreads_n_across_overlap_by_default():
+    bds = np.linspace(900.0, 1700.0, 401) * 1e6
+    idx, freqs = ck.select_native_freqs(bds, _MODEL_MHZ, n=5)
+    assert idx.size == 5
+    assert np.all(np.diff(freqs) > 0)
+    assert freqs[0] == pytest.approx(900.0e6, abs=5e6)
+    assert freqs[-1] == pytest.approx(1700.0e6, abs=5e6)
+
+
+@pytest.mark.unit
+def test_select_native_freqs_deduplicates_collapsed_requests():
+    """Two requests landing on one channel must not yield a duplicate entry."""
+    bds = np.linspace(900.0, 1700.0, 9) * 1e6  # 100 MHz spacing
+    idx, freqs = ck.select_native_freqs(bds, _MODEL_MHZ, requested_mhz=[1000.0, 1001.0])
+    assert idx.size == 1
+    assert freqs[0] == pytest.approx(1000.0e6)
+
+
+# ---------------------------------------------------------------------------
+# residual_stats
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def flat_masks():
+    """Three disjoint masks over a 4x4 field, for residual_stats tests."""
+    mainlobe = np.zeros((4, 4), dtype=bool)
+    mainlobe[1:3, 1:3] = True
+    far = np.zeros((4, 4), dtype=bool)
+    far[0, :] = True
+    near = ~(mainlobe | far)
+    return {"mainlobe": mainlobe, "near": near, "far": far}
+
+
+@pytest.mark.unit
+def test_residual_stats_reports_zero_for_identical_maps(flat_masks):
+    arr = np.linspace(0.2, 1.0, 16).reshape(4, 4)
+    stats = ck.residual_stats(arr, arr, flat_masks)
+    assert set(stats) == {"mainlobe", "near", "far"}
+    for region in stats.values():
+        assert region["max_abs_diff"] == pytest.approx(0.0)
+        assert region["rms_diff"] == pytest.approx(0.0)
+        assert region["rms_diff_peaknorm"] == pytest.approx(0.0)
+
+
+@pytest.mark.unit
+def test_residual_stats_computes_rms_and_max_per_region(flat_masks):
+    theirs = np.ones((4, 4))
+    ours = np.ones((4, 4))
+    ours[1, 1] = 1.5  # inside mainlobe only
+    stats = ck.residual_stats(ours, theirs, flat_masks)
+    assert stats["mainlobe"]["max_abs_diff"] == pytest.approx(0.5)
+    assert stats["mainlobe"]["rms_diff"] == pytest.approx(np.sqrt(0.25 / 4))
+    assert stats["near"]["max_abs_diff"] == pytest.approx(0.0)
+    assert stats["far"]["max_abs_diff"] == pytest.approx(0.0)
+
+
+@pytest.mark.unit
+def test_residual_stats_frac_gate_excludes_null_pixels(flat_masks):
+    """Fractional differences must not be taken through katbeam's nulls."""
+    theirs = np.full((4, 4), 1.0)
+    theirs[1, 1] = 1e-6  # a null: dividing by this is meaningless
+    ours = np.full((4, 4), 1.1)
+    stats = ck.residual_stats(ours, theirs, flat_masks, frac_floor=0.1)
+    assert stats["mainlobe"]["n_pixels"] == 4
+    assert stats["mainlobe"]["n_pixels_frac"] == 3
+    assert stats["mainlobe"]["median_frac_diff"] == pytest.approx(0.1)
+
+
+@pytest.mark.unit
+def test_residual_stats_peaknorm_removes_a_pure_scale_offset(flat_masks):
+    """njones is exactly 1 on axis; katbeam is ~0.9999 because of squint.
+
+    That constant scale offset must not masquerade as a shape difference.
+    """
+    theirs = np.linspace(0.2, 1.0, 16).reshape(4, 4)
+    ours = 0.9 * theirs
+    stats = ck.residual_stats(ours, theirs, flat_masks)
+    assert stats["mainlobe"]["rms_diff"] > 1e-3
+    assert stats["mainlobe"]["rms_diff_peaknorm"] == pytest.approx(0.0, abs=1e-12)
+
+
+@pytest.mark.unit
+def test_residual_stats_ignores_non_finite_pixels(flat_masks):
+    theirs = np.ones((4, 4))
+    ours = np.ones((4, 4))
+    ours[1, 1] = np.nan
+    stats = ck.residual_stats(ours, theirs, flat_masks)
+    assert stats["mainlobe"]["n_pixels"] == 3
+    assert stats["mainlobe"]["rms_diff"] == pytest.approx(0.0)
+
+
+@pytest.mark.unit
+def test_residual_stats_returns_nan_for_an_empty_region():
+    masks = {"empty": np.zeros((4, 4), dtype=bool)}
+    stats = ck.residual_stats(np.ones((4, 4)), np.ones((4, 4)), masks)
+    assert stats["empty"]["n_pixels"] == 0
+    assert np.isnan(stats["empty"]["rms_diff"])
