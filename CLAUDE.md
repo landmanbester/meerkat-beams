@@ -90,7 +90,7 @@ Full field/variable/dtype tables for all three formats:
 ## Conventions
 
 - Python support policy: **3.11–3.13 full** (scientific stack, tested in CI); **3.10 lightweight only** — base install (CLI + hip-cargo container dispatch), no `[full]` stack, deliberately excluded from the CI test matrix (a dedicated `lightweight` CI job pins base-install + `mbeams --help` on 3.10 instead — do not add 3.10 to the test matrix). Test-group deps carry `python_version >= '3.11'` markers for the same reason.
-- Runtime dep is `hip-cargo>=0.3.0`, resolved from PyPI — the transitional git-main pin is retired (see `docs/wiki/design-decisions.md` D8). The `Dockerfile`'s `git` install layer predates that re-pin and has **not** been removed yet as of this commit (still present, per its own inline comment) — don't assume it's gone. The scientific stack (`xarray`, `zarr<3`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask-ms`, `wget`) is under the `[full]` extra.
+- Runtime dep is `hip-cargo>=0.3.0`, resolved from PyPI — the transitional git-main pin is retired (see `docs/wiki/design-decisions.md` D8). The `Dockerfile`'s `git` install layer predates that re-pin and has **not** been removed yet as of this commit (still present, per its own inline comment) — don't assume it's gone. The scientific stack (`xarray`, `zarr<3`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask-ms`, `wget`) is under the `[full]` extra. `katbeam` is **not** a runtime dep: it is pinned to git main in the `dev` **and** `test` groups (script-only, for `scripts/compare_katbeam.py`). The git pin is deliberate — PyPI's only release (0.1) has no S-band model and a narrower L table (900–1650 vs 856–1712 MHz) — and it knowingly reintroduces the pattern D8 retired for hip-cargo, scoped to dev/test only. Whether it becomes a runtime dep is an issue #22 decision.
 - Ruff: `line-length=120`, `target-version=py310`, rules `E,F,I,N,W` with `E741`/`N806` ignored (domain names: `l`, `m`, `I`, `S`, `Sinv`). Pre-commit runs `ruff-check --fix` and `ruff-format`.
 - Core function signatures mirror their CLI signatures (same names/defaults) with plain types. Don't move Typer conversions into core. CLI passes `parse_upath`-parsed path objects directly (no `str(...)` coercion); core accepts anything `str`-coercible / path-like.
 - Commits: conventional prefixes, **enforced** by `conventional-pre-commit` at the `commit-msg` stage. Allowed types: `feat fix refactor perf docs deps chore ci style test build`. Fresh clones need `pre-commit install --hook-type commit-msg` — plain `pre-commit install` does not wire up the `commit-msg` hook.
@@ -100,7 +100,13 @@ Full field/variable/dtype tables for all three formats:
 ## Running things
 
 ```bash
-uv sync --group dev --group test      # install dev + test deps
+# Dependency groups do NOT imply the [full] extra. Omitting `--extra full`
+# actively UNINSTALLS the scientific stack (zarr, matplotlib, numcodecs,
+# dask-ms, xarray-fits, gdown, wget, python-casacore, s3fs, ...), because
+# `uv sync` makes the environment match exactly what you asked for. Some of
+# it survives transitively via the test group, which makes the breakage
+# confusing rather than obvious. Always pass `--extra full` for real work.
+uv sync --group dev --group test --extra full   # install dev + test deps
 uv run ruff format --check .          # format check (CI)
 uv run ruff check .                   # lint (CI)
 uv run pytest -v                      # full test run
@@ -112,7 +118,7 @@ uv run mbeams --help                  # CLI
 bash scripts/genfuncs.sh
 ```
 
-CI (`.github/workflows/ci.yml`) runs ruff + pytest on Python 3.11–3.13, plus a `lightweight` job that pins the 3.10 base-install guarantee (no test suite there — see the Python support policy above). Commit message containing `[skip checks]` skips the CI job. Docker image built from `Dockerfile` (python:3.11-slim, installs `.[full]`; still installs `git`, a leftover from the retired hip-cargo git-main pin — see `docs/wiki/design-decisions.md` D8).
+CI (`.github/workflows/ci.yml`) runs ruff + pytest on Python 3.11–3.13, plus a `lightweight` job that pins the 3.10 base-install guarantee (no test suite there — see the Python support policy above). The two jobs sync differently: lint uses `uv sync --group dev`, the test job uses `uv sync --group test --extra full` — **no `dev` group**. So anything a test needs must be in the `test` group, not just `dev`, or the test will skip silently in CI (this is why `katbeam` is listed in both). Commit message containing `[skip checks]` skips the CI job. Docker image built from `Dockerfile` (python:3.11-slim, installs `.[full]`; still installs `git`, a leftover from the retired hip-cargo git-main pin — see `docs/wiki/design-decisions.md` D8).
 
 ## Tests
 
