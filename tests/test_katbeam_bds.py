@@ -227,30 +227,6 @@ def test_jones_is_diagonal_with_exactly_zero_off_diagonals():
     np.testing.assert_array_equal(njones[1, 1].imag, 0)
 
 
-def test_on_axis_jones_is_katbeam_evaluated_on_axis():
-    """The centre pixel must be katbeam sampled at exactly (0, 0).
-
-    It is near 1 but not equal to it: katbeam's squint offsets each beam centre
-    (up to 0.052 deg in the L table's Hx column at 1712 MHz), so the value on
-    the grid's axis sits slightly off each beam's own peak. Pinning it against
-    JimBeam directly is stricter than a tolerance around 1, and it is what
-    actually has to hold.
-    """
-    from meerkat_beams.katbeam_bds import require_model, synthesize_katbeam_bds
-
-    ds = synthesize_katbeam_bds("L", **SMALL)
-    x0, y0 = ds.attrs["x0"], ds.attrs["y0"]
-    jb = require_model("MKAT-AA-L-JIM-2020")
-
-    for k, f_mhz in enumerate(np.asarray(ds.attrs["freqs"]) / 1e6):
-        assert ds.njones[0, 0, k, y0, x0].values.real == pytest.approx(jb.HH(0.0, 0.0, float(f_mhz)))
-        assert ds.njones[1, 1, k, y0, x0].values.real == pytest.approx(jb.VV(0.0, 0.0, float(f_mhz)))
-
-    # Still close to the identity: this is a normalised beam.
-    np.testing.assert_allclose(ds.njones[0, 0, :, y0, x0].values.real, 1.0, atol=1e-2)
-    np.testing.assert_allclose(ds.njones[1, 1, :, y0, x0].values.real, 1.0, atol=1e-2)
-
-
 def test_stokes_u_and_v_do_not_mix_with_i():
     """A real diagonal Jones can produce no I<->U or I<->V leakage."""
     from meerkat_beams.katbeam_bds import synthesize_katbeam_bds
@@ -266,9 +242,15 @@ def test_stokes_u_and_v_do_not_mix_with_i():
 def test_derived_stokes_i_matches_katbeam_own_i():
     """The issue's Jones-to-Stokes cross-check.
 
-    JimBeam.I() is 0.5*(|HH|^2 + |VV|^2). Our nstokes[I, I] gets there by a
-    completely different route -- diag(HH, VV) -> Mueller -> Stokes basis -- so
-    agreement exercises jones_to_mueller and mueller_to_stokes.
+    ``JimBeam.I()`` is ``0.5*(|HH|^2 + |VV|^2)``. Our ``nstokes[I, I]`` reaches
+    the same place by a completely different route -- ``diag(HH, VV)`` ->
+    Mueller -> Stokes basis -- so agreement exercises ``jones_to_mueller`` and
+    ``mueller_to_stokes``, and now the on-axis normalisation as well.
+
+    The expected value is built only from ``JimBeam`` calls, never from our own
+    pipeline, so this stays a genuine cross-check rather than a restatement: the
+    normalised Stokes I of a diagonal Jones is
+    ``0.5*((HH/HH0)^2 + (VV/VV0)^2)``.
     """
     from meerkat_beams.katbeam_bds import require_model, synthesize_katbeam_bds
 
@@ -278,8 +260,42 @@ def test_derived_stokes_i_matches_katbeam_own_i():
 
     jb = require_model("MKAT-AA-L-JIM-2020")
     for k, f in enumerate(freqs_mhz):
-        expected = jb.I(ll, mm, float(f))
+        hh = jb.HH(ll, mm, float(f)) / jb.HH(0.0, 0.0, float(f))
+        vv = jb.VV(ll, mm, float(f)) / jb.VV(0.0, 0.0, float(f))
+        expected = 0.5 * (np.abs(hh) ** 2 + np.abs(vv) ** 2)
         np.testing.assert_allclose(ds.nstokes[0, 0, k].values, expected, rtol=1e-5, atol=1e-6)
+
+
+def test_our_conversion_reproduces_katbeam_i_on_raw_jones():
+    """The purest form of the issue's cross-check, independent of the dataset.
+
+    Feeding katbeam's RAW diagonal Jones through our shared Jones->Stokes helpers
+    must reproduce ``JimBeam.I()`` exactly. Unlike the normalised comparison this
+    involves no scaling at all, so it isolates ``jones_to_mueller`` and
+    ``mueller_to_stokes``.
+
+    Note the normalised dataset values do *not* relate to ``I()`` by a single
+    scalar: ``0.25*((HH/HH0)^2+(VV/VV0)^2)*(HH0^2+VV0^2)`` equals
+    ``0.5*(HH^2+VV^2)`` only when ``HH0 == VV0``, which katbeam's squint makes
+    false. Hence this test works from raw Jones rather than rescaling the dataset.
+    """
+    from meerkat_beams.katbeam_bds import require_model
+    from meerkat_beams.utils import jones_to_mueller, mueller_to_stokes
+
+    jb = require_model("MKAT-AA-L-JIM-2020")
+    degs = np.linspace(-4.0, 4.0, 16)
+    ll, mm = np.meshgrid(degs, degs)
+
+    for f in (856.0, 1284.0, 1712.0):
+        hh = np.asarray(jb.HH(ll, mm, f), dtype=float)
+        vv = np.asarray(jb.VV(ll, mm, f), dtype=float)
+        jones = np.zeros((1,) + ll.shape + (2, 2), dtype=np.complex128)
+        jones[0, :, :, 0, 0] = hh
+        jones[0, :, :, 1, 1] = vv
+
+        derived = mueller_to_stokes(jones_to_mueller(jones)).real[0, :, :, 0, 0]
+
+        np.testing.assert_allclose(derived, jb.I(ll, mm, f), rtol=1e-10, atol=1e-12)
 
 
 def test_sanitize_replaces_non_finite_with_the_analytic_limit(caplog):
@@ -542,3 +558,90 @@ def test_eval_block_does_not_use_complex128():
     assert njones.dtype == np.complex64
     assert nmueller.dtype == np.complex64
     assert nstokes.dtype == np.float32
+
+
+def test_njones_is_exactly_identity_on_axis():
+    """The `n` prefix must mean the same thing as it does for an MdV BDS.
+
+    MdV's n* variables are pre-multiplied by the inverse of the centre-pixel
+    Jones, so njones on axis is exactly the identity and nstokes[I,I] exactly 1.
+    katbeam's raw HH/VV are only *approximately* unity at (0,0) -- squint offsets
+    each beam's peak off the grid centre, giving 0.9950 at 1712 MHz -- so the same
+    normalisation has to be applied here, or a caller correcting data with
+    njones carries a 0.5% on-axis error that the name denies.
+    """
+    from meerkat_beams.katbeam_bds import synthesize_katbeam_bds
+
+    ds = synthesize_katbeam_bds("L", npix=16, fov_deg=4.0, num_freq=5)
+    x0, y0 = ds.attrs["x0"], ds.attrs["y0"]
+
+    np.testing.assert_allclose(ds.njones[0, 0, :, y0, x0].values.real, 1.0, atol=1e-6)
+    np.testing.assert_allclose(ds.njones[1, 1, :, y0, x0].values.real, 1.0, atol=1e-6)
+    np.testing.assert_allclose(ds.nstokes[0, 0, :, y0, x0].values, 1.0, atol=1e-6)
+    # Q/U/V leakage on axis stays zero.
+    np.testing.assert_allclose(ds.nstokes[0, 1, :, y0, x0].values, 0.0, atol=1e-6)
+
+
+def test_normalisation_is_a_per_frequency_scalar_on_each_receptor():
+    """Normalisation must divide each receptor by its own centre value and nothing
+    else -- it may not reshape the beam.
+
+    Pinned against JimBeam directly, so this does not restate the implementation:
+    njones[0,0] * HH(0,0,f) must reproduce raw HH everywhere.
+    """
+    from meerkat_beams.katbeam_bds import require_model, synthesize_katbeam_bds
+
+    ds = synthesize_katbeam_bds("L", npix=16, fov_deg=4.0, num_freq=3)
+    jb = require_model("MKAT-AA-L-JIM-2020")
+    ll, mm = np.meshgrid(ds.X.values, ds.Y.values)
+
+    for k, f in enumerate(np.asarray(ds.attrs["freqs"]) / 1e6):
+        raw_hh = jb.HH(ll, mm, float(f))
+        raw_vv = jb.VV(ll, mm, float(f))
+        np.testing.assert_allclose(
+            ds.njones[0, 0, k].values.real * jb.HH(0.0, 0.0, float(f)), raw_hh, rtol=1e-5, atol=1e-7
+        )
+        np.testing.assert_allclose(
+            ds.njones[1, 1, k].values.real * jb.VV(0.0, 0.0, float(f)), raw_vv, rtol=1e-5, atol=1e-7
+        )
+
+
+@pytest.mark.parametrize(
+    "bad, match",
+    [
+        (np.array([]), "at least one frequency"),
+        (np.array([1.0e9, np.nan]), "finite"),
+        (np.array([1.0e9, np.inf]), "finite"),
+        (np.array([1.2e9, 1.0e9]), "increasing"),
+        (np.array([1.0e9, 1.0e9]), "increasing"),
+    ],
+)
+def test_invalid_explicit_freq_is_rejected(bad, match):
+    """An empty axis died in the log line with IndexError; NaN, inf, unsorted and
+    duplicate values were accepted outright and became FREQ coordinates, after
+    which BeamWizard builds interp1d index<->freq mappings on a non-monotonic or
+    non-finite axis."""
+    from meerkat_beams.katbeam_bds import synthesize_katbeam_bds
+
+    with pytest.raises(ValueError, match=match):
+        synthesize_katbeam_bds("L", npix=8, fov_deg=4.0, freq=bad)
+
+
+def test_cdelt3_is_only_set_for_a_uniform_frequency_axis():
+    """A single CDELT3 cannot describe the default L table, which is non-uniform
+    (... 1600, 1650, 1670, 1712 MHz). Software reading it as a linear axis would
+    assign the wrong frequency to later planes, so it is omitted instead -- the
+    exact axis is always available in attrs['freqs'] and the FREQ coordinate.
+    """
+    from meerkat_beams.katbeam_bds import synthesize_katbeam_bds
+
+    non_uniform = synthesize_katbeam_bds("L", npix=8, fov_deg=4.0)
+    assert "CDELT3" not in non_uniform.attrs["fits_header"]
+
+    uniform = synthesize_katbeam_bds("L", npix=8, fov_deg=4.0, num_freq=5)
+    hdr = uniform.attrs["fits_header"]
+    freqs = uniform.coords["FREQ"].values
+    assert hdr["CDELT3"] == pytest.approx(freqs[1] - freqs[0])
+
+    single = synthesize_katbeam_bds("L", npix=8, fov_deg=4.0, num_freq=1)
+    assert "CDELT3" not in single.attrs["fits_header"]

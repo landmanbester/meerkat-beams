@@ -935,11 +935,13 @@ def test_main_end_to_end_on_a_synthetic_bds(tmp_path):
     assert (out / "summary.md").exists()
     assert (out / "fwhm_vs_freq.png").exists()
     assert (out / "orientation_residuals.png").exists()
-    assert (out / "stokesI_maps_1000MHz.png").exists()
-    assert (out / "stokesI_cuts_1000MHz.png").exists()
-    assert (out / "radial_1000MHz.png").exists()
-    assert (out / "hhvv_maps_1000MHz.png").exists()
-    assert (out / "crosspol_1000MHz.png").exists()
+    # Filenames carry the channel index as well as the rounded frequency, so two
+    # channels rounding to the same MHz cannot overwrite each other.
+    assert (out / "stokesI_maps_ch000_1000MHz.png").exists()
+    assert (out / "stokesI_cuts_ch000_1000MHz.png").exists()
+    assert (out / "radial_ch000_1000MHz.png").exists()
+    assert (out / "hhvv_maps_ch000_1000MHz.png").exists()
+    assert (out / "crosspol_ch000_1000MHz.png").exists()
 
 
 @pytest.mark.unit
@@ -1074,3 +1076,21 @@ def test_plot_crosspol_log_axis_is_not_dragged_to_zero(tmp_path, plot_inputs):
     zero_out = tmp_path / "xpol_zero_range.png"
     ck.plot_crosspol(np.zeros_like(ours_plane), coord, coord, zero_out, title="t")
     _assert_png(zero_out)
+
+
+def test_plot_tag_is_unique_per_channel():
+    """Two channels rounding to the same whole MHz must not share plot filenames.
+
+    `f"{f*1e-6:.0f}MHz"` collides for e.g. 1283.6 and 1284.2 MHz, and the later
+    channel then silently overwrites the earlier one's images -- a requested
+    comparison vanishes from the output with no error.
+    """
+    from compare_katbeam import plot_tag
+
+    freqs = np.array([1283.6e6, 1284.2e6, 1500.0e6])
+    tags = [plot_tag(k, f) for k, f in enumerate(freqs)]
+
+    assert len(set(tags)) == len(tags), f"tags collide: {tags}"
+    # The frequency stays readable in the filename.
+    assert "1284" in tags[0] and "1284" in tags[1]
+    assert tags[0] != tags[1]

@@ -167,6 +167,14 @@ def _eval_block(model_name: str, ll: np.ndarray, mm: np.ndarray, freqs_mhz: np.n
     """Evaluate one frequency block, returning (njones, nmueller, nstokes).
 
     Shapes are (2, 2, NF, NY, NX), (4, 4, NF, NY, NX), (4, 4, NF, NY, NX).
+
+    Outputs are normalised the same way an MdV BDS normalises its ``n*``
+    variables: pre-multiplied by the inverse of the centre-pixel Jones, so
+    ``njones`` on axis is exactly the identity. katbeam's raw HH/VV are only
+    *approximately* unity at (0, 0) -- each beam's peak is offset by its squint,
+    giving 0.9950 at 1712 MHz -- so without this the ``n`` prefix would mean
+    something different here than it does for MdV, and a caller correcting data
+    with ``njones`` would carry an on-axis error of up to 0.5%.
     """
     from meerkat_beams.utils import jones_to_mueller, mueller_to_stokes
 
@@ -182,8 +190,20 @@ def _eval_block(model_name: str, ll: np.ndarray, mm: np.ndarray, freqs_mhz: np.n
     # ~2e-8, against a float32 output.
     jones = np.zeros((nf, ny, nx, 2, 2), dtype=np.complex64)
     for k, f in enumerate(freqs_mhz):
-        jones[k, :, :, 0, 0] = _sanitize(np.asarray(jb.HH(ll, mm, float(f)), dtype=float), "HH")
-        jones[k, :, :, 1, 1] = _sanitize(np.asarray(jb.VV(ll, mm, float(f)), dtype=float), "VV")
+        hh = _sanitize(np.asarray(jb.HH(ll, mm, float(f)), dtype=float), "HH")
+        vv = _sanitize(np.asarray(jb.VV(ll, mm, float(f)), dtype=float), "VV")
+        # Normalise by the on-axis value, matching mdv_beams_to_bds. The Jones
+        # matrix is diagonal, so inv(J(centre)) @ J reduces to dividing each
+        # receptor by its own centre sample -- no matrix inverse needed.
+        hh0 = _sanitize(np.asarray(jb.HH(0.0, 0.0, float(f)), dtype=float), "HH")
+        vv0 = _sanitize(np.asarray(jb.VV(0.0, 0.0, float(f)), dtype=float), "VV")
+        if hh0 == 0 or vv0 == 0:  # pragma: no cover - the taper is ~1 on axis
+            raise ValueError(
+                f"katbeam model {model_name!r} has a zero on-axis response at {f} MHz, "
+                "so the beam cannot be normalised."
+            )
+        jones[k, :, :, 0, 0] = hh / hh0
+        jones[k, :, :, 1, 1] = vv / vv0
 
     mueller = jones_to_mueller(jones)
     stokes = mueller_to_stokes(mueller)
@@ -216,7 +236,21 @@ def _resolve_katbeam_freqs(model_name: str, freq: Optional[np.ndarray], num_freq
     else:
         freqs = np.atleast_1d(np.asarray(freq, dtype=float))
 
-    if freqs.size and (freqs.min() < fmin or freqs.max() > fmax):
+    # Validate the axis before it becomes a FREQ coordinate: BeamWizard builds
+    # interp1d index<->freq mappings from it, which silently misbehave on a
+    # non-finite or non-monotonic axis, and an empty axis used to die in the log
+    # line below with a bare IndexError.
+    if freqs.size == 0:
+        raise ValueError("at least one frequency is required, got an empty array")
+    if not np.all(np.isfinite(freqs)):
+        raise ValueError(f"frequencies must all be finite, got {freqs}")
+    if freqs.size > 1 and not np.all(np.diff(freqs) > 0):
+        raise ValueError(
+            "frequencies must be strictly increasing (no duplicates): index<->frequency "
+            f"interpolation is built from this axis. Got {freqs}"
+        )
+
+    if freqs.min() < fmin or freqs.max() > fmax:
         raise ValueError(
             f"requested frequencies [{freqs.min() * 1e-6:.3f}, {freqs.max() * 1e-6:.3f}] MHz "
             f"fall outside the katbeam model {model_name!r} range "
@@ -335,10 +369,22 @@ def synthesize_katbeam_bds(
         "CTYPE2": "Y",
         "CRPIX3": 1,
         "CRVAL3": float(freqs[0]),
-        "CDELT3": float(freqs[1] - freqs[0]) if len(freqs) > 1 else 0.0,
         "CTYPE3": "FREQ",
         "CUNIT3": "Hz",
     }
+    # CDELT3 only when the axis really is uniform. The default axis is the katbeam
+    # table, which is not (... 1600, 1650, 1670, 1712 MHz), and a single increment
+    # would make a WCS reader assign the wrong frequency to every later plane. The
+    # exact axis is always in attrs["freqs"] and the FREQ coordinate.
+    if len(freqs) > 1:
+        diffs = np.diff(freqs)
+        if np.allclose(diffs, diffs[0], rtol=1e-9, atol=0.0):
+            hdr["CDELT3"] = float(diffs[0])
+        else:
+            log.info(
+                "frequency axis is non-uniform, so CDELT3 is omitted from the synthesized "
+                "FITS header; use attrs['freqs'] or the FREQ coordinate for the exact axis"
+            )
     xds.attrs["fits_header"] = hdr
     xds.attrs.update(
         x0=i0,

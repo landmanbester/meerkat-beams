@@ -215,6 +215,7 @@ support (see `design-decisions.md`).
 | requires `band` | only if no `bds_name` | yes |
 | `npix`/`fov_deg`/`num_freq` | **no** — raises | yes, optional |
 | variables | all six | `njones`/`nstokes`/`nmueller` only |
+| on-axis `njones` | identity | identity (same normalisation applied) |
 | download | yes, on cache miss | never |
 
 `npix`, `fov_deg` and `num_freq` are rejected for `"mdv"` rather than silently

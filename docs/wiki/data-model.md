@@ -119,11 +119,29 @@ It holds **three** data variables, not six:
 | `nmueller` | `complex64` | `stokes_i, stokes_j, FREQ, Y, X` | yes |
 | `jones`, `stokes`, `mueller` | — | — | **no** |
 
-The unnormalised variables are deliberately absent: katbeam beams are on-axis
-normalised by construction, so there is no raw counterpart to expose, and
-aliasing them to the normalised ones would misrepresent them. Requesting one
-raises from `BeamWizard._get_prefilter` with an actionable message rather than
-a bare `KeyError` — see [`beamwizard.md`](beamwizard.md).
+**Normalisation matches the MdV BDS exactly.** `njones` is pre-multiplied by the
+inverse of the centre-pixel Jones, so on axis it is the identity and
+`nstokes[I, I]` is 1 — the same meaning the `n` prefix has for MdV. This is not
+free: katbeam's raw `HH`/`VV` are only *approximately* unity at (0, 0), because
+each beam's peak is offset by its squint (0.9950 at 1712 MHz, where the L table's
+Hx squint reaches 0.052°). Without the normalisation a caller correcting data
+with `njones` would carry an on-axis error of up to 0.5% that the variable's name
+denies. Since the Jones matrix is diagonal, `inv(J(centre)) @ J` reduces to
+dividing each receptor by its own centre sample.
+
+The unnormalised variables are deliberately absent: there is no second,
+independent normalisation for katbeam to expose (the raw voltage patterns differ
+from the normalised ones only by that per-frequency scalar), and aliasing them to
+the normalised ones would misrepresent them. Requesting one raises from
+`BeamWizard._get_prefilter` with an actionable message rather than a bare
+`KeyError` — see [`beamwizard.md`](beamwizard.md).
+
+One consequence worth knowing when comparing against katbeam directly: the
+normalised `nstokes[I, I]` does **not** relate to `JimBeam.I()` by a single
+scalar, since `0.25·((HH/HH₀)² + (VV/VV₀)²)·(HH₀² + VV₀²)` equals
+`0.5·(HH² + VV²)` only when `HH₀ == VV₀`, which the squint makes false. The
+cross-check test therefore compares normalised against normalised, and a separate
+test feeds *raw* katbeam Jones through our helpers to reproduce `I()` exactly.
 
 Structural consequences of katbeam supplying only two real co-polarisation
 patterns:
@@ -158,10 +176,26 @@ has not been measured, so `S0`–`S4` have no default and require explicit
 single `MKAT-AA-S-JIM-2020`.
 
 Frequencies default to the katbeam model's own table (`freqMHzlist`) — 19
-entries for L — rather than an invented axis. Frequencies outside that table are
-**refused**: katbeam interpolates its squint/FWHM table with `np.interp`, which
-clamps silently, so asking the L model for 500 MHz would otherwise hand back the
-856 MHz beam with no warning.
+entries for L — rather than an invented axis. An explicit `freq` array must be
+non-empty, finite and strictly increasing, since `BeamWizard` builds its
+index↔frequency `interp1d` mappings from this axis. Frequencies outside the
+model's table are **refused**: katbeam interpolates its squint/FWHM table with
+`np.interp`, which clamps silently, so asking the L model for 500 MHz would
+otherwise hand back the 856 MHz beam with no warning.
+
+Because the default axis is the model table and that table is not uniformly
+spaced (… 1600, 1650, 1670, 1712 MHz), `CDELT3` is **omitted** from the
+synthesized `fits_header` unless the axis really is uniform. A single increment
+would make a WCS reader assign the wrong frequency to every later plane; the
+exact axis is always available in `attrs["freqs"]` and the `FREQ` coordinate.
+
+**Which katbeam you have changes the default L axis.** `uv.lock` resolves both
+the `[full]` extra and the dev/test groups to the git pin, so a `uv sync` gets
+git main (856–1712 MHz for L, and the S model). A non-lock install —
+`pip install meerkat-beams[full]`, or the `Dockerfile`'s `.[full]` — gets PyPI
+0.1 instead, whose L table spans only 900–1650 MHz and which has no S model at
+all. So on that path the default frequency axis differs and the
+"pixel-identical with MdV" property does not extend to the frequency axis.
 
 Variables are dask-backed and chunked in `FREQ` only — the analytic evaluation
 is vectorised over the whole spatial plane, so spatial chunking would only

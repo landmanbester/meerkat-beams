@@ -403,15 +403,27 @@ single construction line rather than a refactor of three call sites in a
   else and every model's FWHM is strictly positive (min 0.421 deg), leaving the
   singularity as the sole source.
 - `npix` must be even, since `x0 = npix//2` lands on exactly 0° only then.
-- Only the normalised variables exist, so `jones`/`stokes`/`mueller` raise. The
-  `n`-prefix distinction is meaningless for a model that is normalised by
-  construction.
+- Only the normalised variables exist, so `jones`/`stokes`/`mueller` raise: for
+  katbeam the raw patterns differ from the normalised ones only by a
+  per-frequency scalar, so there is no second, independent product to expose.
+  The normalisation itself **is** applied, matching MdV — katbeam's raw `HH`/`VV`
+  are only approximately unity on axis (0.9950 at 1712 MHz, because squint offsets
+  each beam's peak), so without it the `n` prefix would mean something weaker here
+  than it does for MdV and a caller correcting data would carry up to 0.5% on-axis
+  error. The earlier claim that katbeam is "on-axis normalised by construction"
+  was only approximately true and is why this needed fixing.
 - `katbeam` is now in the `[full]` extra, resolved from **PyPI**, while the
   `dev` and `test` groups keep their `git+...@main` pin. A published `[full]`
   install therefore gets katbeam 0.1, which has **no S-band model** and a
-  narrower L table (900–1650 vs 856–1712 MHz): S-band katbeam works only in a
-  dev checkout. This keeps the git-dependency pattern D8 retired confined to
-  dev/test, at the cost of band support differing between install modes.
+  narrower L table (900–1650 vs 856–1712 MHz): S-band katbeam works only where
+  git main is installed. This keeps the git-dependency pattern D8 retired
+  confined to dev/test, at the cost of band support differing between install
+  modes. Note `uv.lock` collapses both requirements to the git source, so any
+  `uv sync` gets git main — the divergence bites only non-lock installs such as
+  `pip install meerkat-beams[full]` and the `Dockerfile`, where the default L
+  frequency axis also silently narrows. `require_model` names this explicitly
+  when the S model is missing, and `BAND_GEOMETRY` refuses S-band geometry
+  before that point, so neither failure is silent.
 - Jones→Stokes conversion moved from `mdv_beams_to_bds` into `utils.py`
   (`jones_to_mueller`, `mueller_to_stokes`). Both models share it, which is what
   makes comparing our derived `nstokes[I,I]` against katbeam's own `I()` a real
