@@ -79,6 +79,37 @@ class PowerBeam(object):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Jones / Mueller / Stokes conversions
+# ---------------------------------------------------------------------------
+
+# S converts Stokes to coherency; Sinv converts coherency to Stokes. Shared by
+# mdv_beams_to_bds and the katbeam synthesizer so both beam models go through
+# one conversion path -- if this is wrong, the katbeam-vs-JimBeam.I() check in
+# tests/test_katbeam_bds.py fails.
+STOKES_TO_COHERENCY = np.array([[1, 1, 0, 0], [0, 0, 1, 1j], [0, 0, 1, -1j], [1, -1, 0, 0]])
+COHERENCY_TO_STOKES = numpy.linalg.inv(STOKES_TO_COHERENCY)
+
+
+def jones_to_mueller(jones: np.ndarray) -> np.ndarray:
+    """Outer product of a Jones matrix with its conjugate.
+
+    Args:
+        jones: array with exactly three leading axes then the matrix axes,
+            i.e. (FREQ, Y, X, ROW, COL) with ROW == COL == 2.
+
+    Returns:
+        (FREQ, Y, X, 4, 4) coherency-basis Mueller matrix.
+    """
+    mshape = list(jones.shape[:-2]) + [4, 4]
+    return np.einsum("fyxij,fyxkl->fyxikjl", jones, np.conj(jones)).reshape(mshape)
+
+
+def mueller_to_stokes(mueller: np.ndarray) -> np.ndarray:
+    """Rotate a coherency-basis Mueller matrix into the Stokes basis."""
+    return COHERENCY_TO_STOKES @ mueller @ STOKES_TO_COHERENCY
+
+
 class BeamWizard(object):
     """Attaches to a BDS and provides beam-interpolation conveniences.
 
