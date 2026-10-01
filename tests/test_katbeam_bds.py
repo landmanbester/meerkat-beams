@@ -282,29 +282,74 @@ def test_derived_stokes_i_matches_katbeam_own_i():
         np.testing.assert_allclose(ds.nstokes[0, 0, k].values, expected, rtol=1e-5, atol=1e-6)
 
 
-def test_singularity_is_replaced_by_the_analytic_limit():
-    """katbeam returns NaN at rr = 0.5. A NaN reaching spline_filter would
-    smear across the whole slab, so synthesis must remove it."""
-    from meerkat_beams.katbeam_bds import (
-        SINGULAR_TAPER_LIMIT,
-        SINGULAR_TAPER_RADIUS,
-        require_model,
-        synthesize_katbeam_bds,
-    )
+def test_sanitize_replaces_non_finite_with_the_analytic_limit(caplog):
+    """Pin the replacement directly.
 
-    # Confirm the singularity is real in the installed katbeam, so this test
-    # cannot silently pass against a version that fixed it upstream.
+    Reaching the singularity through a real grid needs ``1 - 4*rr**2`` to be
+    exactly ``0.0`` in floating point, which is not reliably constructible, so
+    the sanitizer gets its own test rather than relying on an integration path
+    to land on it.
+    """
+    import logging
+
+    from meerkat_beams.katbeam_bds import SINGULAR_TAPER_LIMIT, _sanitize
+
+    arr = np.array([np.inf, np.nan, -np.inf, 1.0, 0.5])
+
+    with caplog.at_level(logging.WARNING, logger="meerkat_beams"):
+        out = _sanitize(arr, "HH")
+
+    np.testing.assert_allclose(out, [SINGULAR_TAPER_LIMIT, SINGULAR_TAPER_LIMIT, SINGULAR_TAPER_LIMIT, 1.0, 0.5])
+    assert SINGULAR_TAPER_LIMIT == pytest.approx(np.pi / 4)
+    # The replacement is reported, not silent: it is a departure from what
+    # katbeam returned.
+    assert "replacing 3 non-finite HH sample(s)" in caplog.text
+
+
+def test_sanitize_leaves_finite_input_untouched_and_silent(caplog):
+    import logging
+
+    from meerkat_beams.katbeam_bds import _sanitize
+
+    arr = np.array([1.0, 0.5, -0.25])
+
+    with caplog.at_level(logging.WARNING, logger="meerkat_beams"):
+        out = _sanitize(arr, "VV")
+
+    np.testing.assert_array_equal(out, arr)
+    assert "replacing" not in caplog.text
+
+
+def test_upstream_katbeam_still_has_the_zero_over_zero_singularity():
+    """Guards the reason _sanitize exists.
+
+    If katbeam ever fixes this upstream, this test fails and the sanitizer can
+    be reconsidered -- rather than it silently becoming dead code.
+    """
+    from meerkat_beams.katbeam_bds import SINGULAR_TAPER_RADIUS, require_model
+
     jb = require_model("MKAT-AA-L-JIM-2020")
     squintdeg, fwhmdeg = jb._interp_squint_fwhm_deg(1000.0)
     singular_l = squintdeg[0] + SINGULAR_TAPER_RADIUS * fwhmdeg[0]
+
     raw = jb.HH(np.array([singular_l]), np.array([squintdeg[1]]), 1000.0)
+
     assert not np.isfinite(raw[0]), "installed katbeam no longer has the 0/0 singularity"
 
-    # A grid placed to land on it must still come out finite.
-    ds = synthesize_katbeam_bds("L", npix=16, fov_deg=float(singular_l), num_freq=1)
+
+def test_synthesis_output_is_all_finite():
+    """Whatever katbeam returns, nothing non-finite reaches the Dataset.
+
+    A NaN surviving into spline_filter smears across the entire slab, so this is
+    asserted over a grid and frequency range wide enough to be representative.
+    """
+    from meerkat_beams.katbeam_bds import synthesize_katbeam_bds
+
+    ds = synthesize_katbeam_bds("L", npix=32, fov_deg=4.0, num_freq=4)
+
     assert np.all(np.isfinite(ds.njones.values))
     assert np.all(np.isfinite(ds.nstokes.values))
-    assert SINGULAR_TAPER_LIMIT == pytest.approx(np.pi / 4)
+    assert np.all(np.isfinite(ds.nmueller.values))
 
 
 def test_default_frequencies_are_the_model_table():
@@ -361,3 +406,49 @@ def test_single_frequency_works():
 
     assert ds.njones.shape == (2, 2, 1, 8, 8)
     assert np.all(np.isfinite(ds.nstokes.values))
+
+
+def test_freq_chunk_size_adapts_to_npix():
+    """Frequency chunking must bound the per-block transient, not the frequency
+    count.
+
+    ``_eval_block`` holds complex128 ``jones`` (2x2), ``mueller`` (4x4) and
+    ``stokes`` (4x4) for a whole chunk before the astype downcasts, so the
+    transient scales as ``nfreq * npix**2``. A fixed 256-frequency chunk peaked
+    at 3.3 GiB at npix=128 -- heavier than the MdV path this is meant to be a
+    lighter alternative to.
+    """
+    from meerkat_beams.katbeam_bds import FREQ_CHUNK_ELEMENTS, _freq_chunk_size
+
+    # Coarse grids get many frequencies per block, fine grids get few.
+    assert _freq_chunk_size(16) > _freq_chunk_size(128)
+    assert _freq_chunk_size(128) > _freq_chunk_size(512)
+
+    # The element budget is respected at every size, and never drops below 1.
+    for npix in (8, 16, 32, 64, 128, 256, 512, 1024):
+        nf = _freq_chunk_size(npix)
+        assert nf >= 1
+        assert nf * npix * npix <= FREQ_CHUNK_ELEMENTS or nf == 1
+
+
+def test_eval_block_transient_stays_bounded():
+    """The per-block peak must stay far below the 3.3 GiB a 256-frequency chunk
+    cost at npix=128."""
+    import tracemalloc
+
+    from meerkat_beams.katbeam_bds import _eval_block, _freq_chunk_size
+
+    npix = 128
+    nf = _freq_chunk_size(npix)
+    ll, mm = np.meshgrid(np.linspace(-4, 4, npix), np.linspace(-4, 4, npix))
+    freqs = np.linspace(856.0, 1712.0, nf)
+
+    tracemalloc.start()
+    try:
+        _eval_block("MKAT-AA-L-JIM-2020", ll, mm, freqs)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    peak_mib = peak / 2**20
+    assert peak_mib < 400, f"per-block peak {peak_mib:.0f} MiB is too large"

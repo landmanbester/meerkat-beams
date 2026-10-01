@@ -113,11 +113,27 @@ def resolve_geometry(band: str, npix: Optional[int], fov_deg: Optional[float]) -
 SINGULAR_TAPER_RADIUS = 0.4205339031217265  # 0.5 / 1.1889647809329453
 SINGULAR_TAPER_LIMIT = float(np.pi / 4)
 
-# Frequency chunk size for the dask arrays. The analytic evaluation is cheap and
+# Frequency chunking for the dask arrays. The analytic evaluation is cheap and
 # vectorised over the full spatial plane, so the arrays are chunked in FREQ
 # only -- spatial chunking would multiply the number of JimBeam calls for no
-# benefit. 256 matches the MdV BDS frequency chunking.
-FREQ_CHUNK = 256
+# benefit.
+#
+# The chunk is sized by an *element budget*, not a fixed frequency count.
+# _eval_block holds complex128 jones (2x2), mueller (4x4) and stokes (4x4) for
+# a whole chunk before the astype downcasts, so its transient scales as
+# nfreq * npix**2. A fixed 256-frequency chunk peaked at 3.3 GiB at npix=128,
+# which would make this "lighter alternative" heavier than the MdV path it
+# replaces. 300k elements holds the peak near 250 MiB at any npix.
+FREQ_CHUNK_ELEMENTS = 300_000
+
+
+def _freq_chunk_size(npix: int) -> int:
+    """Frequencies per dask block for an ``npix`` x ``npix`` grid.
+
+    At least 1, so a grid too large for the budget still makes progress one
+    frequency at a time rather than failing.
+    """
+    return max(1, FREQ_CHUNK_ELEMENTS // (npix * npix))
 
 
 def _sanitize(arr: np.ndarray, label: str) -> np.ndarray:
@@ -250,8 +266,9 @@ def synthesize_katbeam_bds(
     # One delayed call per frequency chunk; nout=3 makes the three outputs
     # separate Delayed objects that share a single evaluation per compute.
     jones_blocks, mueller_blocks, stokes_blocks = [], [], []
-    for start in range(0, len(freqs), FREQ_CHUNK):
-        fchunk = freqs[start : start + FREQ_CHUNK] / 1e6  # katbeam wants MHz
+    freq_chunk = _freq_chunk_size(npix)
+    for start in range(0, len(freqs), freq_chunk):
+        fchunk = freqs[start : start + freq_chunk] / 1e6  # katbeam wants MHz
         nf = len(fchunk)
         blk = dask.delayed(_eval_block, nout=3)(model_name, ll, mm, fchunk)
         jones_blocks.append(da.from_delayed(blk[0], shape=(2, 2, nf, npix, npix), dtype=np.complex64))

@@ -958,20 +958,56 @@ def test_azimuthal_average_is_circularly_symmetric():
 
 
 @pytest.mark.unit
-def test_azimuthal_matches_pa_average_given_full_pa_coverage(bw):
-    """With PA spanning a full turn, the two averages must agree."""
-    l = m = np.linspace(-1.0, 1.0, 5)
-    # A full sidereal day gives PA coverage spanning 2*pi.
-    times = Time(60000.0, format="mjd") + np.linspace(0, 0.9972, 64) * u.day
+def test_azimuthal_matches_pa_average_given_full_pa_coverage():
+    """With PA spanning a full turn, the two averages must agree.
 
-    pa_mean, _ = bw.get_rotation_averaged_beam(
+    Two things this test needs, and neither is incidental:
+
+    1. **An asymmetric beam.** The synthetic BDS used elsewhere in this file is a
+       circularly symmetric Gaussian (``tests/_synthetic.py:gaussian_plane``), and
+       *every* rotation average of a circularly symmetric beam equals the beam
+       itself — so on that fixture the two modes agree no matter which angles
+       either one uses, and the comparison proves nothing. katbeam's beam is
+       genuinely elliptical and offset (squint plus differing Hx/Hy FWHM: at
+       1.5 deg the beam is 0.078 along l against 0.106 along m), so the angles
+       actually have to be right.
+    2. **A circumpolar field.** PA does not sweep a full turn at every
+       declination. From MeerKAT (latitude -30.711) a sidereal day gives only
+       ~165 deg of PA swing at dec = -30 and ~119 deg at dec = 0; full coverage
+       needs dec < -(90 - |lat|) = -59.3. Hence dec = -89, which is also where
+       agreement is cleanest (see caveat 1).
+
+    Two caveats, so this is not retightened blindly:
+
+    1. PA is non-uniform in time even when the arc is complete, so agreement is
+       approximate. It tightens toward the pole, where dPA/dt approaches
+       sidereal-uniform -- hence dec = -89 rather than merely circumpolar.
+       Measured max|pa - az|: 1.8e-4 at dec -89, 1.3e-3 at dec -75, 1.1e-2 at
+       dec -30. At any tolerance with teeth, dec -30 fails for a *legitimate*
+       reason.
+    2. This pins angular **coverage**, not angular **density**. A 4-angle sweep
+       is not caught at any tolerance (3.6e-4 at dec -89) because katbeam's
+       total azimuthal asymmetry on this grid is only ~0.016 absolute, so four
+       angles already average it away. That blind spot is benign and not worth
+       chasing.
+
+    Verified to fail against a single-angle, two-angle, 0..pi/2 and half-turn
+    sweep.
+    """
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+    bwk.set_field_centre(SkyCoord(ra=0 * u.deg, dec=-89 * u.deg))
+
+    l = m = np.linspace(-1.5, 1.5, 7)
+    times = Time(60000.0, format="mjd") + np.linspace(0, 0.9972, 256) * u.day
+
+    pa_mean, _ = bwk.get_rotation_averaged_beam(
         l=l, m=m, times=times, time_stepping=1, pixel_stepping=1, num_freq=1, verbose=0
     )
-    az_mean, _ = bw.get_rotation_averaged_beam(
+    az_mean, _ = bwk.get_rotation_averaged_beam(
         l=l, m=m, average="azimuth", num_angles=64, pixel_stepping=1, num_freq=1, verbose=0
     )
 
-    np.testing.assert_allclose(pa_mean, az_mean, rtol=5e-2, atol=5e-3)
+    np.testing.assert_allclose(pa_mean, az_mean, rtol=5e-3, atol=5e-4)
 
 
 @pytest.mark.unit

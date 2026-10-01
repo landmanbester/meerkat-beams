@@ -163,11 +163,22 @@ entries for L — rather than an invented axis. Frequencies outside that table a
 clamps silently, so asking the L model for 500 MHz would otherwise hand back the
 856 MHz beam with no warning.
 
-Variables are dask-backed, chunked in `FREQ` only (`FREQ_CHUNK = 256`). The
-analytic evaluation is vectorised over the whole spatial plane, so spatial
-chunking would only multiply the number of `JimBeam` calls. Eager construction
-at MdV L-band resolution would cost several GB, which would make the "lighter
-alternative" heavier than what it replaces.
+Variables are dask-backed, chunked in `FREQ` only — the analytic evaluation is
+vectorised over the whole spatial plane, so spatial chunking would only multiply
+the number of `JimBeam` calls. Eager construction at MdV L-band resolution would
+cost several GB, which would make the "lighter alternative" heavier than what it
+replaces.
+
+The chunk is sized by an **element budget** (`FREQ_CHUNK_ELEMENTS = 300_000`,
+via `_freq_chunk_size(npix)`), not a fixed frequency count. `_eval_block` holds
+complex128 `jones` (2×2), `mueller` (4×4) and `stokes` (4×4) for a whole chunk
+before the `astype` downcasts, so its transient scales as `nfreq · npix²`. A
+fixed 256-frequency chunk measured a 3.3 GiB peak at `npix=128`; the budget
+holds it near 250 MiB at any `npix` (L-band `npix=128` gets 18 frequencies per
+block, `npix=32` gets 292). Pinned by
+`tests/test_katbeam_bds.py::test_eval_block_transient_stays_bounded`. Note dask
+may evaluate several blocks concurrently, so process peak is a small multiple of
+the per-block figure.
 
 **The cosine-taper singularity.** katbeam's pattern is
 `cos(π·rr)/(1 − 4·rr²)` with `rr = r·1.1889647809329453`, which is `0/0` at
