@@ -906,3 +906,86 @@ def test_beam_falls_to_zero_outside_the_synthesized_grid():
     vals = bwk.interpolate_beam(far_outside, freqs, var="nstokes", i="I", j="I")
 
     np.testing.assert_allclose(vals, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# azimuthal averaging
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_azimuthal_average_needs_no_times():
+    """average='azimuth' sweeps a uniform 0..2pi, so it has no time dependence
+    and must work on a wizard with no image attached."""
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+    l = m = np.linspace(-2.0, 2.0, 9)
+
+    mean, var = bwk.get_rotation_averaged_beam(
+        l=l, m=m, average="azimuth", num_angles=16, pixel_stepping=1, num_freq=1, verbose=0
+    )
+
+    assert mean.shape == (9, 9)
+    assert np.all(np.isfinite(mean))
+    assert np.all(var >= -1e-12)
+
+
+@pytest.mark.unit
+def test_azimuthal_average_is_circularly_symmetric():
+    """Averaging over a full turn must leave a map that depends only on radius.
+
+    On an l/m grid symmetric about zero, circular symmetry means the map is
+    invariant under both axis flips and under transposition, and that all pixels
+    at a given radius share one value. Asserting the whole map is far stronger
+    than probing a handful of points.
+    """
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+    l = m = np.linspace(-2.0, 2.0, 9)
+
+    mean, _ = bwk.get_rotation_averaged_beam(
+        l=l, m=m, average="azimuth", num_angles=32, pixel_stepping=1, num_freq=1, verbose=0
+    )
+
+    np.testing.assert_allclose(mean, mean[::-1, :], rtol=1e-6)  # flip m
+    np.testing.assert_allclose(mean, mean[:, ::-1], rtol=1e-6)  # flip l
+    np.testing.assert_allclose(mean, mean.T, rtol=1e-6)  # swap l/m
+
+    # Every pixel at a given radius carries the same value.
+    ll, mm = np.meshgrid(l, m)
+    radius = np.round(np.hypot(ll, mm), 6)
+    for r in np.unique(radius):
+        vals = mean[radius == r]
+        np.testing.assert_allclose(vals, vals[0], rtol=2e-2, err_msg=f"radius {r} is not uniform")
+
+
+@pytest.mark.unit
+def test_azimuthal_matches_pa_average_given_full_pa_coverage(bw):
+    """With PA spanning a full turn, the two averages must agree."""
+    l = m = np.linspace(-1.0, 1.0, 5)
+    # A full sidereal day gives PA coverage spanning 2*pi.
+    times = Time(60000.0, format="mjd") + np.linspace(0, 0.9972, 64) * u.day
+
+    pa_mean, _ = bw.get_rotation_averaged_beam(
+        l=l, m=m, times=times, time_stepping=1, pixel_stepping=1, num_freq=1, verbose=0
+    )
+    az_mean, _ = bw.get_rotation_averaged_beam(
+        l=l, m=m, average="azimuth", num_angles=64, pixel_stepping=1, num_freq=1, verbose=0
+    )
+
+    np.testing.assert_allclose(pa_mean, az_mean, rtol=5e-2, atol=5e-3)
+
+
+@pytest.mark.unit
+def test_invalid_average_mode_raises(bw):
+    with pytest.raises(ValueError, match="average"):
+        bw.get_rotation_averaged_beam(average="radial")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("num_angles", [0, -1, 1])
+def test_degenerate_num_angles_raises(num_angles):
+    """num_angles=1 is a single unaveraged slice masquerading as an average;
+    0 and negative are degenerate outright."""
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+
+    with pytest.raises(ValueError, match="num_angles"):
+        bwk.get_rotation_averaged_beam(average="azimuth", num_angles=num_angles, num_freq=1, verbose=0)

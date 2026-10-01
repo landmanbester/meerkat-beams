@@ -509,6 +509,8 @@ class BeamWizard(object):
         var: str = "nstokes",
         i: str = "I",
         j: str = "I",
+        average: str = "pa",
+        num_angles: int = 64,
         verbose: int = 1,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -538,6 +540,13 @@ class BeamWizard(object):
                         Controls memory usage for large grids.
             var: Beam variable to interpolate ('nstokes', 'stokes', 'njones', 'jones')
             i, j: Stokes or Jones indices (e.g., "I", "Q", 0, 1)
+            average: "pa" (default) averages over the parallactic angles derived
+                     from `times`, which must then be available. "azimuth"
+                     averages over a uniform sweep of `num_angles` angles across
+                     a full turn, which needs no times and returns a circularly
+                     symmetric map -- usually enough for image-space mosaicing.
+            num_angles: number of angles for average="azimuth" (default 64).
+                        Must be at least 2. Ignored when average="pa".
 
         Returns:
             Tuple of (mean_beam, variance_beam) as np.ndarray in (Y, X) index
@@ -549,20 +558,36 @@ class BeamWizard(object):
                 and are passed through in that orientation.
 
         Raises:
-            RuntimeError: If times are not available and not provided.
-            ValueError: If both freq and num_freq are specified.
+            RuntimeError: If average="pa" and times are not available and not provided.
+            ValueError: If both freq and num_freq are specified, if average is
+                        not "pa" or "azimuth", or if num_angles < 2.
         """
-        if loc is None:
-            loc = self.default_location
-        if times is None:
-            available_times = getattr(self, "times", None)
-            if available_times is None:
-                raise RuntimeError(
-                    "times must be supplied, since BeamWizard was constructed without observational time info"
+        if average not in ("pa", "azimuth"):
+            raise ValueError(f"average must be 'pa' or 'azimuth', got {average!r}")
+
+        if average == "azimuth":
+            # A uniform sweep over a full turn: no time dependence, so times,
+            # time_stepping and loc are all irrelevant here. The result is
+            # circularly symmetric -- often what image-space mosaicing wants,
+            # where tracking the real PA coverage is overkill.
+            if num_angles < 2:
+                raise ValueError(
+                    f"num_angles must be at least 2 for average='azimuth', got {num_angles}; "
+                    "a single angle is not an average."
                 )
-            times = available_times
-        if time_stepping > 1:
-            times = times[::time_stepping]
+            angles = np.linspace(0, 2 * np.pi, num_angles, endpoint=False)
+        else:
+            if loc is None:
+                loc = self.default_location
+            if times is None:
+                available_times = getattr(self, "times", None)
+                if available_times is None:
+                    raise RuntimeError(
+                        "times must be supplied, since BeamWizard was constructed without observational time info"
+                    )
+                times = available_times
+            if time_stepping > 1:
+                times = times[::time_stepping]
 
         freq, norm_weights = self._resolve_freqs(freq, num_freq, spi)
 
@@ -607,23 +632,24 @@ class BeamWizard(object):
         ll_flat = ll_compute.ravel()
         mm_flat = mm_compute.ravel()
 
-        # Compute parallactic angles at each time for the field center
-        frame = AltAz(obstime=times, location=loc)
-        altaz_centre = self.centre.transform_to(frame)
+        if average == "pa":
+            # Compute parallactic angles at each time for the field center
+            frame = AltAz(obstime=times, location=loc)
+            altaz_centre = self.centre.transform_to(frame)
 
-        # Get position angle to NCP (north celestial pole) to determine parallactic angle
-        ncp = SkyCoord(ra=0 * u.deg, dec=90 * u.deg)
-        altaz_ncp = ncp.transform_to(frame)
-        pa = altaz_centre.position_angle(altaz_ncp)
+            # Get position angle to NCP (north celestial pole) to determine parallactic angle
+            ncp = SkyCoord(ra=0 * u.deg, dec=90 * u.deg)
+            altaz_ncp = ncp.transform_to(frame)
+            angles = altaz_centre.position_angle(altaz_ncp).rad
 
-        n_times = len(times)
+        n_times = len(angles)
         n_pixels = len(ll_flat)
         n_chunks = (n_pixels + chunk_size - 1) // chunk_size
         stepping_info = f", pixel_stepping={pixel_stepping}" if pixel_stepping > 1 else ""
         if verbose > 0:
             self.log.info(
-                f"computing rotation-averaged beam over {n_times} times, "
-                f"PA range {pa.min().deg:.1f} to {pa.max().deg:.1f} deg, "
+                f"computing {average}-averaged beam over {n_times} angles, "
+                f"range {np.degrees(angles.min()):.1f} to {np.degrees(angles.max()):.1f} deg, "
                 f"{len(freq)} frequency planes, {n_pixels} pixels in {n_chunks} chunks"
                 f"{stepping_info}"
             )
@@ -657,7 +683,7 @@ class BeamWizard(object):
             chunk_sum_sq = np.zeros_like(chunk_sum, dtype=float)
 
             for t_idx in range(n_times):
-                pa_t = pa[t_idx].rad
+                pa_t = angles[t_idx]
                 l_rot = mm_chunk * np.sin(pa_t) - ll_chunk * np.cos(pa_t)
                 m_rot = ll_chunk * np.sin(pa_t) + mm_chunk * np.cos(pa_t)
 
