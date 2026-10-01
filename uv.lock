@@ -1444,8 +1444,10 @@ dependencies = [
 full = [
     { name = "astropy", version = "6.1.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "astropy", version = "7.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "dask" },
     { name = "dask-ms", extra = ["s3", "xarray", "zarr"] },
     { name = "gdown" },
+    { name = "katbeam" },
     { name = "matplotlib" },
     { name = "numcodecs" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -1481,9 +1483,11 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "astropy", marker = "extra == 'full'" },
+    { name = "dask", marker = "extra == 'full'" },
     { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.23" },
     { name = "gdown", marker = "extra == 'full'", specifier = ">=5.0.0" },
     { name = "hip-cargo", specifier = ">=0.3.0" },
+    { name = "katbeam", marker = "extra == 'full'" },
     { name = "matplotlib", marker = "extra == 'full'" },
     { name = "numcodecs", marker = "extra == 'full'" },
     { name = "numpy", marker = "extra == 'full'" },

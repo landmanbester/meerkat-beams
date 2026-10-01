@@ -37,6 +37,17 @@ full = [
     "gdown>=5.0.0",
     "requests>=2.33.1",
     "dask-ms[s3,xarray,zarr]>=0.2.23",
+    # Imported directly by katbeam_bds for lazy beam synthesis. Arrives
+    # transitively via dask-ms too, but a direct import deserves a direct
+    # declaration.
+    "dask",
+    # Analytic MeerKAT beams, selected by BeamWizard(beam_model="katbeam").
+    # Resolved from PyPI here, unlike the dev/test groups' git pin: a published
+    # extra cannot carry a git dependency. Consequence: a [full] install gets
+    # katbeam 0.1, which has NO S-band model and a narrower L table (900-1650
+    # vs 856-1712 MHz), so S-band katbeam works only in a dev checkout. See
+    # docs/wiki/design-decisions.md.
+    "katbeam",
 ]
 
 [project.urls]
@@ -94,9 +105,9 @@ dev = [
     "pre-commit>=4.5.1",
     "mypy>=1.0.0",
     "ipdb",
-    # Script-only: scripts/compare_katbeam.py compares our MdV-derived beam
-    # against katbeam's analytic JimBeam model. Not in the [full] runtime
-    # extra -- whether it belongs there is an issue #22 decision.
+    # katbeam is now also in the [full] extra (issue #22: BeamWizard can build
+    # its beams from it). It stays pinned here as well, because the extra
+    # resolves from PyPI and only git main has the S-band model.
     #
     # Pinned to git main, NOT PyPI: the only PyPI release (0.1) predates the
     # S-band model (MKAT-AA-S-JIM-2020) and carries a narrower L table
