@@ -815,3 +815,94 @@ def test_interpolate_beam_jones_var_and_offdiagonal_stokes(bw):
     # On-axis diagonal Stokes Q is still 1.0 (synthetic Mueller is identity).
     stokes_qq = bw.interpolate_beam(xpyp[:, :1], freq=FREQS[:1], var="nstokes", i="Q", j="Q")
     np.testing.assert_allclose(stokes_qq, 1.0, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# katbeam beam model
+# ---------------------------------------------------------------------------
+
+KATBEAM_KWARGS = dict(beam_model="katbeam", npix=32, fov_deg=4.0, num_freq=3)
+
+
+@pytest.fixture
+def synthetic_bds_path(tmp_path):
+    """Path to a freshly built synthetic BDS zarr."""
+    return str(build_synthetic_bds(tmp_path / "synthetic.bds.zarr"))
+
+
+@pytest.mark.unit
+def test_katbeam_wizard_constructs_without_touching_the_cache(monkeypatch):
+    """The whole point of the katbeam model is no download and no zarr."""
+    from meerkat_beams import cache
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("the katbeam beam model must not touch the BDS cache")
+
+    monkeypatch.setattr(cache, "ensure_band_bds", _boom)
+
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+
+    assert bwk.beam_model == "katbeam"
+    assert bwk.bds.attrs["beam_model"] == "katbeam"
+    assert bwk.bds.attrs["x0"] == 16
+
+
+@pytest.mark.unit
+def test_katbeam_wizard_interpolates():
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+    freqs = bwk.bds.coords["FREQ"].values
+
+    # On-axis pixel, in beam pixel coordinates.
+    xpyp = np.array([[bwk.bds.attrs["x0"]], [bwk.bds.attrs["y0"]]], dtype=float)
+    vals = bwk.interpolate_beam(xpyp, freqs, var="nstokes", i="I", j="I")
+
+    assert vals.shape == (len(freqs), 1)
+    assert np.all(np.isfinite(vals))
+    np.testing.assert_allclose(vals[:, 0], 1.0, atol=1e-2)
+
+
+@pytest.mark.unit
+def test_katbeam_wizard_rejects_unnormalised_variables():
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+
+    with pytest.raises(ValueError, match="on-axis normalised"):
+        bwk._get_prefilter("stokes", "I", "I")
+    with pytest.raises(ValueError, match="on-axis normalised"):
+        bwk._get_prefilter("jones", 0, 0)
+
+
+@pytest.mark.unit
+def test_mdv_wizard_still_reports_its_beam_model(bw):
+    assert bw.beam_model == "mdv"
+
+
+@pytest.mark.unit
+def test_invalid_beam_model_raises():
+    with pytest.raises(ValueError, match="beam_model"):
+        BeamWizard(band="L", beam_model="holography")
+
+
+@pytest.mark.unit
+def test_katbeam_requires_a_band_not_a_bds_path(synthetic_bds_path):
+    with pytest.raises(ValueError, match="band"):
+        BeamWizard(synthetic_bds_path, beam_model="katbeam")
+
+
+@pytest.mark.unit
+def test_katbeam_rejects_grid_options_for_the_mdv_model(synthetic_bds_path):
+    with pytest.raises(ValueError, match="katbeam"):
+        BeamWizard(synthetic_bds_path, npix=64)
+
+
+@pytest.mark.unit
+def test_beam_falls_to_zero_outside_the_synthesized_grid():
+    """Deliberate: interpolate_beam uses mode='constant', cval=0.0. katbeam
+    itself would happily evaluate beyond the grid, so pin that the synthesized
+    BDS keeps the same hard off-cube policy as an MdV BDS."""
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+    freqs = bwk.bds.coords["FREQ"].values[:1]
+
+    far_outside = np.array([[1000.0], [1000.0]])
+    vals = bwk.interpolate_beam(far_outside, freqs, var="nstokes", i="I", j="I")
+
+    np.testing.assert_allclose(vals, 0.0)

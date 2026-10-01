@@ -111,7 +111,14 @@ def mueller_to_stokes(mueller: np.ndarray) -> np.ndarray:
 
 
 class BeamWizard(object):
-    """Attaches to a BDS and provides beam-interpolation conveniences.
+    """Attaches to a beam dataset and provides beam-interpolation conveniences.
+
+    ``beam_model`` selects the source: ``"mdv"`` (default) opens a BDS zarr of
+    MdV holographic beams, ``"katbeam"`` synthesizes one analytically from
+    katbeam with no download and nothing on disk (see
+    ``katbeam_bds.synthesize_katbeam_bds``, and ``npix``/``fov_deg``/``num_freq``
+    which only apply to it). A katbeam dataset carries only the normalised
+    variables, since katbeam beams are on-axis normalised by construction.
 
     ``image_name`` is optional. Without an image the wizard runs in BDS-only
     mode: ``interpolate_beam`` and the prefilter/frequency helpers work, but
@@ -137,16 +144,40 @@ class BeamWizard(object):
         image_name: Optional[str] = None,
         *,
         band: Optional[str] = None,
+        beam_model: str = "mdv",
+        npix: Optional[int] = None,
+        fov_deg: Optional[float] = None,
+        num_freq: Optional[int] = None,
     ):
-        if (bds_name is None) == (band is None):
-            raise ValueError("exactly one of bds_name or band must be provided")
-        if band is not None:
-            from meerkat_beams import cache
-
-            bds_name = cache.ensure_band_bds(band)
+        if beam_model not in ("mdv", "katbeam"):
+            raise ValueError(f"beam_model must be 'mdv' or 'katbeam', got {beam_model!r}")
+        self.beam_model = beam_model
         self.log = log
-        log.info(f"opening BDS {bds_name}")
-        self.bds = xarray.open_zarr(bds_name)
+
+        if beam_model == "katbeam":
+            # katbeam is analytic: there is nothing to download and nothing on
+            # disk, so a BDS path is meaningless here.
+            if bds_name is not None:
+                raise ValueError(
+                    "beam_model='katbeam' takes a band, not a bds_name: the beams are "
+                    "synthesized analytically and no BDS is read."
+                )
+            if band is None:
+                raise ValueError("beam_model='katbeam' requires band (one of U, L, S0..S4)")
+            from meerkat_beams.katbeam_bds import synthesize_katbeam_bds
+
+            self.bds = synthesize_katbeam_bds(band, npix=npix, fov_deg=fov_deg, num_freq=num_freq)
+        else:
+            if (bds_name is None) == (band is None):
+                raise ValueError("exactly one of bds_name or band must be provided")
+            if npix is not None or fov_deg is not None or num_freq is not None:
+                raise ValueError("npix, fov_deg and num_freq only apply to beam_model='katbeam'")
+            if band is not None:
+                from meerkat_beams import cache
+
+                bds_name = cache.ensure_band_bds(band)
+            log.info(f"opening BDS {bds_name}")
+            self.bds = xarray.open_zarr(bds_name)
         freqs = self.bds.coords["FREQ"].values
         log.info(f"frequency range is {freqs[0] * 1e-6:.0f} to {freqs[-1] * 1e-6:.0f} MHz")
         self.index_to_freq = scipy.interpolate.interp1d(np.arange(len(freqs)), freqs)
@@ -279,6 +310,15 @@ class BeamWizard(object):
         # order is included in the cache key: spline_filter coefficients depend on
         # the spline order, so callers requesting different orders must not collide.
         key = var, i, j, order
+        if var not in self.bds:
+            available = sorted(self.bds.data_vars)
+            if self.beam_model == "katbeam" and var in ("jones", "stokes", "mueller"):
+                raise ValueError(
+                    f"var={var!r} is not available for beam_model='katbeam' (katbeam "
+                    f"beams are on-axis normalised by construction; use 'n{var}'). "
+                    f"Available: {', '.join(available)}."
+                )
+            raise ValueError(f"var={var!r} is not in this beam dataset. Available: {', '.join(available)}.")
         if key not in self._prefilters:
             if verbose > 0:
                 self.log.debug(f"computing spline prefilter for {var}[{i},{j}] (order={order})")
