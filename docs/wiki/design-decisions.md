@@ -2,9 +2,9 @@
 type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
-tags: [design, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog]
-timestamp: 2026-07-27T13:10:48Z
-last_verified_commit: 0b4e799
+tags: [design, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam]
+timestamp: 2026-10-01T00:00:00Z
+last_verified_commit: ad10c54
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -348,6 +348,68 @@ the `[[file]]` entry fought it. hip-cargo has the hook and no such entry.
   (distinct from D4's map-index order, which *is* settled) has not passed
   the M1 validation experiment as of this commit — see `beam-orientation.md`
   for the full status and open issues (#9–#12).
+
+## D11 — katbeam as a synthesized BDS, interpolators retained
+
+**Context:** Issue #22 asked for `katbeam`'s analytic MeerKAT beams to be
+available through the same `BeamWizard` interface as the MdV holographic beams,
+for two reasons: a lighter alternative needing no SARAO download, and an
+independent model to cross-check ours against. The issue also asked for the
+analytic beam to be evaluated **directly, without the scipy interpolators**,
+since `JimBeam` is a closed-form function of `(l, m, freq)`.
+
+Every BDS touchpoint in `BeamWizard` is narrow — `self.bds[var]`,
+`coords["FREQ"]`, and `attrs["dx"/"dy"/"x0"/"y0"]` — but three call sites
+(`get_source_coordinates`, `get_rotation_averaged_beam`, and `compute_plane`
+inside `get_time_freq_beam`) each independently convert l/m degrees to beam
+pixels before interpolating. That pixel conversion is exactly what an analytic
+model has no analogue for.
+
+**Decision:** Synthesize a BDS-shaped `xarray.Dataset` from katbeam
+(`katbeam_bds.synthesize_katbeam_bds`) and let `BeamWizard` consume it as it
+consumes an opened zarr. `spline_filter` and `map_coordinates` are **retained**;
+the only `BeamWizard` changes are the construction branch, a `_get_prefilter`
+guard, and the `average=` flag. The alternative considered and rejected was a
+beam-source strategy object with an `evaluate_lm(...)` seam above the pixel
+conversion, which would have delivered direct analytic evaluation and removed
+the triplicated pixel arithmetic.
+
+**Rationale:** `BeamWizard`'s interpolation, rotation and rendering code is left
+completely untouched, so the MdV path cannot regress. The feature lands behind a
+single construction line rather than a refactor of three call sites in a
+900-line module.
+
+**Consequences:**
+
+- The issue's "without the need to use the `scipy` interpolators" is explicitly
+  **not** delivered. Evaluation still goes through a spline fit to a sampled
+  grid, so the synthesized beam carries interpolation error on top of the
+  approximation error the analytic model already has. Anyone needing the exact
+  analytic value must call `JimBeam` directly. Revisiting this means the
+  strategy-object refactor, which this decision deferred rather than ruled out.
+- The triplicated degrees→pixels arithmetic survives, so a future beam model
+  that is not grid-shaped will face the same problem again.
+- Frequencies outside the katbeam table are **refused**. `JimBeam`
+  interpolates its squint/FWHM table with `np.interp`, which clamps silently, so
+  asking the L model for 500 MHz would otherwise return the 856 MHz beam with no
+  warning.
+- The cosine-taper `0/0` singularity at normalised radius
+  `r = 0.4205339031217265` is replaced with its L'Hôpital limit `π/4`. Left
+  alone, the resulting `NaN` smears across a whole slab in `spline_filter`.
+- `npix` must be even, since `x0 = npix//2` lands on exactly 0° only then.
+- Only the normalised variables exist, so `jones`/`stokes`/`mueller` raise. The
+  `n`-prefix distinction is meaningless for a model that is normalised by
+  construction.
+- `katbeam` is now in the `[full]` extra, resolved from **PyPI**, while the
+  `dev` and `test` groups keep their `git+...@main` pin. A published `[full]`
+  install therefore gets katbeam 0.1, which has **no S-band model** and a
+  narrower L table (900–1650 vs 856–1712 MHz): S-band katbeam works only in a
+  dev checkout. This keeps the git-dependency pattern D8 retired confined to
+  dev/test, at the cost of band support differing between install modes.
+- Jones→Stokes conversion moved from `mdv_beams_to_bds` into `utils.py`
+  (`jones_to_mueller`, `mueller_to_stokes`). Both models share it, which is what
+  makes comparing our derived `nstokes[I,I]` against katbeam's own `I()` a real
+  test of that conversion rather than a tautology.
 
 ## Sources
 

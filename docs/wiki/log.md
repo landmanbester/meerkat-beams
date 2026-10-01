@@ -2,10 +2,40 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-07-28T14:35:00Z
+timestamp: 2026-10-01T00:00:00Z
 ---
 
 # Wiki changelog
+
+## 2026-10-01 — katbeam as a BeamWizard beam model (verified at `ad10c54`)
+
+Issue #22. `BeamWizard` can now build its beams from katbeam's analytic model as
+well as the MdV holographic BDS, and `get_rotation_averaged_beam` gained full
+azimuthal averaging.
+
+- New `src/meerkat_beams/katbeam_bds.py`: `synthesize_katbeam_bds` samples
+  `JimBeam` onto a grid and assembles a lazy, dask-backed `xarray.Dataset`
+  carrying the BDS schema, so `BeamWizard` consumes it unchanged. The band to
+  model map and `require_model` moved here out of `scripts/compare_katbeam.py`.
+- Jones to Stokes conversion extracted from `core/mdv_beams_to_bds.py` into
+  `utils.py` (`jones_to_mueller`, `mueller_to_stokes`). Both models share it,
+  which makes katbeam's own `JimBeam.I()` a genuine cross-check of our
+  conversion rather than a tautology.
+- `data-model.md` gains "Synthesized katbeam BDS": three variables not six, the
+  structural zeros, the even-`npix` requirement, the per-band geometry defaults,
+  the refusal of out-of-table frequencies, and the `pi/4` singularity fix. Also
+  corrects the now-stale `mueller_func, mdv_beams_to_bds.py:81-84` reference.
+- `beamwizard.md` gains "`beam_model`" and "`average=\"pa\"` or `\"azimuth\"`",
+  including that the hard `cval=0.0` off-cube policy still applies to a
+  synthesized grid even though `JimBeam` would evaluate beyond it.
+- `design-decisions.md` gains **D11**, recording that the synthesized-BDS
+  approach was chosen over a beam-source abstraction and that the scipy
+  interpolators are deliberately **retained** — so issue #22's "without the need
+  to use the scipy interpolators" is explicitly not delivered, with the costs
+  listed.
+- `CLAUDE.md`: resolves the open "whether katbeam becomes a runtime dep is an
+  issue #22 decision" note. It is now in the `[full]` extra from PyPI, with the
+  dev/test git pin kept, so **S-band katbeam works only in a dev checkout**.
 
 ## 2026-07-28 — katbeam comparison probe (verified at `a62c7e1`)
 
