@@ -106,10 +106,14 @@ def resolve_geometry(band: str, npix: Optional[int], fov_deg: Optional[float]) -
 # ---------------------------------------------------------------------------
 
 # katbeam's taper is cos(pi*rr)/(1 - 4*rr**2) with rr = r*1.1889647809329453,
-# which is 0/0 at rr = 0.5. The L'Hopital limit there is pi/4: differentiating
-# gives -pi*sin(pi*rr) / -8*rr -> -pi / -4. A grid point landing on this radius
-# returns NaN from katbeam, and a NaN reaching spline_filter smears across the
-# entire slab, so synthesis replaces it.
+# whose denominator vanishes at rr = 0.5. The L'Hopital limit there is pi/4:
+# differentiating gives -pi*sin(pi*rr) / -8*rr -> -pi / -4.
+#
+# A grid point landing on this radius returns a non-finite value -- in practice
+# inf, NOT NaN, because cos(pi*rr) is ~6.1e-17 rather than exactly 0 there, so it
+# is a divide-by-zero. _sanitize tests ~np.isfinite and catches either. Something
+# non-finite reaching spline_filter smears across the entire slab, so synthesis
+# replaces it.
 SINGULAR_TAPER_RADIUS = 0.4205339031217265  # 0.5 / 1.1889647809329453
 SINGULAR_TAPER_LIMIT = float(np.pi / 4)
 
@@ -137,7 +141,16 @@ def _freq_chunk_size(npix: int) -> int:
 
 
 def _sanitize(arr: np.ndarray, label: str) -> np.ndarray:
-    """Replace katbeam's 0/0 singularity with its analytic limit."""
+    """Replace katbeam's taper singularity with its analytic limit.
+
+    The mask is unconditional on radius rather than gated near
+    SINGULAR_TAPER_RADIUS. That is safe only because the singularity is the sole
+    source of non-finite values here: the taper is finite at every other radius,
+    and every model's FWHM table is strictly positive (min 0.421 deg), so the
+    normalised radius is always well defined. If either ceases to hold, gate this
+    on radius -- pi/4 is a plausible-looking beam value, so a masked unrelated
+    non-finite would be hard to spot.
+    """
     bad = ~np.isfinite(arr)
     n_bad = int(bad.sum())
     if n_bad:
@@ -162,8 +175,12 @@ def _eval_block(model_name: str, ll: np.ndarray, mm: np.ndarray, freqs_mhz: np.n
     ny, nx = ll.shape
 
     # Build Jones in (FREQ, Y, X, ROW, COL) order, which is what
-    # jones_to_mueller expects.
-    jones = np.zeros((nf, ny, nx, 2, 2), dtype=np.complex128)
+    # jones_to_mueller expects. complex64 throughout: the 4x4 Mueller array
+    # dominates this block's transient, and the outputs are cast to
+    # complex64/float32 anyway, so complex128 here would double peak memory for
+    # precision that is discarded. Measured difference in the Stokes result is
+    # ~2e-8, against a float32 output.
+    jones = np.zeros((nf, ny, nx, 2, 2), dtype=np.complex64)
     for k, f in enumerate(freqs_mhz):
         jones[k, :, :, 0, 0] = _sanitize(np.asarray(jb.HH(ll, mm, float(f)), dtype=float), "HH")
         jones[k, :, :, 1, 1] = _sanitize(np.asarray(jb.VV(ll, mm, float(f)), dtype=float), "VV")
@@ -243,12 +260,28 @@ def synthesize_katbeam_bds(
     model_name = KATBEAM_MODEL_FOR_BAND[band]
 
     npix, fov_deg = resolve_geometry(band, npix, fov_deg)
+    if npix < 2:
+        raise ValueError(f"npix must be at least 2, got {npix}")
     if npix % 2 != 0:
         raise ValueError(
             f"npix must be even, got {npix}: the grid centre x0 = npix//2 lands on "
             "exactly 0 degrees only for an even npix, and an odd npix would offset "
             "the beam centre by half a pixel."
         )
+    if fov_deg <= 0:
+        # A negative half-width silently MIRRORS the beam: dx comes out negative,
+        # the grid runs +fov -> -fov, and x0 still lands on 0.0, so nothing
+        # downstream complains while xp = l/dx + x0 flips east for west. In a repo
+        # whose axis sign conventions are still unsettled (see
+        # docs/wiki/beam-orientation.md) that is the worst available failure mode,
+        # so refuse rather than produce a wrong beam. fov_deg == 0 gives dx == 0.
+        raise ValueError(
+            f"fov_deg must be positive, got {fov_deg}: it is a half-width in degrees. "
+            "A negative value silently mirrors the beam east-west, and zero gives a "
+            "zero pixel scale."
+        )
+    if num_freq is not None and num_freq < 1:
+        raise ValueError(f"num_freq must be at least 1, got {num_freq}")
 
     freqs = _resolve_katbeam_freqs(model_name, freq, num_freq)
 

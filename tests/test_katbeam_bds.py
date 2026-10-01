@@ -451,4 +451,94 @@ def test_eval_block_transient_stays_bounded():
         tracemalloc.stop()
 
     peak_mib = peak / 2**20
-    assert peak_mib < 400, f"per-block peak {peak_mib:.0f} MiB is too large"
+    # 144 MiB as measured; 250 leaves headroom without letting a regression to
+    # the original 3328 MiB (fixed 256-frequency chunk, complex128) slip through.
+    assert peak_mib < 250, f"per-block peak {peak_mib:.0f} MiB is too large"
+
+
+@pytest.mark.parametrize("fov_deg", [-4.0, 0.0])
+def test_non_positive_fov_is_rejected(fov_deg):
+    """A negative fov_deg silently MIRRORS the beam, which is the worst failure
+    mode available in a repo whose axis sign conventions are still unsettled.
+
+    With fov_deg=-4.0 the grid runs +4.0 -> -3.9375, dx is negative, and x0 still
+    lands on 0.0 -- so nothing downstream complains, while xp = l/dx + x0 flips
+    east for west. fov_deg=0.0 gives dx=0 and inf.
+    """
+    from meerkat_beams.katbeam_bds import synthesize_katbeam_bds
+
+    with pytest.raises(ValueError, match="fov_deg"):
+        synthesize_katbeam_bds("L", npix=16, fov_deg=fov_deg, num_freq=1)
+
+
+@pytest.mark.parametrize("npix", [0, -2])
+def test_non_positive_npix_is_rejected(npix):
+    """npix=0 passes the evenness check and dies in a raw ZeroDivisionError."""
+    from meerkat_beams.katbeam_bds import synthesize_katbeam_bds
+
+    with pytest.raises(ValueError, match="npix"):
+        synthesize_katbeam_bds("L", npix=npix, fov_deg=4.0, num_freq=1)
+
+
+@pytest.mark.parametrize("num_freq", [0, -1])
+def test_non_positive_num_freq_is_rejected(num_freq):
+    """num_freq=0 dies in the log line with an IndexError."""
+    from meerkat_beams.katbeam_bds import synthesize_katbeam_bds
+
+    with pytest.raises(ValueError, match="num_freq"):
+        synthesize_katbeam_bds("L", npix=16, fov_deg=4.0, num_freq=num_freq)
+
+
+def test_mirrored_grid_is_what_the_fov_guard_prevents():
+    """Documents the concrete harm, so the guard is not relaxed casually.
+
+    Builds the grid arithmetic by hand with a negative half-width and shows the
+    axis reverses while the centre index still lands on zero -- undetectable
+    downstream.
+    """
+    npix, fov_deg = 16, -4.0
+    delta = 2.0 * fov_deg / npix
+    degs = -fov_deg + np.arange(npix) * delta
+
+    assert delta < 0
+    assert degs[0] > degs[-1], "axis is reversed"
+    assert degs[npix // 2] == pytest.approx(0.0), "centre still on axis, so nothing complains"
+
+
+def test_stokes_conversion_preserves_complex64():
+    """The conversion must not promote complex64 to complex128.
+
+    The basis matrices are complex128 literals, so a bare `Sinv @ M @ S`
+    promotes, doubling the largest intermediate in the pipeline -- the
+    (nfreq, ny, nx, 4, 4) Mueller array. Both callers cast their output down to
+    complex64/float32 anyway, so the promotion buys nothing and costs 2x memory.
+    """
+    from meerkat_beams.utils import jones_to_mueller, mueller_to_stokes
+
+    jones64 = np.zeros((2, 4, 4, 2, 2), dtype=np.complex64)
+    jones64[..., 0, 0] = 0.9
+    jones64[..., 1, 1] = 0.8
+
+    mueller64 = jones_to_mueller(jones64)
+    stokes64 = mueller_to_stokes(mueller64)
+
+    assert mueller64.dtype == np.complex64
+    assert stokes64.dtype == np.complex64
+
+    # complex128 must still work, and give the same answer to float32 precision.
+    stokes128 = mueller_to_stokes(jones_to_mueller(jones64.astype(np.complex128)))
+    assert stokes128.dtype == np.complex128
+    np.testing.assert_allclose(stokes64, stokes128, atol=1e-6)
+
+
+def test_eval_block_does_not_use_complex128():
+    """The per-block transient is dominated by the 4x4 Mueller array, so the whole
+    block pipeline stays in complex64."""
+    from meerkat_beams.katbeam_bds import _eval_block
+
+    ll, mm = np.meshgrid(np.linspace(-4, 4, 8), np.linspace(-4, 4, 8))
+    njones, nmueller, nstokes = _eval_block("MKAT-AA-L-JIM-2020", ll, mm, np.array([1000.0]))
+
+    assert njones.dtype == np.complex64
+    assert nmueller.dtype == np.complex64
+    assert nstokes.dtype == np.float32

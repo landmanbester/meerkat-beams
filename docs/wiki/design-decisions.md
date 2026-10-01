@@ -393,9 +393,15 @@ single construction line rather than a refactor of three call sites in a
   interpolates its squint/FWHM table with `np.interp`, which clamps silently, so
   asking the L model for 500 MHz would otherwise return the 856 MHz beam with no
   warning.
-- The cosine-taper `0/0` singularity at normalised radius
-  `r = 0.4205339031217265` is replaced with its L'Hôpital limit `π/4`. Left
-  alone, the resulting `NaN` smears across a whole slab in `spline_filter`.
+- The cosine-taper singularity at normalised radius `r = 0.4205339031217265` is
+  replaced with its L'Hôpital limit `π/4`. In floating point it surfaces as
+  `inf`, not `NaN` (the numerator is ~6.1e-17, not 0, so it is a divide-by-zero);
+  `_sanitize` tests `~np.isfinite` and catches either. Left alone it smears
+  across a whole slab in `spline_filter`. The replacement is currently
+  unconditional on radius, so an unrelated non-finite value would also become
+  `π/4` behind a warning — acceptable only because the taper is finite everywhere
+  else and every model's FWHM is strictly positive (min 0.421 deg), leaving the
+  singularity as the sole source.
 - `npix` must be even, since `x0 = npix//2` lands on exactly 0° only then.
 - Only the normalised variables exist, so `jones`/`stokes`/`mueller` raise. The
   `n`-prefix distinction is meaningless for a model that is normalised by
@@ -409,7 +415,19 @@ single construction line rather than a refactor of three call sites in a
 - Jones→Stokes conversion moved from `mdv_beams_to_bds` into `utils.py`
   (`jones_to_mueller`, `mueller_to_stokes`). Both models share it, which is what
   makes comparing our derived `nstokes[I,I]` against katbeam's own `I()` a real
-  test of that conversion rather than a tautology.
+  test of that conversion rather than a tautology. This is also why the
+  synthesizer does **not** take the available shortcut of filling the four
+  non-trivial Stokes entries directly — it would cut the per-block transient by
+  ~10x instead of the ~2x complex64 achieves, but the cross-check would then
+  verify the shortcut against katbeam rather than verifying our conversion, which
+  is one of issue #22's two stated purposes. The memory was bounded by other
+  means instead; see `data-model.md`.
+- The per-block memory transient needed bounding twice over: an element-budgeted
+  frequency chunk and complex64 arithmetic end to end. The naive combination of a
+  fixed 256-frequency chunk and complex128 intermediates peaked at 3.3 GiB at
+  `npix=128` — heavier than the MdV path this is meant to be a lighter
+  alternative to. Reducing the chunk size alone does not help, because dask's
+  threaded scheduler holds every live block concurrently.
 
 ## Sources
 

@@ -163,29 +163,50 @@ entries for L — rather than an invented axis. Frequencies outside that table a
 clamps silently, so asking the L model for 500 MHz would otherwise hand back the
 856 MHz beam with no warning.
 
-Variables are dask-backed, chunked in `FREQ` only — the analytic evaluation is
-vectorised over the whole spatial plane, so spatial chunking would only multiply
-the number of `JimBeam` calls. Eager construction at MdV L-band resolution would
-cost several GB, which would make the "lighter alternative" heavier than what it
-replaces.
+Variables are dask-backed and chunked in `FREQ` only — the analytic evaluation
+is vectorised over the whole spatial plane, so spatial chunking would only
+multiply the number of `JimBeam` calls.
 
-The chunk is sized by an **element budget** (`FREQ_CHUNK_ELEMENTS = 300_000`,
-via `_freq_chunk_size(npix)`), not a fixed frequency count. `_eval_block` holds
-complex128 `jones` (2×2), `mueller` (4×4) and `stokes` (4×4) for a whole chunk
-before the `astype` downcasts, so its transient scales as `nfreq · npix²`. A
-fixed 256-frequency chunk measured a 3.3 GiB peak at `npix=128`; the budget
-holds it near 250 MiB at any `npix` (L-band `npix=128` gets 18 frequencies per
-block, `npix=32` gets 292). Pinned by
-`tests/test_katbeam_bds.py::test_eval_block_transient_stays_bounded`. Note dask
-may evaluate several blocks concurrently, so process peak is a small multiple of
-the per-block figure.
+**Memory, measured rather than assumed.** The cost is not the stored arrays (at
+default L geometry all three total only ~70 MB) but the *transient* inside
+`_eval_block`: it holds `jones` (2×2), `mueller` (4×4) and `stokes` (4×4) for a
+whole chunk before the `astype` downcasts, so the peak scales as
+`nfreq · npix²` with a 16-entry 4×4 matrix per pixel. Two things bound it:
+
+- **An element budget** (`FREQ_CHUNK_ELEMENTS = 300_000`, via
+  `_freq_chunk_size(npix)`) rather than a fixed frequency count, so the chunk
+  shrinks as the grid grows: L-band `npix=128` gets 18 frequencies per block,
+  `npix=32` gets 292.
+- **complex64 throughout**, including `mueller_to_stokes`, which casts its
+  complex128 basis matrices down to the input dtype rather than promoting. The
+  outputs are `complex64`/`float32` regardless, so complex128 intermediates cost
+  2× memory for precision that is then discarded (measured difference in the
+  Stokes result: ~2e-8).
+
+Together these took the peak for pulling one `nstokes[I,I]` slab at `npix=128`
+from 3.3 GiB to 144 MiB at default L, 846 MiB at `num_freq=128` and 1.7 GiB at
+`num_freq=256`. Pinned by
+`tests/test_katbeam_bds.py::test_eval_block_transient_stays_bounded` (per-block,
+scheduler-independent) and `test_stokes_conversion_preserves_complex64`.
+
+**The remaining scaling is dask's, not ours.** The threaded scheduler holds every
+live block, so process peak is roughly `n_workers × per-block transient` —
+reducing the chunk size alone does *not* help, since more smaller chunks simply
+means more in flight. A caller rendering a few hundred frequencies at full
+spatial resolution should either accept ~1-2 GB or restrict the scheduler
+(`dask.config.set(num_workers=...)`), which drops it back to the per-block
+figure.
 
 **The cosine-taper singularity.** katbeam's pattern is
-`cos(π·rr)/(1 − 4·rr²)` with `rr = r·1.1889647809329453`, which is `0/0` at
-`rr = 0.5` — normalised radius `r = 0.4205339031217265`. A grid point landing
-there returns `NaN`. Synthesis replaces non-finite samples with the L'Hôpital
-limit `π/4 = 0.7853981633974483` and logs the count. This is not optional: a
-`NaN` reaching `spline_filter` smears across the entire slab.
+`cos(π·rr)/(1 − 4·rr²)` with `rr = r·1.1889647809329453`, whose denominator
+vanishes at `rr = 0.5` — normalised radius `r = 0.4205339031217265`. A grid point
+landing there returns a **non-finite value — `inf` in practice, not `NaN`**,
+since `cos(π·rr)` is ~6.1e-17 rather than exactly 0 there, so it is a
+divide-by-zero rather than a true `0/0` in floating point. `_sanitize` tests with
+`~np.isfinite`, so it catches either. Synthesis replaces such samples with the
+L'Hôpital limit `π/4 = 0.7853981633974483` and logs the count. This is not
+optional: a non-finite value reaching `spline_filter` smears across the entire
+slab.
 
 ## xradio zarr
 

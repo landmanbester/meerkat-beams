@@ -106,8 +106,20 @@ def jones_to_mueller(jones: np.ndarray) -> np.ndarray:
 
 
 def mueller_to_stokes(mueller: np.ndarray) -> np.ndarray:
-    """Rotate a coherency-basis Mueller matrix into the Stokes basis."""
-    return COHERENCY_TO_STOKES @ mueller @ STOKES_TO_COHERENCY
+    """Rotate a coherency-basis Mueller matrix into the Stokes basis.
+
+    The basis matrices are complex128 literals, so they are cast down to the
+    input's precision first: the (FREQ, Y, X, 4, 4) Mueller array is the largest
+    intermediate in either beam pipeline, and promoting a complex64 input to
+    complex128 here doubles its footprint for nothing -- both callers cast the
+    result back down to complex64/float32 immediately afterwards.
+    """
+    if mueller.dtype == np.complex64:
+        sinv = COHERENCY_TO_STOKES.astype(np.complex64)
+        s = STOKES_TO_COHERENCY.astype(np.complex64)
+    else:
+        sinv, s = COHERENCY_TO_STOKES, STOKES_TO_COHERENCY
+    return sinv @ mueller @ s
 
 
 class BeamWizard(object):

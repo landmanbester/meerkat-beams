@@ -1025,3 +1025,29 @@ def test_degenerate_num_angles_raises(num_angles):
 
     with pytest.raises(ValueError, match="num_angles"):
         bwk.get_rotation_averaged_beam(average="azimuth", num_angles=num_angles, num_freq=1, verbose=0)
+
+
+@pytest.mark.unit
+def test_katbeam_wizard_renders_a_time_freq_zarr(tmp_path):
+    """The spec claims every existing BeamWizard method works against a katbeam
+    dataset; the rendering path is the one with no other coverage here."""
+    build_synthetic_image(tmp_path / "synthetic.fits")
+
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+    bwk.attach_image(str(tmp_path / "synthetic.fits"))
+
+    out = tmp_path / "rendered.zarr"
+    bwk.get_time_freq_beam(
+        str(out),
+        "BEAM",
+        l=np.linspace(-0.5, 0.5, 8),
+        m=np.linspace(-0.5, 0.5, 8),
+        freq=bwk.bds.coords["FREQ"].values[:2],
+        times=Time("2024-01-01T00:00:00") + np.linspace(0, 1, 3) * u.hour,
+        verbose=0,
+    )
+
+    rendered = xarray.open_zarr(out)
+    assert rendered.BEAM.shape == (3, 2, 1, 8, 8)
+    assert np.all(np.isfinite(rendered.BEAM.values))
+    assert np.abs(rendered.BEAM.values).max() <= 1.001
