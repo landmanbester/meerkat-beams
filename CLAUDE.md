@@ -26,6 +26,7 @@ Maintenance rules:
 src/meerkat_beams/
 ├── utils.py                # shared: BeamWizard, PowerBeam, logging, zarr constants
 ├── cache.py                # on-demand download + BDS cache (per band)
+├── katbeam_bds.py          # synthesize a BDS-shaped dataset from katbeam (analytic)
 ├── cabs/<cmd>.yml          # Stimela cab definitions (one per command)
 ├── cli/<cmd>.py            # hip-cargo-generated Typer + container dispatch
 └── core/<cmd>.py           # plain-Python implementations (one per command)
@@ -59,10 +60,16 @@ Two generators, inverse of each other:
 
 ## Key abstractions in `utils.py`
 
-`BeamWizard` attaches to a BDS (zarr) and, optionally, an image (FITS or
+`BeamWizard` attaches to a beam dataset and, optionally, an image (FITS or
 xradio zarr), and provides beam interpolation, time-variable beam gain,
 rotation-averaged beam maps, and full time/frequency zarr rendering
-(`get_time_freq_beam`, `enrich_bds_xradio`). Its method-by-method contract
+(`get_time_freq_beam`, `enrich_bds_xradio`). A `beam_model` selector picks the
+source: `"mdv"` (default) opens a BDS zarr, `"katbeam"` synthesizes one
+analytically from `katbeam` with no download and nothing on disk (see
+`katbeam_bds.py`). `get_rotation_averaged_beam` also takes
+`average="pa"|"azimuth"` — the latter averages over a uniform full turn instead
+of the observation's parallactic angles, needs no time axis, and returns a
+circularly symmetric map. Its method-by-method contract
 (prefilter caching and dtype, off-cube policy, spline order, the optional-
 image construction paths, canonical `dim_names`) is documented in
 [`docs/wiki/beamwizard.md`](docs/wiki/beamwizard.md); the BDS/xradio schema
@@ -90,7 +97,7 @@ Full field/variable/dtype tables for all three formats:
 ## Conventions
 
 - Python support policy: **3.11–3.13 full** (scientific stack, tested in CI); **3.10 lightweight only** — base install (CLI + hip-cargo container dispatch), no `[full]` stack, deliberately excluded from the CI test matrix (a dedicated `lightweight` CI job pins base-install + `mbeams --help` on 3.10 instead — do not add 3.10 to the test matrix). Test-group deps carry `python_version >= '3.11'` markers for the same reason.
-- Runtime dep is `hip-cargo>=0.3.0`, resolved from PyPI — the transitional git-main pin is retired (see `docs/wiki/design-decisions.md` D8). The `Dockerfile`'s `git` install layer predates that re-pin and has **not** been removed yet as of this commit (still present, per its own inline comment) — don't assume it's gone. The scientific stack (`xarray`, `zarr<3`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask-ms`, `wget`) is under the `[full]` extra.
+- Runtime dep is `hip-cargo>=0.3.0`, resolved from PyPI — the transitional git-main pin is retired (see `docs/wiki/design-decisions.md` D8). The `Dockerfile`'s `git` install layer predates that re-pin and has **not** been removed yet as of this commit (still present, per its own inline comment) — don't assume it's gone. The scientific stack (`xarray`, `zarr<3`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask-ms`, `wget`) is under the `[full]` extra. `katbeam` is in the `[full]` extra (resolved from PyPI) **and** pinned to git main in the `dev` and `test` groups — `BeamWizard(beam_model="katbeam")` uses it at runtime (issue #22), while the git pin stays because PyPI's only release (0.1) has no S-band model and has a narrower L table (900–1650 vs 856–1712 MHz). So **S-band katbeam works only in a dev checkout**, not from a published `[full]` install. The git pin knowingly reintroduces the pattern D8 retired for hip-cargo, scoped to dev/test only — see `docs/wiki/design-decisions.md` D11.
 - Ruff: `line-length=120`, `target-version=py310`, rules `E,F,I,N,W` with `E741`/`N806` ignored (domain names: `l`, `m`, `I`, `S`, `Sinv`). Pre-commit runs `ruff-check --fix` and `ruff-format`.
 - Core function signatures mirror their CLI signatures (same names/defaults) with plain types. Don't move Typer conversions into core. CLI passes `parse_upath`-parsed path objects directly (no `str(...)` coercion); core accepts anything `str`-coercible / path-like.
 - Commits: conventional prefixes, **enforced** by `conventional-pre-commit` at the `commit-msg` stage. Allowed types: `feat fix refactor perf docs deps chore ci style test build`. Fresh clones need `pre-commit install --hook-type commit-msg` — plain `pre-commit install` does not wire up the `commit-msg` hook.
@@ -100,7 +107,13 @@ Full field/variable/dtype tables for all three formats:
 ## Running things
 
 ```bash
-uv sync --group dev --group test      # install dev + test deps
+# Dependency groups do NOT imply the [full] extra. Omitting `--extra full`
+# actively UNINSTALLS the scientific stack (zarr, matplotlib, numcodecs,
+# dask-ms, xarray-fits, gdown, wget, python-casacore, s3fs, ...), because
+# `uv sync` makes the environment match exactly what you asked for. Some of
+# it survives transitively via the test group, which makes the breakage
+# confusing rather than obvious. Always pass `--extra full` for real work.
+uv sync --group dev --group test --extra full   # install dev + test deps
 uv run ruff format --check .          # format check (CI)
 uv run ruff check .                   # lint (CI)
 uv run pytest -v                      # full test run
@@ -112,7 +125,7 @@ uv run mbeams --help                  # CLI
 bash scripts/genfuncs.sh
 ```
 
-CI (`.github/workflows/ci.yml`) runs ruff + pytest on Python 3.11–3.13, plus a `lightweight` job that pins the 3.10 base-install guarantee (no test suite there — see the Python support policy above). Commit message containing `[skip checks]` skips the CI job. Docker image built from `Dockerfile` (python:3.11-slim, installs `.[full]`; still installs `git`, a leftover from the retired hip-cargo git-main pin — see `docs/wiki/design-decisions.md` D8).
+CI (`.github/workflows/ci.yml`) runs ruff + pytest on Python 3.11–3.13, plus a `lightweight` job that pins the 3.10 base-install guarantee (no test suite there — see the Python support policy above). The two jobs sync differently: lint uses `uv sync --group dev`, the test job uses `uv sync --group test --extra full` — **no `dev` group**. So anything a test needs must be in the `test` group, not just `dev`, or the test will skip silently in CI (this is why `katbeam` is listed in both). Commit message containing `[skip checks]` skips the CI job. Docker image built from `Dockerfile` (python:3.11-slim, installs `.[full]`; still installs `git`, a leftover from the retired hip-cargo git-main pin — see `docs/wiki/design-decisions.md` D8).
 
 ## Tests
 

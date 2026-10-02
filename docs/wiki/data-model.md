@@ -1,10 +1,10 @@
 ---
 type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr
-description: The three beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), and the xradio primary-beam schema.
-tags: [mdv, bds, xradio, zarr, schema, data-model]
-timestamp: 2026-07-27T11:12:28Z
-last_verified_commit: 56a57b7
+description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), and the xradio primary-beam schema.
+tags: [mdv, bds, xradio, zarr, schema, data-model, katbeam]
+timestamp: 2026-10-01T00:00:00Z
+last_verified_commit: ad10c54
 ---
 
 # Data model — MdV npz, BDS zarr, xradio zarr
@@ -76,7 +76,8 @@ Produced by `mdv-beams-to-bds`. Holds **six** data variables
 is `(FREQ, Y, X)`, i.e. the full variable is `(i, j, FREQ, Y, X)`.
 
 `mueller`/`nmueller` are the coherency Mueller matrix
-`Jones ⊗ conj(Jones)` (`mueller_func`, `mdv_beams_to_bds.py:81-84`),
+`Jones ⊗ conj(Jones)` (`jones_to_mueller`, `utils.py` — moved there from
+`mdv_beams_to_bds` so the katbeam synthesizer shares one conversion path),
 kept in complex coherency form (not converted through `Sinv @ M @ S` to
 real Stokes like `stokes`/`nstokes` are) — hence `complex64` rather than
 `float32` despite sharing the `stokes_i`/`stokes_j` dims. Added in commit
@@ -101,6 +102,145 @@ zstd/clevel=5 encoding (`mdv_beams_to_bds.py:123-130`) — note the filter
 is `Delta(dtype="float32")` even for the `complex64` variables (`jones`,
 `njones`, `mueller`, `nmueller`); this matches the module-level
 `ZARR_FILTERS` convention documented in `utils.py`.
+
+## Synthesized katbeam BDS
+
+`BeamWizard(band=..., beam_model="katbeam")` does not read a BDS at all. It
+calls `katbeam_bds.synthesize_katbeam_bds(band, ...)`, which samples katbeam's
+analytic `JimBeam` onto a grid and assembles a Dataset carrying the BDS schema
+in memory. Nothing is downloaded and nothing is written to disk.
+
+It holds **three** data variables, not six:
+
+| variable | dtype | dims | present |
+|---|---|---|---|
+| `njones` | `complex64` | `receptor_i, receptor_j, FREQ, Y, X` | yes — `diag(HH, VV)` |
+| `nstokes` | `float32` | `stokes_i, stokes_j, FREQ, Y, X` | yes |
+| `nmueller` | `complex64` | `stokes_i, stokes_j, FREQ, Y, X` | yes |
+| `jones`, `stokes`, `mueller` | — | — | **no** |
+
+**Normalisation matches the MdV BDS exactly.** `njones` is pre-multiplied by the
+inverse of the centre-pixel Jones, so on axis it is the identity and
+`nstokes[I, I]` is 1 — the same meaning the `n` prefix has for MdV. This is not
+free: katbeam's raw `HH`/`VV` are only *approximately* unity at (0, 0), because
+each beam's peak is offset by its squint (0.9950 at 1712 MHz, where the L table's
+Hx squint reaches 0.052°). Without the normalisation a caller correcting data
+with `njones` would carry an on-axis error of up to 0.5% that the variable's name
+denies. Since the Jones matrix is diagonal, `inv(J(centre)) @ J` reduces to
+dividing each receptor by its own centre sample.
+
+The unnormalised variables are deliberately absent: there is no second,
+independent normalisation for katbeam to expose (the raw voltage patterns differ
+from the normalised ones only by that per-frequency scalar), and aliasing them to
+the normalised ones would misrepresent them. Requesting one raises from
+`BeamWizard._get_prefilter` with an actionable message rather than a bare
+`KeyError` — see [`beamwizard.md`](beamwizard.md).
+
+One consequence worth knowing when comparing against katbeam directly: the
+normalised `nstokes[I, I]` does **not** relate to `JimBeam.I()` by a single
+scalar, since `0.25·((HH/HH₀)² + (VV/VV₀)²)·(HH₀² + VV₀²)` equals
+`0.5·(HH² + VV²)` only when `HH₀ == VV₀`, which the squint makes false. The
+cross-check test therefore compares normalised against normalised, and a separate
+test feeds *raw* katbeam Jones through our helpers to reproduce `I()` exactly.
+
+Structural consequences of katbeam supplying only two real co-polarisation
+patterns:
+
+- `njones` off-diagonals are **exactly** zero, and the diagonal is purely real
+  (katbeam carries no phase information).
+- `nstokes` has no I↔U or I↔V leakage. `U` and `V` are *not* zero: they carry
+  gain `HH·VV` on the diagonal. The I↔Q leakage is `(HH²−VV²)/2`, off-diagonal.
+- Everything past `njones` is derived through the shared `jones_to_mueller` /
+  `mueller_to_stokes` helpers in `utils.py` — the same code path
+  `mdv_beams_to_bds` uses. This is what makes katbeam's own `JimBeam.I()` a
+  genuine cross-check of our Jones→Stokes conversion
+  (`tests/test_katbeam_bds.py::test_derived_stokes_i_matches_katbeam_own_i`).
+
+Attrs are a superset of the MdV BDS's. The shared ones (`x0`, `y0`, `dx`, `dy`,
+`freqs`, `fits_header`) carry the same meaning, plus:
+
+- `npix` — pixels per spatial axis. Must be **even**: the grid is
+  `X = -fov_deg + arange(npix)*dx` with `x0 = npix//2`, so the centre pixel
+  lands on exactly 0° only for even `npix`. Odd values are rejected.
+- `fov_deg` — grid **half**-width in degrees; the grid spans `-fov_deg` to
+  `+fov_deg - dx`.
+- `beam_model` — `"katbeam"`.
+- `katbeam_model` — the `JimBeam` model name actually used.
+- `band` — the MdV band code requested.
+
+Defaults mirror the real MdV BDSs so the two models are pixel-identical and
+directly comparable (`katbeam_bds.BAND_GEOMETRY`): L is `npix=128, fov_deg=4.0`
+(`dx=0.0625`), U is `npix=128, fov_deg=6.0` (`dx=0.09375`). S-band MdV geometry
+has not been measured, so `S0`–`S4` have no default and require explicit
+`npix`/`fov_deg` rather than a guess. All five S sub-bands map to katbeam's
+single `MKAT-AA-S-JIM-2020`.
+
+Frequencies default to the katbeam model's own table (`freqMHzlist`) — 19
+entries for L — rather than an invented axis. An explicit `freq` array must be
+non-empty, finite and strictly increasing, since `BeamWizard` builds its
+index↔frequency `interp1d` mappings from this axis. Frequencies outside the
+model's table are **refused**: katbeam interpolates its squint/FWHM table with
+`np.interp`, which clamps silently, so asking the L model for 500 MHz would
+otherwise hand back the 856 MHz beam with no warning.
+
+Because the default axis is the model table and that table is not uniformly
+spaced (… 1600, 1650, 1670, 1712 MHz), `CDELT3` is **omitted** from the
+synthesized `fits_header` unless the axis really is uniform. A single increment
+would make a WCS reader assign the wrong frequency to every later plane; the
+exact axis is always available in `attrs["freqs"]` and the `FREQ` coordinate.
+
+**Which katbeam you have changes the default L axis.** `uv.lock` resolves both
+the `[full]` extra and the dev/test groups to the git pin, so a `uv sync` gets
+git main (856–1712 MHz for L, and the S model). A non-lock install —
+`pip install meerkat-beams[full]`, or the `Dockerfile`'s `.[full]` — gets PyPI
+0.1 instead, whose L table spans only 900–1650 MHz and which has no S model at
+all. So on that path the default frequency axis differs and the
+"pixel-identical with MdV" property does not extend to the frequency axis.
+
+Variables are dask-backed and chunked in `FREQ` only — the analytic evaluation
+is vectorised over the whole spatial plane, so spatial chunking would only
+multiply the number of `JimBeam` calls.
+
+**Memory, measured rather than assumed.** The cost is not the stored arrays (at
+default L geometry all three total only ~70 MB) but the *transient* inside
+`_eval_block`: it holds `jones` (2×2), `mueller` (4×4) and `stokes` (4×4) for a
+whole chunk before the `astype` downcasts, so the peak scales as
+`nfreq · npix²` with a 16-entry 4×4 matrix per pixel. Two things bound it:
+
+- **An element budget** (`FREQ_CHUNK_ELEMENTS = 300_000`, via
+  `_freq_chunk_size(npix)`) rather than a fixed frequency count, so the chunk
+  shrinks as the grid grows: L-band `npix=128` gets 18 frequencies per block,
+  `npix=32` gets 292.
+- **complex64 throughout**, including `mueller_to_stokes`, which casts its
+  complex128 basis matrices down to the input dtype rather than promoting. The
+  outputs are `complex64`/`float32` regardless, so complex128 intermediates cost
+  2× memory for precision that is then discarded (measured difference in the
+  Stokes result: ~2e-8).
+
+Together these took the peak for pulling one `nstokes[I,I]` slab at `npix=128`
+from 3.3 GiB to 144 MiB at default L, 846 MiB at `num_freq=128` and 1.7 GiB at
+`num_freq=256`. Pinned by
+`tests/test_katbeam_bds.py::test_eval_block_transient_stays_bounded` (per-block,
+scheduler-independent) and `test_stokes_conversion_preserves_complex64`.
+
+**The remaining scaling is dask's, not ours.** The threaded scheduler holds every
+live block, so process peak is roughly `n_workers × per-block transient` —
+reducing the chunk size alone does *not* help, since more smaller chunks simply
+means more in flight. A caller rendering a few hundred frequencies at full
+spatial resolution should either accept ~1-2 GB or restrict the scheduler
+(`dask.config.set(num_workers=...)`), which drops it back to the per-block
+figure.
+
+**The cosine-taper singularity.** katbeam's pattern is
+`cos(π·rr)/(1 − 4·rr²)` with `rr = r·1.1889647809329453`, whose denominator
+vanishes at `rr = 0.5` — normalised radius `r = 0.4205339031217265`. A grid point
+landing there returns a **non-finite value — `inf` in practice, not `NaN`**,
+since `cos(π·rr)` is ~6.1e-17 rather than exactly 0 there, so it is a
+divide-by-zero rather than a true `0/0` in floating point. `_sanitize` tests with
+`~np.isfinite`, so it catches either. Synthesis replaces such samples with the
+L'Hôpital limit `π/4 = 0.7853981633974483` and logs the count. This is not
+optional: a non-finite value reaching `spline_filter` smears across the entire
+slab.
 
 ## xradio zarr
 

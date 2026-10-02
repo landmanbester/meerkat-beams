@@ -1,18 +1,20 @@
 ---
 type: reference
 title: BeamWizard interpolation and rendering internals
-description: interpolate_beam prefilter/off-cube/spline-order/freq-guard semantics, get_source_coordinates transforms, optional-image paths, get_time_freq_beam canonical dim_names, and enrich_bds_xradio.
-tags: [beamwizard, interpolation, scipy, zarr, xradio, utils]
-timestamp: 2026-07-27T11:12:28Z
-last_verified_commit: 3bb9b3d
+description: beam_model (mdv/katbeam) and average (pa/azimuth) selectors, interpolate_beam prefilter/off-cube/spline-order/freq-guard semantics, get_source_coordinates transforms, optional-image paths, get_time_freq_beam canonical dim_names, and enrich_bds_xradio.
+tags: [beamwizard, interpolation, scipy, zarr, xradio, utils, katbeam]
+timestamp: 2026-10-01T00:00:00Z
+last_verified_commit: ad10c54
 ---
 
 # BeamWizard interpolation and rendering internals
 
-`BeamWizard` (`src/meerkat_beams/utils.py`) attaches to a BDS (zarr) and,
+`BeamWizard` (`src/meerkat_beams/utils.py`) attaches to a beam dataset and,
 optionally, an image (FITS or xradio zarr), and provides spline-based beam
 interpolation, time-variable beam gain, rotation-averaged beam maps, and
-full time/frequency zarr rendering. This page documents the interpolation
+full time/frequency zarr rendering. The beam dataset is either an MdV BDS zarr
+(`beam_model="mdv"`, the default) or one synthesized from katbeam
+(`beam_model="katbeam"`) — see [`## beam_model`](#beam_model) below. This page documents the interpolation
 contract and the plumbing around it — the parts most likely to bite a
 caller who changes a default without reading the inline comments.
 
@@ -199,6 +201,71 @@ cache does: `complex64` for complex beams, `float32` for real ones — see
   `xarray.open_zarr` without `consolidated=False`.
 
 Pinned by `test_enrich_bds_xradio_writes_xradio_schema`.
+
+## `beam_model` — MdV holography or katbeam
+
+`beam_model` selects where the beams come from. Everything downstream of
+`self.bds` is identical either way: that is the whole design of the katbeam
+support (see `design-decisions.md`).
+
+| | `"mdv"` (default) | `"katbeam"` |
+|---|---|---|
+| source | BDS zarr on disk, via `bds_name` or `band` (cache) | `synthesize_katbeam_bds(band, ...)`, in memory |
+| accepts `bds_name` | yes | **no** — raises; there is no BDS to read |
+| requires `band` | only if no `bds_name` | yes |
+| `npix`/`fov_deg`/`num_freq` | **no** — raises | yes, optional |
+| variables | all six | `njones`/`nstokes`/`nmueller` only |
+| on-axis `njones` | identity | identity (same normalisation applied) |
+| download | yes, on cache miss | never |
+
+`npix`, `fov_deg` and `num_freq` are rejected for `"mdv"` rather than silently
+ignored, since a caller passing them to the MdV path has misunderstood which
+model they are configuring.
+
+### Unnormalised variables are rejected for katbeam
+
+A katbeam dataset has no `jones`/`stokes`/`mueller` (katbeam beams are on-axis
+normalised by construction). `_get_prefilter` guards on this before touching
+`self.bds[var]`, so the caller gets an actionable message instead of a bare
+`KeyError`:
+
+> `var='stokes' is not available for beam_model='katbeam' (katbeam beams are
+> on-axis normalised by construction; use 'nstokes'). Available: njones,
+> nmueller, nstokes.`
+
+An unknown `var` on either model raises from the same guard, naming what is
+available. Pinned by `test_katbeam_wizard_rejects_unnormalised_variables`.
+
+### The off-cube policy still applies
+
+`interpolate_beam`'s `mode="constant", cval=0.0` is unchanged for a synthesized
+dataset, so a katbeam beam falls to a hard `0` beyond `fov_deg` even though
+`JimBeam` would happily evaluate there. This is deliberate — the two models
+behave identically off-cube — and is pinned by
+`test_beam_falls_to_zero_outside_the_synthesized_grid`.
+
+## `get_rotation_averaged_beam` — `average="pa"` or `"azimuth"`
+
+`average` chooses which angles the beam is averaged over. The `(mean, variance)`
+return contract, the `(Y, X)` output order, chunking, `pixel_stepping` and `spi`
+handling are identical in both modes; only the angle array differs.
+
+| | `average="pa"` (default) | `average="azimuth"` |
+|---|---|---|
+| angles | parallactic angles at `times`, via `AltAz` + position angle to NCP | `linspace(0, 2π, num_angles, endpoint=False)` |
+| needs `times` | **yes** — raises `RuntimeError` without them | no |
+| uses `time_stepping`, `loc` | yes | no, both irrelevant |
+| result | reflects the observation's real PA coverage | circularly symmetric |
+
+`num_angles` (default 64) applies only to `"azimuth"` and must be at least 2 —
+a single angle is not an average, so `0`, `1` and negatives all raise. Pinned by
+`test_degenerate_num_angles_raises`.
+
+Use `"azimuth"` when full PA tracking is overkill, which it usually is for
+image-space mosaicing. The two agree when the supplied times give PA coverage
+spanning a full turn (`test_azimuthal_matches_pa_average_given_full_pa_coverage`),
+and the azimuthal map is invariant under both axis flips and transposition
+(`test_azimuthal_average_is_circularly_symmetric`).
 
 ## Sources
 

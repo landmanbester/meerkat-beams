@@ -2,10 +2,77 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-07-27T13:10:48Z
+timestamp: 2026-10-01T00:00:00Z
 ---
 
 # Wiki changelog
+
+## 2026-10-01 — katbeam as a BeamWizard beam model (verified at `ad10c54`)
+
+Issue #22. `BeamWizard` can now build its beams from katbeam's analytic model as
+well as the MdV holographic BDS, and `get_rotation_averaged_beam` gained full
+azimuthal averaging.
+
+- New `src/meerkat_beams/katbeam_bds.py`: `synthesize_katbeam_bds` samples
+  `JimBeam` onto a grid and assembles a lazy, dask-backed `xarray.Dataset`
+  carrying the BDS schema, so `BeamWizard` consumes it unchanged. The band to
+  model map and `require_model` moved here out of `scripts/compare_katbeam.py`.
+- Jones to Stokes conversion extracted from `core/mdv_beams_to_bds.py` into
+  `utils.py` (`jones_to_mueller`, `mueller_to_stokes`). Both models share it,
+  which makes katbeam's own `JimBeam.I()` a genuine cross-check of our
+  conversion rather than a tautology.
+- `data-model.md` gains "Synthesized katbeam BDS": three variables not six, the
+  structural zeros, the even-`npix` requirement, the per-band geometry defaults,
+  the refusal of out-of-table frequencies, and the `pi/4` singularity fix. Also
+  corrects the now-stale `mueller_func, mdv_beams_to_bds.py:81-84` reference.
+- `beamwizard.md` gains "`beam_model`" and "`average=\"pa\"` or `\"azimuth\"`",
+  including that the hard `cval=0.0` off-cube policy still applies to a
+  synthesized grid even though `JimBeam` would evaluate beyond it.
+- `design-decisions.md` gains **D11**, recording that the synthesized-BDS
+  approach was chosen over a beam-source abstraction and that the scipy
+  interpolators are deliberately **retained** — so issue #22's "without the need
+  to use the scipy interpolators" is explicitly not delivered, with the costs
+  listed.
+- `CLAUDE.md`: resolves the open "whether katbeam becomes a runtime dep is an
+  issue #22 decision" note. It is now in the `[full]` extra from PyPI, with the
+  dev/test git pin kept, so **S-band katbeam works only in a dev checkout**.
+
+## 2026-07-28 — katbeam comparison probe (verified at `a62c7e1`)
+
+- New `scripts/compare_katbeam.py` + `tests/test_compare_katbeam.py` (84
+  hermetic unit tests): compares the MdV-derived BDS beams against katbeam's
+  analytic JimBeam across four products (Stokes I, HH power, VV power,
+  cross-pol power), with radially-partitioned residuals and an orientation
+  sweep.
+- `beam-orientation.md` gains "Independent probe: the katbeam comparison".
+  **Split verdict, deliberately stated as such:** the transpose is decisively
+  rejected (`swap_xy` x5.7-10.0 worse than `none`, all three products
+  agreeing), corroborating the `(Y, X)` labelling in
+  `mdv_beams_to_bds.py:26,130`; the **sign flips are not discriminated**
+  (`flip_x` on VV scores x1.05), because MeerKAT's ~0.05-1 arcmin squint is
+  under one 3.75 arcmin BDS pixel. Nothing here closes the M1 question.
+- Caught and fixed a one-pixel mirror artifact in the sweep. An even-sized
+  grid centred on a pixel is not symmetric about zero (L-band X runs
+  `-4.0..+3.9375`: 64 negatives, one zero, 63 positives), so a naive axis
+  reverse is a mirror *plus* a one-pixel translation. It reported spurious
+  x17-21 flip penalties; a pure one-pixel roll with no mirror reproduced
+  5.14e-2 against the naive flip's 5.21e-2. `registration_roll()` now
+  corrects it, with three regression guards. Any future orientation tooling on
+  this grid inherits the same trap.
+- Agreement where the models overlap: mainlobe Stokes I residual 1.4-3.5e-3 of
+  peak, FWHM to 0.1-0.3% on both axes over 900-1650 MHz. Recorded with the
+  caveat that this is **not independent** — katbeam's tables were themselves
+  fit to MeerKAT holography, so it is a consistency check, not two independent
+  models converging.
+- Real divergences quantified: cross-pol (katbeam models it as exactly zero;
+  ours reaches 3.8e-3 of peak at 1650 MHz, with the expected four-lobe
+  clover-leaf nulling on axis), sidelobes, and azimuthal structure.
+- `katbeam` added to the `dev` **and** `test` dependency groups, pinned to git
+  main: PyPI's only release (0.1) has no S-band model and a narrower L table
+  (900-1650 vs 856-1712 MHz). Duplicated into `test` because CI's test job
+  syncs `--group test --extra full` without `--group dev`, which would have
+  made every katbeam test skip silently. This reintroduces the git-pin pattern
+  D8 retired for hip-cargo — a deliberate, dev/test-only choice.
 
 ## 2026-07-27 — PEP 440 tbump + git-cliff changelog (verified at `0b4e799`)
 

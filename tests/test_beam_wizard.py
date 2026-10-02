@@ -815,3 +815,239 @@ def test_interpolate_beam_jones_var_and_offdiagonal_stokes(bw):
     # On-axis diagonal Stokes Q is still 1.0 (synthetic Mueller is identity).
     stokes_qq = bw.interpolate_beam(xpyp[:, :1], freq=FREQS[:1], var="nstokes", i="Q", j="Q")
     np.testing.assert_allclose(stokes_qq, 1.0, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# katbeam beam model
+# ---------------------------------------------------------------------------
+
+KATBEAM_KWARGS = dict(beam_model="katbeam", npix=32, fov_deg=4.0, num_freq=3)
+
+
+@pytest.fixture
+def synthetic_bds_path(tmp_path):
+    """Path to a freshly built synthetic BDS zarr."""
+    return str(build_synthetic_bds(tmp_path / "synthetic.bds.zarr"))
+
+
+@pytest.mark.unit
+def test_katbeam_wizard_constructs_without_touching_the_cache(monkeypatch):
+    """The whole point of the katbeam model is no download and no zarr."""
+    from meerkat_beams import cache
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("the katbeam beam model must not touch the BDS cache")
+
+    monkeypatch.setattr(cache, "ensure_band_bds", _boom)
+
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+
+    assert bwk.beam_model == "katbeam"
+    assert bwk.bds.attrs["beam_model"] == "katbeam"
+    assert bwk.bds.attrs["x0"] == 16
+
+
+@pytest.mark.unit
+def test_katbeam_wizard_interpolates():
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+    freqs = bwk.bds.coords["FREQ"].values
+
+    # On-axis pixel, in beam pixel coordinates.
+    xpyp = np.array([[bwk.bds.attrs["x0"]], [bwk.bds.attrs["y0"]]], dtype=float)
+    vals = bwk.interpolate_beam(xpyp, freqs, var="nstokes", i="I", j="I")
+
+    assert vals.shape == (len(freqs), 1)
+    assert np.all(np.isfinite(vals))
+    np.testing.assert_allclose(vals[:, 0], 1.0, atol=1e-2)
+
+
+@pytest.mark.unit
+def test_katbeam_wizard_rejects_unnormalised_variables():
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+
+    with pytest.raises(ValueError, match="on-axis normalised"):
+        bwk._get_prefilter("stokes", "I", "I")
+    with pytest.raises(ValueError, match="on-axis normalised"):
+        bwk._get_prefilter("jones", 0, 0)
+
+
+@pytest.mark.unit
+def test_mdv_wizard_still_reports_its_beam_model(bw):
+    assert bw.beam_model == "mdv"
+
+
+@pytest.mark.unit
+def test_invalid_beam_model_raises():
+    with pytest.raises(ValueError, match="beam_model"):
+        BeamWizard(band="L", beam_model="holography")
+
+
+@pytest.mark.unit
+def test_katbeam_requires_a_band_not_a_bds_path(synthetic_bds_path):
+    with pytest.raises(ValueError, match="band"):
+        BeamWizard(synthetic_bds_path, beam_model="katbeam")
+
+
+@pytest.mark.unit
+def test_katbeam_rejects_grid_options_for_the_mdv_model(synthetic_bds_path):
+    with pytest.raises(ValueError, match="katbeam"):
+        BeamWizard(synthetic_bds_path, npix=64)
+
+
+@pytest.mark.unit
+def test_beam_falls_to_zero_outside_the_synthesized_grid():
+    """Deliberate: interpolate_beam uses mode='constant', cval=0.0. katbeam
+    itself would happily evaluate beyond the grid, so pin that the synthesized
+    BDS keeps the same hard off-cube policy as an MdV BDS."""
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+    freqs = bwk.bds.coords["FREQ"].values[:1]
+
+    far_outside = np.array([[1000.0], [1000.0]])
+    vals = bwk.interpolate_beam(far_outside, freqs, var="nstokes", i="I", j="I")
+
+    np.testing.assert_allclose(vals, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# azimuthal averaging
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_azimuthal_average_needs_no_times():
+    """average='azimuth' sweeps a uniform 0..2pi, so it has no time dependence
+    and must work on a wizard with no image attached."""
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+    l = m = np.linspace(-2.0, 2.0, 9)
+
+    mean, var = bwk.get_rotation_averaged_beam(
+        l=l, m=m, average="azimuth", num_angles=16, pixel_stepping=1, num_freq=1, verbose=0
+    )
+
+    assert mean.shape == (9, 9)
+    assert np.all(np.isfinite(mean))
+    assert np.all(var >= -1e-12)
+
+
+@pytest.mark.unit
+def test_azimuthal_average_is_circularly_symmetric():
+    """Averaging over a full turn must leave a map that depends only on radius.
+
+    On an l/m grid symmetric about zero, circular symmetry means the map is
+    invariant under both axis flips and under transposition, and that all pixels
+    at a given radius share one value. Asserting the whole map is far stronger
+    than probing a handful of points.
+    """
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+    l = m = np.linspace(-2.0, 2.0, 9)
+
+    mean, _ = bwk.get_rotation_averaged_beam(
+        l=l, m=m, average="azimuth", num_angles=32, pixel_stepping=1, num_freq=1, verbose=0
+    )
+
+    np.testing.assert_allclose(mean, mean[::-1, :], rtol=1e-6)  # flip m
+    np.testing.assert_allclose(mean, mean[:, ::-1], rtol=1e-6)  # flip l
+    np.testing.assert_allclose(mean, mean.T, rtol=1e-6)  # swap l/m
+
+    # Every pixel at a given radius carries the same value.
+    ll, mm = np.meshgrid(l, m)
+    radius = np.round(np.hypot(ll, mm), 6)
+    for r in np.unique(radius):
+        vals = mean[radius == r]
+        np.testing.assert_allclose(vals, vals[0], rtol=2e-2, err_msg=f"radius {r} is not uniform")
+
+
+@pytest.mark.unit
+def test_azimuthal_matches_pa_average_given_full_pa_coverage():
+    """With PA spanning a full turn, the two averages must agree.
+
+    Two things this test needs, and neither is incidental:
+
+    1. **An asymmetric beam.** The synthetic BDS used elsewhere in this file is a
+       circularly symmetric Gaussian (``tests/_synthetic.py:gaussian_plane``), and
+       *every* rotation average of a circularly symmetric beam equals the beam
+       itself — so on that fixture the two modes agree no matter which angles
+       either one uses, and the comparison proves nothing. katbeam's beam is
+       genuinely elliptical and offset (squint plus differing Hx/Hy FWHM: at
+       1.5 deg the beam is 0.078 along l against 0.106 along m), so the angles
+       actually have to be right.
+    2. **A circumpolar field.** PA does not sweep a full turn at every
+       declination. From MeerKAT (latitude -30.711) a sidereal day gives only
+       ~165 deg of PA swing at dec = -30 and ~119 deg at dec = 0; full coverage
+       needs dec < -(90 - |lat|) = -59.3. Hence dec = -89, which is also where
+       agreement is cleanest (see caveat 1).
+
+    Two caveats, so this is not retightened blindly:
+
+    1. PA is non-uniform in time even when the arc is complete, so agreement is
+       approximate. It tightens toward the pole, where dPA/dt approaches
+       sidereal-uniform -- hence dec = -89 rather than merely circumpolar.
+       Measured max|pa - az|: 1.8e-4 at dec -89, 1.3e-3 at dec -75, 1.1e-2 at
+       dec -30. At any tolerance with teeth, dec -30 fails for a *legitimate*
+       reason.
+    2. This pins angular **coverage**, not angular **density**. A 4-angle sweep
+       is not caught at any tolerance (3.6e-4 at dec -89) because katbeam's
+       total azimuthal asymmetry on this grid is only ~0.016 absolute, so four
+       angles already average it away. That blind spot is benign and not worth
+       chasing.
+
+    Verified to fail against a single-angle, two-angle, 0..pi/2 and half-turn
+    sweep.
+    """
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+    bwk.set_field_centre(SkyCoord(ra=0 * u.deg, dec=-89 * u.deg))
+
+    l = m = np.linspace(-1.5, 1.5, 7)
+    times = Time(60000.0, format="mjd") + np.linspace(0, 0.9972, 256) * u.day
+
+    pa_mean, _ = bwk.get_rotation_averaged_beam(
+        l=l, m=m, times=times, time_stepping=1, pixel_stepping=1, num_freq=1, verbose=0
+    )
+    az_mean, _ = bwk.get_rotation_averaged_beam(
+        l=l, m=m, average="azimuth", num_angles=64, pixel_stepping=1, num_freq=1, verbose=0
+    )
+
+    np.testing.assert_allclose(pa_mean, az_mean, rtol=5e-3, atol=5e-4)
+
+
+@pytest.mark.unit
+def test_invalid_average_mode_raises(bw):
+    with pytest.raises(ValueError, match="average"):
+        bw.get_rotation_averaged_beam(average="radial")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("num_angles", [0, -1, 1])
+def test_degenerate_num_angles_raises(num_angles):
+    """num_angles=1 is a single unaveraged slice masquerading as an average;
+    0 and negative are degenerate outright."""
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+
+    with pytest.raises(ValueError, match="num_angles"):
+        bwk.get_rotation_averaged_beam(average="azimuth", num_angles=num_angles, num_freq=1, verbose=0)
+
+
+@pytest.mark.unit
+def test_katbeam_wizard_renders_a_time_freq_zarr(tmp_path):
+    """The spec claims every existing BeamWizard method works against a katbeam
+    dataset; the rendering path is the one with no other coverage here."""
+    build_synthetic_image(tmp_path / "synthetic.fits")
+
+    bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
+    bwk.attach_image(str(tmp_path / "synthetic.fits"))
+
+    out = tmp_path / "rendered.zarr"
+    bwk.get_time_freq_beam(
+        str(out),
+        "BEAM",
+        l=np.linspace(-0.5, 0.5, 8),
+        m=np.linspace(-0.5, 0.5, 8),
+        freq=bwk.bds.coords["FREQ"].values[:2],
+        times=Time("2024-01-01T00:00:00") + np.linspace(0, 1, 3) * u.hour,
+        verbose=0,
+    )
+
+    rendered = xarray.open_zarr(out)
+    assert rendered.BEAM.shape == (3, 2, 1, 8, 8)
+    assert np.all(np.isfinite(rendered.BEAM.values))
+    assert np.abs(rendered.BEAM.values).max() <= 1.001

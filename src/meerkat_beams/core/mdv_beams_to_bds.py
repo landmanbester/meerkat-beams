@@ -6,7 +6,7 @@ import numpy as np
 import numpy.linalg
 import xarray
 
-from meerkat_beams.utils import LOGGER
+from meerkat_beams.utils import LOGGER, jones_to_mueller, mueller_to_stokes
 
 
 def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
@@ -73,26 +73,13 @@ def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
     jnorm = jj0inv[:, np.newaxis, np.newaxis, :, :] @ jjt
 
     LOGGER.info("computing Stokes beams")
-    # S converts Stokes to coherency
-    S = np.array([[1, 1, 0, 0], [0, 0, 1, 1j], [0, 0, 1, -1j], [1, -1, 0, 0]])
-    # Sinv converts coherency to Stokes
-    Sinv = numpy.linalg.inv(S)
-
-    def mueller_func(jones):
-        mshape = list(jones.shape[:-2]) + [4, 4]
-        mueller = np.einsum("fyxij,fyxkl->fyxikjl", jones, np.conj(jones)).reshape(mshape)
-        return mueller
-
-    # compute Stokes matrices from FREQ,Y,X,ROW,COLUMN Jones matrices
-    def stokes_func(mueller):
-        return Sinv @ mueller @ S
 
     # compute Mueller and and normalized Mueller
-    mueller = mueller_func(jjt)
-    muellernorm = mueller_func(jnorm)
+    mueller = jones_to_mueller(jjt)
+    muellernorm = jones_to_mueller(jnorm)
     # convert to Stokes and transpose back to FREQ,Y,X,STOKES_i,STOKES_j
-    stokes = stokes_func(mueller).transpose((3, 4, 0, 1, 2)).real.astype(np.float32)
-    stokesnorm = stokes_func(muellernorm).transpose((3, 4, 0, 1, 2)).real.astype(np.float32)
+    stokes = mueller_to_stokes(mueller).transpose((3, 4, 0, 1, 2)).real.astype(np.float32)
+    stokesnorm = mueller_to_stokes(muellernorm).transpose((3, 4, 0, 1, 2)).real.astype(np.float32)
     # transpose Mueller and Jones back to (i, j, FREQ, Y, X)
     mueller = mueller.transpose((3, 4, 0, 1, 2)).astype(np.complex64)
     muellernorm = muellernorm.transpose((3, 4, 0, 1, 2)).astype(np.complex64)
