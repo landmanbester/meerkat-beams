@@ -204,3 +204,60 @@ def test_spatial_grid_mismatch_raises(tmp_path):
     )
     with pytest.raises(ValueError, match="spatial grids differ"):
         _build_group_bds(a, b, "MPM")
+
+
+@pytest.mark.unit
+def test_nmueller_is_kron_of_p_with_conj_q(stores):
+    """Pins both the receptor-axis transposes and the p = MeerKAT ordering.
+
+    Without this, swapping transpose(2,3,4,0,1) to transpose(2,3,4,1,0), or
+    passing (jq, jp) instead of (jp, jq), leaves the whole group suite green:
+    an on-axis identity check is symmetric under both, and the conjugation
+    test is symmetric under a p/q swap by construction.
+    """
+    p, q = stores
+    grp = _build_group_bds(p, q, "MPM")
+    f, y, x = 1, I0 + 3, I0 - 5  # off-axis, where the asymmetry lives
+    jp = p["njones"].values[:, :, f, y, x]
+    jq = q["njones"].values[:, :, f, y, x]
+    expected = np.kron(jp, np.conj(jq))
+    np.testing.assert_allclose(grp["nmueller"].values[:, :, f, y, x], expected, rtol=1e-4, atol=1e-6)
+    # the reversed ordering must NOT also satisfy it, or the test proves nothing
+    assert not np.allclose(np.kron(jq, np.conj(jp)), expected, rtol=1e-4, atol=1e-6)
+
+
+@pytest.mark.unit
+def test_ambiguous_channel_match_raises(tmp_path):
+    """Two of p's channels matching one of q's must raise, not silently alias.
+
+    np.nonzero on the pairwise-match matrix does not require an injective
+    match, so without a guard q's plane would be used twice against two
+    different p channels and both sides would still come out the same length.
+    """
+    near = np.array([FREQS[0], FREQS[0] + 100.0, FREQS[1], FREQS[2], FREQS[3]])
+    a = xarray.open_zarr(
+        str(build_telescope_bds(tmp_path / "a.zarr", tmp_path / "a.bds.zarr", telescope=MK, freqs=near))
+    )
+    b = xarray.open_zarr(
+        str(build_telescope_bds(tmp_path / "b.zarr", tmp_path / "b.bds.zarr", telescope=MKE, freqs=FREQS))
+    )
+    with pytest.raises(ValueError, match="ambiguous channel match"):
+        _build_group_bds(a, b, "MPM")
+
+
+@pytest.mark.unit
+def test_fits_header_follows_a_frequency_slice(tmp_path):
+    """fits_header is part of the BDS contract: it must describe the sliced data."""
+    wide = np.concatenate([FREQS, FREQS[-1] + np.diff(FREQS)[0] * np.arange(1, 3)])
+    a = xarray.open_zarr(
+        str(build_telescope_bds(tmp_path / "a.zarr", tmp_path / "a.bds.zarr", telescope=MK, freqs=wide))
+    )
+    b = xarray.open_zarr(
+        str(build_telescope_bds(tmp_path / "b.zarr", tmp_path / "b.bds.zarr", telescope=MKE, freqs=FREQS))
+    )
+    grp = _build_group_bds(a, b, "MPM")
+    freqs = grp.coords["FREQ"].values
+    hdr = grp.attrs["fits_header"]
+    assert hdr["NAXIS3"] == len(freqs)
+    np.testing.assert_allclose(hdr["CRVAL3"], freqs[0], rtol=0, atol=1.0)
+    np.testing.assert_allclose(hdr["CDELT3"], freqs[1] - freqs[0], rtol=0, atol=1.0)

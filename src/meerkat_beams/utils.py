@@ -191,6 +191,19 @@ def _align_group_freqs(bds_p: xarray.Dataset, bds_q: xarray.Dataset):
             f"side p spans [{fp.min() * 1e-6:.3f}, {fp.max() * 1e-6:.3f}] MHz, "
             f"side q spans [{fq.min() * 1e-6:.3f}, {fq.max() * 1e-6:.3f}] MHz"
         )
+    # np.nonzero does not require the match to be injective: two of p's
+    # channels can both land on one of q's, which would use that plane twice
+    # while leaving both sides the same length -- an alias nothing downstream
+    # could notice. Unreachable with MdV spacing (13.375 MHz vs a 1 kHz
+    # tolerance), so treat it as a corrupt input rather than something to
+    # resolve by picking a nearest match.
+    if np.unique(ip).size != ip.size or np.unique(iq).size != iq.size:
+        raise ValueError(
+            f"ambiguous channel match between the two beam datasets within "
+            f"{FREQ_MATCH_ATOL_HZ:.0f} Hz: {ip.size} pairs cover only "
+            f"{np.unique(ip).size} (p) and {np.unique(iq).size} (q) distinct channels. "
+            f"Channel centres closer together than the match tolerance cannot be paired."
+        )
     log.info(f"aligning group beams on {ip.size} common channels of {fp.size} (p) and {fq.size} (q)")
     return bds_p.isel(FREQ=ip), bds_q.isel(FREQ=iq)
 
@@ -259,6 +272,17 @@ def _build_group_bds(bds_p: xarray.Dataset, bds_q: xarray.Dataset, group: str) -
 
     xds = xarray.Dataset(data_vars)
     xds.attrs.update(bds_p.attrs)
+    # fits_header is part of the BDS contract, so it must describe the data
+    # actually present: a frequency intersection leaves p's NAXIS3/CRVAL3/CDELT3
+    # describing the unsliced cube. Copy before editing -- attrs.update() above
+    # aliases the opened store's dict.
+    hdr = dict(xds.attrs.get("fits_header", {}))
+    if hdr:
+        hdr["NAXIS3"] = len(freqs)
+        hdr["CRVAL3"] = float(freqs[0])
+        if len(freqs) > 1:
+            hdr["CDELT3"] = float(freqs[1] - freqs[0])
+        xds.attrs["fits_header"] = hdr
     if not same_telescope:
         # Side p's single-telescope provenance would be misleading on a cross
         # block; telescope_p/telescope_q below carry both sides instead.

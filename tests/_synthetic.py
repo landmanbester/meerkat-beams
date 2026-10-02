@@ -138,8 +138,11 @@ def jones_beam_cube(scale=1.0, leak=0.0, phase=0.0, n_xy=N_XY, n_freq=None):
     envelope = np.exp(-0.5 * r2 / SIGMA_PIX**2)
     ramp = (x - i0) / max(i0, 1)
     co = scale * envelope * np.exp(1j * phase * ramp)
-    cross = leak * envelope * (r2 / (i0**2))  # zero at centre
-    plane = np.stack([co, cross, cross, co], axis=0)  # HH, HV, VH, VV
+    # HV and VH must differ, or a swap of the Jones receptor axes is a no-op
+    # and no test can detect a transposed or p/q-reversed group assembly.
+    cross_hv = leak * envelope * (r2 / (i0**2))  # zero at centre
+    cross_vh = 0.4j * cross_hv + 0.6 * leak * envelope * (ramp**2)
+    plane = np.stack([co, cross_hv, cross_vh, co], axis=0)  # HH, HV, VH, VV
     return np.broadcast_to(plane[:, None], (4, n_freq, n_xy, n_xy)).astype(np.complex64).copy()
 
 
