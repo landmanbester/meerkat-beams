@@ -616,6 +616,17 @@ CMAP_MAGNITUDE = "viridis"
 CMAP_RESIDUAL = "RdBu_r"
 
 
+def plot_tag(index: int, freq_hz: float) -> str:
+    """Filename tag for one channel's plots.
+
+    The channel index is included because frequency alone is not unique: two
+    selected channels can round to the same whole MHz (1283.6 and 1284.2 both
+    give "1284MHz"), and the later one would then overwrite the earlier one's
+    images, silently dropping a requested comparison from the output.
+    """
+    return f"ch{index:03d}_{freq_hz * 1e-6:.0f}MHz"
+
+
 def _extent(l_deg, m_deg):
     """imshow extent for an (NY, NX) map with l on x and m on y."""
     l_arr = np.asarray(l_deg, dtype=float)
@@ -1070,7 +1081,7 @@ def main(argv=None) -> int:
     print(format_summary_table(metrics))
 
     for k, f in enumerate(freqs):
-        tag = f"{f * 1e-6:.0f}MHz"
+        tag = plot_tag(k, f)
         plot_maps(
             ours["I"][k],
             theirs["I"][k],
