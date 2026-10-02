@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+]
-timestamp: 2026-10-02T08:48:53Z
-last_verified_commit: f1c2cd4
+timestamp: 2026-10-02T09:00:59Z
+last_verified_commit: eac4bd0
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -556,6 +556,24 @@ the data, not the code.
   placeholder and tells the caller to stage the input zarr by hand;
   `scripts/stage_group_cache.py` does that. Fill the real IDs into
   `MDV2026_GDRIVE_IDS` when the tarballs are published.
+- `stage_product(..., force=True)` drops the **built BDS** as well as the
+  staged input. `ensure_product_bds` returns early on `bds.exists()`, so a
+  forced restage that left the BDS behind would silently keep serving a beam
+  derived from the input the user had just replaced — the likeliest mistake
+  in exactly the pre-publication window this script exists for.
+- The channel match is required to be injective, and `fits_header` is
+  refreshed when a frequency intersection slices the cube; see
+  `data-model.md`.
+
+**Testing note worth keeping:** the group fixtures deliberately give the
+cross-hands `HV != VH` and the two stores different phase. An earlier
+symmetric fixture left the whole group suite green under both a receptor-axis
+transpose and a p/q swap — the on-axis identity check is symmetric under
+both, and the conjugation test is symmetric under a p/q swap by construction,
+so the `p = MeerKAT` contract was documented everywhere and pinned nowhere.
+`test_nmueller_is_kron_of_p_with_conj_q` asserts the `kron` directly and also
+asserts the reversed ordering does *not* satisfy it. Keep that asymmetry if
+you touch the fixtures.
 
 ## Sources
 

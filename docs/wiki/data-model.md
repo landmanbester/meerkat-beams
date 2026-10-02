@@ -3,8 +3,8 @@ type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr
 description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, and the xradio primary-beam schema.
 tags: [mdv, bds, xradio, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
-timestamp: 2026-10-02T08:48:53Z
-last_verified_commit: f1c2cd4
+timestamp: 2026-10-02T09:00:59Z
+last_verified_commit: eac4bd0
 ---
 
 # Data model — MdV npz, BDS zarr, xradio zarr
@@ -334,6 +334,16 @@ matched within `FREQ_MATCH_ATOL_HZ = 1 kHz` rather than for equality (a
 1e9 Hz centre round-tripped through float32 moves by ~64 Hz, against a
 13.375 MHz narrowest channel), and both sides are sliced to the
 intersection when one covers more channels than the other.
+
+The match must be **injective**: if two of p's channels fall within the
+tolerance of one of q's, the assembly raises rather than using q's plane
+twice. Nothing downstream could detect that aliasing, since both sides
+would still come out the same length. It is unreachable with MdV spacing
+and is treated as a corrupt input, not something to resolve by picking a
+nearest match. When a slice does happen, `fits_header`'s `NAXIS3`,
+`CRVAL3` and `CDELT3` are refreshed to describe the sliced cube — the
+header is part of the BDS contract, so it must not keep describing p's
+unsliced one.
 
 ## xradio zarr
 

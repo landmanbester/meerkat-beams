@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-02T08:48:53Z
+timestamp: 2026-10-02T09:00:59Z
 ---
 
 # Wiki changelog
@@ -127,3 +127,8 @@ azimuthal averaging.
   are published.
 - `partition_mueller` (issue #27) is deliberately **not** in this change; it
   is a thin wrapper to be built on this foundation.
+- Post-review fixes (eac4bd0): the channel match is now required to be
+  injective (ambiguous matches raise instead of aliasing a plane), a
+  frequency slice refreshes `fits_header`, `stage_product --force` drops the
+  stale BDS as well as the input, and the group fixtures were made asymmetric
+  so the `p = MeerKAT` contract is actually pinned by a test.
