@@ -91,18 +91,38 @@ STOKES_TO_COHERENCY = np.array([[1, 1, 0, 0], [0, 0, 1, 1j], [0, 0, 1, -1j], [1,
 COHERENCY_TO_STOKES = numpy.linalg.inv(STOKES_TO_COHERENCY)
 
 
-def jones_to_mueller(jones: np.ndarray) -> np.ndarray:
-    """Outer product of a Jones matrix with its conjugate.
+def jones_to_mueller_cross(j1: np.ndarray, j2: np.ndarray) -> np.ndarray:
+    """Outer product of one Jones matrix with the conjugate of another.
+
+    For a baseline between antennas p and q the visibility is
+    ``V_pq = J_p X J_q^H``, so the coherency-basis Mueller block is
+    ``kron(J_p, conj(J_q))``. When ``j1 is j2`` this is the ordinary
+    auto-Mueller of a single Jones cube.
 
     Args:
-        jones: array with exactly three leading axes then the matrix axes,
-            i.e. (FREQ, Y, X, ROW, COL) with ROW == COL == 2.
+        j1: Jones cube of the FIRST antenna, with exactly three leading axes
+            then the matrix axes, i.e. (FREQ, Y, X, ROW, COL) with
+            ROW == COL == 2.
+        j2: Jones cube of the SECOND antenna, same shape as ``j1``.
 
     Returns:
-        (FREQ, Y, X, 4, 4) coherency-basis Mueller matrix.
+        (FREQ, Y, X, 4, 4) coherency-basis Mueller matrix. Complex in general;
+        real only up to numerical noise when ``j1`` and ``j2`` describe the
+        same antenna.
     """
-    mshape = list(jones.shape[:-2]) + [4, 4]
-    return np.einsum("fyxij,fyxkl->fyxikjl", jones, np.conj(jones)).reshape(mshape)
+    if j1.shape != j2.shape:
+        raise ValueError(f"j1 and j2 must have the same shape, got {j1.shape} and {j2.shape}")
+    mshape = list(j1.shape[:-2]) + [4, 4]
+    return np.einsum("fyxij,fyxkl->fyxikjl", j1, np.conj(j2)).reshape(mshape)
+
+
+def jones_to_mueller(jones: np.ndarray) -> np.ndarray:
+    """Outer product of a Jones matrix with its own conjugate.
+
+    Thin wrapper over :func:`jones_to_mueller_cross` for the single-telescope
+    case. See that function for the axis contract.
+    """
+    return jones_to_mueller_cross(jones, jones)
 
 
 def mueller_to_stokes(mueller: np.ndarray) -> np.ndarray:
