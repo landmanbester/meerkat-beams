@@ -283,6 +283,15 @@ class BeamWizard(object):
     which only apply to it). A katbeam dataset carries only the normalised
     variables, since katbeam beams are on-axis normalised by construction.
 
+    ``group`` selects a baseline group instead of a single telescope: ``"MM"``
+    (MeerKAT-MeerKAT), ``"MPM"`` (MeerKAT-MeerKAT+) or ``"MPMP"``
+    (MeerKAT+-MeerKAT+). It requires ``band`` (currently only ``"L"``), is
+    mutually exclusive with ``bds_name`` and with ``beam_model="katbeam"``, and
+    switches to the MdV-2026 beam generation so all three groups are mutually
+    consistent. The mixed group's ``stokes``/``nstokes`` are complex64 and its
+    ``jones``/``njones`` are absent, since a cross baseline has no single Jones
+    matrix. With ``group=None`` (the default) nothing changes.
+
     ``image_name`` is optional. Without an image the wizard runs in BDS-only
     mode: ``interpolate_beam`` and the prefilter/frequency helpers work, but
     ``centre``/``wcs``/``l_grid``/``m_grid`` raise ``RuntimeError`` and
@@ -307,6 +316,7 @@ class BeamWizard(object):
         image_name: Optional[str] = None,
         *,
         band: Optional[str] = None,
+        group: Optional[str] = None,
         beam_model: str = "mdv",
         npix: Optional[int] = None,
         fov_deg: Optional[float] = None,
@@ -314,7 +324,18 @@ class BeamWizard(object):
     ):
         if beam_model not in ("mdv", "katbeam"):
             raise ValueError(f"beam_model must be 'mdv' or 'katbeam', got {beam_model!r}")
+        if group is not None:
+            if group not in GROUP_TELESCOPES:
+                raise ValueError(f"group must be one of {tuple(GROUP_TELESCOPES)}, got {group!r}")
+            if beam_model != "mdv":
+                raise ValueError(
+                    f"group={group!r} is not available for beam_model={beam_model!r}: katbeam "
+                    "provides only per-correlation power beams and has no MeerKAT+ model."
+                )
         self.beam_model = beam_model
+        self.group = group
+        self.telescope_p = None
+        self.telescope_q = None
         self.log = log
 
         if beam_model == "katbeam":
@@ -330,6 +351,25 @@ class BeamWizard(object):
             from meerkat_beams.katbeam_bds import synthesize_katbeam_bds
 
             self.bds = synthesize_katbeam_bds(band, npix=npix, fov_deg=fov_deg, num_freq=num_freq)
+        elif group is not None:
+            if bds_name is not None:
+                raise ValueError(
+                    "group and bds_name are mutually exclusive: a baseline group is assembled "
+                    "from a matched pair of cached beam datasets, so pass band= instead"
+                )
+            if band is None:
+                raise ValueError("group requires band")
+            if npix is not None or fov_deg is not None or num_freq is not None:
+                raise ValueError("npix, fov_deg and num_freq only apply to beam_model='katbeam'")
+            from meerkat_beams import cache
+
+            path_p, path_q = cache.ensure_group_bds(band, group)
+            log.info(f"opening group {group} beam datasets: p={path_p}, q={path_q}")
+            ds_p = xarray.open_zarr(path_p)
+            ds_q = ds_p if path_q == path_p else xarray.open_zarr(path_q)
+            self.bds = _build_group_bds(ds_p, ds_q, group)
+            self.telescope_p = self.bds.attrs["telescope_p"]
+            self.telescope_q = self.bds.attrs["telescope_q"]
         else:
             if (bds_name is None) == (band is None):
                 raise ValueError("exactly one of bds_name or band must be provided")
@@ -479,6 +519,12 @@ class BeamWizard(object):
                 raise ValueError(
                     f"var={var!r} is not available for beam_model='katbeam' (katbeam "
                     f"beams are on-axis normalised by construction; use 'n{var}'). "
+                    f"Available: {', '.join(available)}."
+                )
+            if self.group is not None and var in ("jones", "njones"):
+                raise ValueError(
+                    f"var={var!r} is not available for group={self.group!r}: a cross baseline has "
+                    f"no single Jones matrix, only the Mueller/Stokes outer product. "
                     f"Available: {', '.join(available)}."
                 )
             raise ValueError(f"var={var!r} is not in this beam dataset. Available: {', '.join(available)}.")
