@@ -8,6 +8,12 @@ import xarray
 
 from meerkat_beams.utils import LOGGER, jones_to_mueller, mueller_to_stokes
 
+# Attrs copied from an MdV mean-beam zarr onto the BDS it produces. BeamWizard
+# reads `telescope` to verify a baseline group pairs the right two stores; the
+# rest are provenance for a human reading the store. Keys absent from the input
+# are simply not written, so a legacy input converts exactly as before.
+PROVENANCE_ATTRS = ("telescope", "antenna", "band", "source_file", "source_doc")
+
 
 def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
     """
@@ -26,11 +32,13 @@ def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
         degs = mdv["margin_deg"]
         freqs = mdv["freq_MHz"] * 1e6
         bm = bm[:, -1]  # select average beam (last antenna index)
+        provenance = {}
     elif (Path(mdv_beams) / ".zgroup").exists():
         xds = xarray.open_zarr(mdv_beams, chunks=None)
         bm = xds.BEAM.values  # already mean beam: [4, NFREQ, NY, NX]
         degs = xds.l_beam.values
         freqs = xds.chan.values
+        provenance = {k: xds.attrs[k] for k in PROVENANCE_ATTRS if k in xds.attrs}
     else:
         raise ValueError(f"input mdv_beams {mdv_beams} is not a valid npz or zarr dataset")
 
@@ -106,6 +114,7 @@ def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
     )
     xds.attrs["fits_header"] = hdr
     xds.attrs.update(x0=i0, y0=i0, dx=delta, dy=delta, freqs=freqs)
+    xds.attrs.update(provenance)
 
     encoding = {}
     if compress:
