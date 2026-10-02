@@ -142,6 +142,137 @@ def mueller_to_stokes(mueller: np.ndarray) -> np.ndarray:
     return sinv @ mueller @ s
 
 
+# ---------------------------------------------------------------------------
+# Baseline-group beam assembly
+# ---------------------------------------------------------------------------
+
+# Expected (telescope_p, telescope_q) per group. p is the FIRST antenna of the
+# baseline and q the second: for the mixed group that is MeerKAT then
+# MeerKAT+, matching MS antenna indexing where MKE antennas follow the
+# MeerKAT ones. See docs/wiki/data-model.md.
+GROUP_TELESCOPES = {
+    "MM": ("MeerKAT", "MeerKAT"),
+    "MPM": ("MeerKAT", "MeerKAT Extension"),
+    "MPMP": ("MeerKAT Extension", "MeerKAT Extension"),
+}
+
+# Channel centres are compared with this absolute tolerance rather than for
+# equality: a 1e9 Hz centre round-tripped through float32 moves by ~64 Hz, and
+# the narrowest MdV channel is 13.375 MHz, so 1 kHz separates "the same
+# channel" from "a different channel" with three orders of magnitude to spare.
+FREQ_MATCH_ATOL_HZ = 1.0e3
+
+
+def _check_group_telescope(bds: xarray.Dataset, expected: str, side: str, group: str) -> None:
+    actual = bds.attrs.get("telescope")
+    if actual is None:
+        log.warning(
+            f"BDS for side {side} of group {group} carries no 'telescope' attr, so the pairing "
+            f"cannot be verified; assuming it is {expected!r}. Rebuild it with a current "
+            f"mdv-beams-to-bds to record provenance."
+        )
+    elif actual != expected:
+        raise ValueError(
+            f"group {group!r} expects telescope {expected!r} on side {side}, but that BDS reports telescope {actual!r}"
+        )
+
+
+def _align_group_freqs(bds_p: xarray.Dataset, bds_q: xarray.Dataset):
+    """Slice both datasets to their common channels, matching within tolerance."""
+    fp = bds_p.coords["FREQ"].values
+    fq = bds_q.coords["FREQ"].values
+    if fp.shape == fq.shape and np.allclose(fp, fq, rtol=0, atol=FREQ_MATCH_ATOL_HZ):
+        return bds_p, bds_q
+    hits = np.abs(fp[:, None] - fq[None, :]) <= FREQ_MATCH_ATOL_HZ
+    ip, iq = np.nonzero(hits)
+    if ip.size == 0:
+        raise ValueError(
+            f"the two beam datasets have no overlapping channels within {FREQ_MATCH_ATOL_HZ:.0f} Hz: "
+            f"side p spans [{fp.min() * 1e-6:.3f}, {fp.max() * 1e-6:.3f}] MHz, "
+            f"side q spans [{fq.min() * 1e-6:.3f}, {fq.max() * 1e-6:.3f}] MHz"
+        )
+    log.info(f"aligning group beams on {ip.size} common channels of {fp.size} (p) and {fq.size} (q)")
+    return bds_p.isel(FREQ=ip), bds_q.isel(FREQ=iq)
+
+
+def _check_group_grids(bds_p: xarray.Dataset, bds_q: xarray.Dataset) -> None:
+    for key in ("x0", "y0", "dx", "dy"):
+        if not np.isclose(bds_p.attrs[key], bds_q.attrs[key], rtol=0, atol=1e-9):
+            raise ValueError(
+                f"the two beam datasets have different {key}: "
+                f"{bds_p.attrs[key]} (p) vs {bds_q.attrs[key]} (q); spatial grids differ"
+            )
+    for axis in ("X", "Y"):
+        ap, aq = bds_p.coords[axis].values, bds_q.coords[axis].values
+        if ap.shape != aq.shape or not np.allclose(ap, aq, rtol=0, atol=1e-9):
+            raise ValueError(
+                f"the two beam datasets have different {axis} axes "
+                f"({ap.shape} vs {aq.shape}); spatial grids differ. Group beams require a "
+                f"matched pair from the same MdV generation; no resampling is performed."
+            )
+
+
+def _build_group_bds(bds_p: xarray.Dataset, bds_q: xarray.Dataset, group: str) -> xarray.Dataset:
+    """Assemble an in-memory BDS for a baseline group from two single-telescope BDSs.
+
+    ``bds_p`` is the FIRST antenna of the baseline and ``bds_q`` the second, so
+    the coherency-basis block is ``kron(J_p, conj(J_q))``. For the mixed group
+    that block is genuinely complex and is kept as complex64; when both sides
+    are the same telescope it is real up to numerical noise and the Stokes
+    variables take the real part, exactly as a single-telescope BDS does.
+
+    ``jones``/``njones`` are carried through only when both sides are the same
+    telescope: a cross baseline has no single Jones matrix.
+    """
+    if group not in GROUP_TELESCOPES:
+        raise ValueError(f"group must be one of {tuple(GROUP_TELESCOPES)}, got {group!r}")
+    expected_p, expected_q = GROUP_TELESCOPES[group]
+    _check_group_telescope(bds_p, expected_p, "p", group)
+    _check_group_telescope(bds_q, expected_q, "q", group)
+    _check_group_grids(bds_p, bds_q)
+    bds_p, bds_q = _align_group_freqs(bds_p, bds_q)
+
+    same_telescope = expected_p == expected_q
+    freqs = bds_p.coords["FREQ"].values
+    degs_x = bds_p.coords["X"].values
+    degs_y = bds_p.coords["Y"].values
+    scoords = dict(stokes_i=list("IQUV"), stokes_j=list("IQUV"), X=degs_x, Y=degs_y, FREQ=freqs)
+    sdims = ("stokes_i", "stokes_j", "FREQ", "Y", "X")
+
+    data_vars = {}
+    for jvar, mvar, svar in (("jones", "mueller", "stokes"), ("njones", "nmueller", "nstokes")):
+        # BDS Jones is (receptor_i, receptor_j, FREQ, Y, X); the Mueller helpers
+        # want the matrix axes last.
+        jp = bds_p[jvar].values.transpose(2, 3, 4, 0, 1)
+        jq = bds_q[jvar].values.transpose(2, 3, 4, 0, 1)
+        m = jones_to_mueller_cross(jp, jq)
+        s = mueller_to_stokes(m).transpose(3, 4, 0, 1, 2)
+        data_vars[mvar] = xarray.DataArray(m.transpose(3, 4, 0, 1, 2).astype(np.complex64), dims=sdims, coords=scoords)
+        s = s.real.astype(np.float32) if same_telescope else s.astype(np.complex64)
+        data_vars[svar] = xarray.DataArray(s, dims=sdims, coords=scoords)
+
+    if same_telescope:
+        jcoords = dict(receptor_i=[0, 1], receptor_j=[0, 1], X=degs_x, Y=degs_y, FREQ=freqs)
+        jdims = ("receptor_i", "receptor_j", "FREQ", "Y", "X")
+        for jvar in ("jones", "njones"):
+            data_vars[jvar] = xarray.DataArray(bds_p[jvar].values, dims=jdims, coords=jcoords)
+
+    xds = xarray.Dataset(data_vars)
+    xds.attrs.update(bds_p.attrs)
+    if not same_telescope:
+        # Side p's single-telescope provenance would be misleading on a cross
+        # block; telescope_p/telescope_q below carry both sides instead.
+        for key in ("telescope", "antenna", "source_file", "source_doc"):
+            xds.attrs.pop(key, None)
+    xds.attrs.update(
+        freqs=freqs,
+        group=group,
+        telescope_p=bds_p.attrs.get("telescope", expected_p),
+        telescope_q=bds_q.attrs.get("telescope", expected_q),
+    )
+    return xds
+
+
 class BeamWizard(object):
     """Attaches to a beam dataset and provides beam-interpolation conveniences.
 
