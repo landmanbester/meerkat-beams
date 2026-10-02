@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+]
-timestamp: 2026-10-02T09:00:59Z
+timestamp: 2026-10-02T12:02:46Z
 last_verified_commit: eac4bd0
 ---
 
@@ -222,10 +222,15 @@ because recent cli↔cab fixes (list-default round-tripping, `image:`
 persistence) were not yet in a tagged release. A git dependency blocks a
 clean PyPI publish and is why the Dockerfile installed `git` at all.
 
-**Decision:** Now `hip-cargo>=0.3.0`, resolved from PyPI (`pyproject.toml:22`,
+**Decision:** Resolved from PyPI rather than git (`pyproject.toml:22`,
 commit `3bb9b3d`); `uv.lock` confirms the resolved source is
 `{ registry = "https://pypi.org/simple" }`, not a git ref. The transitional
-git-main pin is gone from `pyproject.toml`.
+git-main pin is gone from `pyproject.toml`. The floor has since moved to
+**`hip-cargo>=0.4.0`** (commit `4b07822`), which also changed a
+`cabs/mdv_to_xradio.yml` default from `'-1'` to `-1` — the newer generator
+emits the unquoted form, so the cab had to be regenerated to keep
+`test_roundtrip.py` green. What D8 settles is the *source* (PyPI, not git);
+the floor itself is expected to keep moving.
 
 **Consequences:** The `git` install layer in the Dockerfile (present
 *solely* for the git dependency, per its own inline comment) is now
@@ -236,8 +241,9 @@ tracked by issue #16 (still open — its checklist items beyond the
 version bump remain outstanding). Do not assume the Dockerfile has
 already been updated just because the dependency has.
 
-**Source:** `pyproject.toml:22`; commit `3bb9b3d` ("build: depend on
-hip-cargo>=0.3.0"); `uv.lock` (`hip-cargo` package entry, `source =
+**Source:** `pyproject.toml:22`; commits `3bb9b3d` ("build: depend on
+hip-cargo>=0.3.0") and `4b07822` ("build: upgrade hip-cargo >= 0.4.0");
+`uv.lock` (`hip-cargo` package entry, `source =
 { registry = ... }`); issue #16 ("M2: Re-pin from hip-cargo git main to
 the next tagged release").
 

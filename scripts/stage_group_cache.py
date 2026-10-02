@@ -15,6 +15,7 @@ Example:
 """
 
 import argparse
+import os
 import shutil
 from pathlib import Path
 
@@ -34,18 +35,44 @@ def stage_product(name: str, src, force: bool = False) -> Path:
     if not (source / ".zgroup").exists():
         raise SystemExit(f"{source} does not look like a zarr store (no .zgroup)")
     dest = cache.input_zarr_path_for_product(name)
-    if dest.exists():
-        if not force:
-            print(f"{dest} already staged; pass --force to replace")
-            return dest
-        shutil.rmtree(dest)
-        stale_bds = cache.bds_path_for_product(name)
-        if stale_bds.exists():
-            print(f"dropping {stale_bds}, built from the input being replaced")
-            shutil.rmtree(stale_bds)
+    resolved_dest = dest.resolve() if dest.exists() else dest
+
+    # Staging a product from its own cache entry (or from somewhere inside it)
+    # would delete the source before copying it. These products are
+    # unpublished, so there is nothing to re-download: refuse instead.
+    if source == resolved_dest or resolved_dest in source.parents:
+        raise SystemExit(
+            f"{source} is already the cache entry for {name!r} (or lives inside it); "
+            f"there is nothing to stage. Point --product at the original MdV zarr."
+        )
+
+    if dest.exists() and not force:
+        print(f"{dest} already staged; pass --force to replace")
+        return dest
+
+    # Copy beside the destination first and swap it in, so a copy that dies
+    # partway leaves the previous entry serving. Mirrors the .partial +
+    # os.replace pattern cache.py uses for downloads.
     dest.parent.mkdir(parents=True, exist_ok=True)
+    partial = dest.with_name(dest.name + ".partial")
+    if partial.exists():
+        shutil.rmtree(partial)
     print(f"staging {source} -> {dest}")
-    shutil.copytree(source, dest)
+    try:
+        shutil.copytree(source, partial)
+        if dest.exists():
+            shutil.rmtree(dest)
+        os.replace(partial, dest)
+    finally:
+        if partial.exists():
+            shutil.rmtree(partial, ignore_errors=True)
+
+    # Only once the new input is in place: ensure_product_bds returns early on
+    # bds.exists(), so a BDS built from the replaced input would keep serving.
+    stale_bds = cache.bds_path_for_product(name)
+    if stale_bds.exists():
+        print(f"dropping {stale_bds}, built from the input just replaced")
+        shutil.rmtree(stale_bds)
     return dest
 
 

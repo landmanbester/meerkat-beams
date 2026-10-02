@@ -3,7 +3,7 @@ type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr
 description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, and the xradio primary-beam schema.
 tags: [mdv, bds, xradio, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
-timestamp: 2026-10-02T09:00:59Z
+timestamp: 2026-10-02T12:02:46Z
 last_verified_commit: eac4bd0
 ---
 
@@ -340,9 +340,13 @@ tolerance of one of q's, the assembly raises rather than using q's plane
 twice. Nothing downstream could detect that aliasing, since both sides
 would still come out the same length. It is unreachable with MdV spacing
 and is treated as a corrupt input, not something to resolve by picking a
-nearest match. When a slice does happen, `fits_header`'s `NAXIS3`,
-`CRVAL3` and `CDELT3` are refreshed to describe the sliced cube — the
-header is part of the BDS contract, so it must not keep describing p's
+nearest match. The retained channels must also be **evenly spaced**: the
+BDS `fits_header` describes FREQ as a linear axis (`CRVAL3 + k*CDELT3`),
+which cannot represent a gapped set — one `CDELT3` misplaces every plane
+after the gap — so a gapped intersection raises rather than producing a
+dataset whose documented header contradicts its data. When a contiguous
+slice does happen, `NAXIS3`, `CRVAL3` and `CDELT3` are refreshed to
+describe the sliced cube, since the header must not keep describing p's
 unsliced one.
 
 ## xradio zarr

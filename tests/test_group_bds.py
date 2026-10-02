@@ -261,3 +261,21 @@ def test_fits_header_follows_a_frequency_slice(tmp_path):
     assert hdr["NAXIS3"] == len(freqs)
     np.testing.assert_allclose(hdr["CRVAL3"], freqs[0], rtol=0, atol=1.0)
     np.testing.assert_allclose(hdr["CDELT3"], freqs[1] - freqs[0], rtol=0, atol=1.0)
+
+
+@pytest.mark.unit
+def test_unevenly_spaced_intersection_raises(tmp_path):
+    """A FITS linear FREQ axis cannot describe a gapped channel set.
+
+    If q lacks an interior channel the intersection is non-uniform, and a
+    single CRVAL3/CDELT3 pair then misplaces every plane after the gap --
+    100 MHz out, for the synthetic spacing used here.
+    """
+    a = xarray.open_zarr(
+        str(build_telescope_bds(tmp_path / "a.zarr", tmp_path / "a.bds.zarr", telescope=MK, freqs=FREQS))
+    )
+    b = xarray.open_zarr(
+        str(build_telescope_bds(tmp_path / "b.zarr", tmp_path / "b.bds.zarr", telescope=MKE, freqs=FREQS[[0, 1, 3]]))
+    )
+    with pytest.raises(ValueError, match="unevenly spaced"):
+        _build_group_bds(a, b, "MPM")

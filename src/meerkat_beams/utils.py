@@ -204,6 +204,20 @@ def _align_group_freqs(bds_p: xarray.Dataset, bds_q: xarray.Dataset):
             f"{np.unique(ip).size} (p) and {np.unique(iq).size} (q) distinct channels. "
             f"Channel centres closer together than the match tolerance cannot be paired."
         )
+    # The BDS carries a FITS header whose FREQ axis is linear (CRVAL3 + k*CDELT3).
+    # A gapped intersection -- q missing an interior channel, say -- cannot be
+    # described that way: one CDELT3 misplaces every plane after the gap. Refuse
+    # rather than emit a dataset whose documented header contradicts its data.
+    kept = fp[ip]
+    if kept.size > 2:
+        spacing = np.diff(kept)
+        if not np.allclose(spacing, spacing[0], rtol=0, atol=FREQ_MATCH_ATOL_HZ):
+            raise ValueError(
+                f"the common channels of the two beam datasets are unevenly spaced "
+                f"({spacing.min() * 1e-6:.3f} to {spacing.max() * 1e-6:.3f} MHz), so the BDS "
+                f"FITS header's linear FREQ axis cannot describe them. The two products do not "
+                f"share a contiguous channel range; no resampling is performed."
+            )
     log.info(f"aligning group beams on {ip.size} common channels of {fp.size} (p) and {fq.size} (q)")
     return bds_p.isel(FREQ=ip), bds_q.isel(FREQ=iq)
 

@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-02T09:00:59Z
+timestamp: 2026-10-02T12:02:46Z
 ---
 
 # Wiki changelog
@@ -132,3 +132,9 @@ azimuthal averaging.
   frequency slice refreshes `fits_header`, `stage_product --force` drops the
   stale BDS as well as the input, and the group fixtures were made asymmetric
   so the `p = MeerKAT` contract is actually pinned by a test.
+- Greptile review fixes: a gapped (unevenly spaced) channel intersection now
+  raises instead of emitting a header whose linear FREQ axis misplaces every
+  plane after the gap; `stage_product` refuses to stage a product from its own
+  cache entry and stages through a `.partial` + `os.replace` so a failed copy
+  leaves the previous entry serving; D8 and CLAUDE.md updated for the
+  `hip-cargo>=0.4.0` floor (commit `4b07822`, which predates this branch).

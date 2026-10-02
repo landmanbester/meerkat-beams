@@ -78,3 +78,57 @@ def test_without_force_existing_input_is_left_alone(stage_mod, tmp_path, monkeyp
     marker.write_text("original")
     stage_mod.stage_product("MKE_L", src)
     assert marker.exists(), "without --force an already-staged input must be kept"
+
+
+@pytest.mark.unit
+def test_force_restage_from_the_cache_entry_itself_is_refused(stage_mod, tmp_path, monkeypatch):
+    """Staging a product from its own cache entry must not delete its source.
+
+    rmtree(dest) before copytree(source, dest) destroys the only copy, and an
+    unpublished product cannot be re-downloaded to recover it.
+    """
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path / "cache"))
+    src = _fake_zarr(tmp_path / "src.zarr")
+    stage_mod.stage_product("MKE_L", src)
+    dest = cache.input_zarr_path_for_product("MKE_L")
+
+    with pytest.raises(SystemExit, match="already the cache entry"):
+        stage_mod.stage_product("MKE_L", dest, force=True)
+
+    assert (dest / ".zgroup").exists(), "the cache entry must survive a refused restage"
+
+
+@pytest.mark.unit
+def test_force_restage_from_inside_the_cache_entry_is_refused(stage_mod, tmp_path, monkeypatch):
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path / "cache"))
+    src = _fake_zarr(tmp_path / "src.zarr")
+    stage_mod.stage_product("MKE_L", src)
+    dest = cache.input_zarr_path_for_product("MKE_L")
+    nested = _fake_zarr(dest / "nested.zarr")
+
+    with pytest.raises(SystemExit, match="already the cache entry"):
+        stage_mod.stage_product("MKE_L", nested, force=True)
+
+    assert (dest / ".zgroup").exists()
+
+
+@pytest.mark.unit
+def test_failed_force_restage_leaves_the_old_entry_intact(stage_mod, tmp_path, monkeypatch):
+    """A copy that dies partway must not leave the cache with nothing."""
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path / "cache"))
+    src = _fake_zarr(tmp_path / "src.zarr")
+    stage_mod.stage_product("MKE_L", src)
+    dest = cache.input_zarr_path_for_product("MKE_L")
+    (dest / "marker").write_text("the good old input")
+    old_bds = _fake_zarr(cache.bds_path_for_product("MKE_L"))
+
+    def boom(*a, **kw):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(stage_mod.shutil, "copytree", boom)
+    with pytest.raises(OSError, match="no space left"):
+        stage_mod.stage_product("MKE_L", src, force=True)
+
+    assert (dest / "marker").exists(), "the previous input must survive a failed restage"
+    assert old_bds.exists(), "the previous BDS must survive a failed restage"
+    assert not stage_mod.cache.input_zarr_path_for_product("MKE_L").with_name("MKE_L.zarr.partial").exists()
