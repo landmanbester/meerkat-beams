@@ -19,7 +19,7 @@ cabs:
         info:
           antenna index (-1 = array_average)
         dtype: int
-        default: '-1'
+        default: -1
       jones:
         info:
           Jones element (HH, HV, VH, VV)

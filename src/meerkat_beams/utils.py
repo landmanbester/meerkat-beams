@@ -91,18 +91,38 @@ STOKES_TO_COHERENCY = np.array([[1, 1, 0, 0], [0, 0, 1, 1j], [0, 0, 1, -1j], [1,
 COHERENCY_TO_STOKES = numpy.linalg.inv(STOKES_TO_COHERENCY)
 
 
-def jones_to_mueller(jones: np.ndarray) -> np.ndarray:
-    """Outer product of a Jones matrix with its conjugate.
+def jones_to_mueller_cross(j1: np.ndarray, j2: np.ndarray) -> np.ndarray:
+    """Outer product of one Jones matrix with the conjugate of another.
+
+    For a baseline between antennas p and q the visibility is
+    ``V_pq = J_p X J_q^H``, so the coherency-basis Mueller block is
+    ``kron(J_p, conj(J_q))``. When ``j1 is j2`` this is the ordinary
+    auto-Mueller of a single Jones cube.
 
     Args:
-        jones: array with exactly three leading axes then the matrix axes,
-            i.e. (FREQ, Y, X, ROW, COL) with ROW == COL == 2.
+        j1: Jones cube of the FIRST antenna, with exactly three leading axes
+            then the matrix axes, i.e. (FREQ, Y, X, ROW, COL) with
+            ROW == COL == 2.
+        j2: Jones cube of the SECOND antenna, same shape as ``j1``.
 
     Returns:
-        (FREQ, Y, X, 4, 4) coherency-basis Mueller matrix.
+        (FREQ, Y, X, 4, 4) coherency-basis Mueller matrix. Complex in general;
+        real only up to numerical noise when ``j1`` and ``j2`` describe the
+        same antenna.
     """
-    mshape = list(jones.shape[:-2]) + [4, 4]
-    return np.einsum("fyxij,fyxkl->fyxikjl", jones, np.conj(jones)).reshape(mshape)
+    if j1.shape != j2.shape:
+        raise ValueError(f"j1 and j2 must have the same shape, got {j1.shape} and {j2.shape}")
+    mshape = list(j1.shape[:-2]) + [4, 4]
+    return np.einsum("fyxij,fyxkl->fyxikjl", j1, np.conj(j2)).reshape(mshape)
+
+
+def jones_to_mueller(jones: np.ndarray) -> np.ndarray:
+    """Outer product of a Jones matrix with its own conjugate.
+
+    Thin wrapper over :func:`jones_to_mueller_cross` for the single-telescope
+    case. See that function for the axis contract.
+    """
+    return jones_to_mueller_cross(jones, jones)
 
 
 def mueller_to_stokes(mueller: np.ndarray) -> np.ndarray:
@@ -122,6 +142,175 @@ def mueller_to_stokes(mueller: np.ndarray) -> np.ndarray:
     return sinv @ mueller @ s
 
 
+# ---------------------------------------------------------------------------
+# Baseline-group beam assembly
+# ---------------------------------------------------------------------------
+
+# Expected (telescope_p, telescope_q) per group. p is the FIRST antenna of the
+# baseline and q the second: for the mixed group that is MeerKAT then
+# MeerKAT+, matching MS antenna indexing where MKE antennas follow the
+# MeerKAT ones. See docs/wiki/data-model.md.
+GROUP_TELESCOPES = {
+    "MM": ("MeerKAT", "MeerKAT"),
+    "MPM": ("MeerKAT", "MeerKAT Extension"),
+    "MPMP": ("MeerKAT Extension", "MeerKAT Extension"),
+}
+
+# Channel centres are compared with this absolute tolerance rather than for
+# equality: a 1e9 Hz centre round-tripped through float32 moves by ~64 Hz, and
+# the narrowest MdV channel is 13.375 MHz, so 1 kHz separates "the same
+# channel" from "a different channel" with three orders of magnitude to spare.
+FREQ_MATCH_ATOL_HZ = 1.0e3
+
+
+def _check_group_telescope(bds: xarray.Dataset, expected: str, side: str, group: str) -> None:
+    actual = bds.attrs.get("telescope")
+    if actual is None:
+        log.warning(
+            f"BDS for side {side} of group {group} carries no 'telescope' attr, so the pairing "
+            f"cannot be verified; assuming it is {expected!r}. Rebuild it with a current "
+            f"mdv-beams-to-bds to record provenance."
+        )
+    elif actual != expected:
+        raise ValueError(
+            f"group {group!r} expects telescope {expected!r} on side {side}, but that BDS reports telescope {actual!r}"
+        )
+
+
+def _align_group_freqs(bds_p: xarray.Dataset, bds_q: xarray.Dataset):
+    """Slice both datasets to their common channels, matching within tolerance."""
+    fp = bds_p.coords["FREQ"].values
+    fq = bds_q.coords["FREQ"].values
+    if fp.shape == fq.shape and np.allclose(fp, fq, rtol=0, atol=FREQ_MATCH_ATOL_HZ):
+        return bds_p, bds_q
+    hits = np.abs(fp[:, None] - fq[None, :]) <= FREQ_MATCH_ATOL_HZ
+    ip, iq = np.nonzero(hits)
+    if ip.size == 0:
+        raise ValueError(
+            f"the two beam datasets have no overlapping channels within {FREQ_MATCH_ATOL_HZ:.0f} Hz: "
+            f"side p spans [{fp.min() * 1e-6:.3f}, {fp.max() * 1e-6:.3f}] MHz, "
+            f"side q spans [{fq.min() * 1e-6:.3f}, {fq.max() * 1e-6:.3f}] MHz"
+        )
+    # np.nonzero does not require the match to be injective: two of p's
+    # channels can both land on one of q's, which would use that plane twice
+    # while leaving both sides the same length -- an alias nothing downstream
+    # could notice. Unreachable with MdV spacing (13.375 MHz vs a 1 kHz
+    # tolerance), so treat it as a corrupt input rather than something to
+    # resolve by picking a nearest match.
+    if np.unique(ip).size != ip.size or np.unique(iq).size != iq.size:
+        raise ValueError(
+            f"ambiguous channel match between the two beam datasets within "
+            f"{FREQ_MATCH_ATOL_HZ:.0f} Hz: {ip.size} pairs cover only "
+            f"{np.unique(ip).size} (p) and {np.unique(iq).size} (q) distinct channels. "
+            f"Channel centres closer together than the match tolerance cannot be paired."
+        )
+    # The BDS carries a FITS header whose FREQ axis is linear (CRVAL3 + k*CDELT3).
+    # A gapped intersection -- q missing an interior channel, say -- cannot be
+    # described that way: one CDELT3 misplaces every plane after the gap. Refuse
+    # rather than emit a dataset whose documented header contradicts its data.
+    kept = fp[ip]
+    if kept.size > 2:
+        spacing = np.diff(kept)
+        if not np.allclose(spacing, spacing[0], rtol=0, atol=FREQ_MATCH_ATOL_HZ):
+            raise ValueError(
+                f"the common channels of the two beam datasets are unevenly spaced "
+                f"({spacing.min() * 1e-6:.3f} to {spacing.max() * 1e-6:.3f} MHz), so the BDS "
+                f"FITS header's linear FREQ axis cannot describe them. The two products do not "
+                f"share a contiguous channel range; no resampling is performed."
+            )
+    log.info(f"aligning group beams on {ip.size} common channels of {fp.size} (p) and {fq.size} (q)")
+    return bds_p.isel(FREQ=ip), bds_q.isel(FREQ=iq)
+
+
+def _check_group_grids(bds_p: xarray.Dataset, bds_q: xarray.Dataset) -> None:
+    for key in ("x0", "y0", "dx", "dy"):
+        if not np.isclose(bds_p.attrs[key], bds_q.attrs[key], rtol=0, atol=1e-9):
+            raise ValueError(
+                f"the two beam datasets have different {key}: "
+                f"{bds_p.attrs[key]} (p) vs {bds_q.attrs[key]} (q); spatial grids differ"
+            )
+    for axis in ("X", "Y"):
+        ap, aq = bds_p.coords[axis].values, bds_q.coords[axis].values
+        if ap.shape != aq.shape or not np.allclose(ap, aq, rtol=0, atol=1e-9):
+            raise ValueError(
+                f"the two beam datasets have different {axis} axes "
+                f"({ap.shape} vs {aq.shape}); spatial grids differ. Group beams require a "
+                f"matched pair from the same MdV generation; no resampling is performed."
+            )
+
+
+def _build_group_bds(bds_p: xarray.Dataset, bds_q: xarray.Dataset, group: str) -> xarray.Dataset:
+    """Assemble an in-memory BDS for a baseline group from two single-telescope BDSs.
+
+    ``bds_p`` is the FIRST antenna of the baseline and ``bds_q`` the second, so
+    the coherency-basis block is ``kron(J_p, conj(J_q))``. For the mixed group
+    that block is genuinely complex and is kept as complex64; when both sides
+    are the same telescope it is real up to numerical noise and the Stokes
+    variables take the real part, exactly as a single-telescope BDS does.
+
+    ``jones``/``njones`` are carried through only when both sides are the same
+    telescope: a cross baseline has no single Jones matrix.
+    """
+    if group not in GROUP_TELESCOPES:
+        raise ValueError(f"group must be one of {tuple(GROUP_TELESCOPES)}, got {group!r}")
+    expected_p, expected_q = GROUP_TELESCOPES[group]
+    _check_group_telescope(bds_p, expected_p, "p", group)
+    _check_group_telescope(bds_q, expected_q, "q", group)
+    _check_group_grids(bds_p, bds_q)
+    bds_p, bds_q = _align_group_freqs(bds_p, bds_q)
+
+    same_telescope = expected_p == expected_q
+    freqs = bds_p.coords["FREQ"].values
+    degs_x = bds_p.coords["X"].values
+    degs_y = bds_p.coords["Y"].values
+    scoords = dict(stokes_i=list("IQUV"), stokes_j=list("IQUV"), X=degs_x, Y=degs_y, FREQ=freqs)
+    sdims = ("stokes_i", "stokes_j", "FREQ", "Y", "X")
+
+    data_vars = {}
+    for jvar, mvar, svar in (("jones", "mueller", "stokes"), ("njones", "nmueller", "nstokes")):
+        # BDS Jones is (receptor_i, receptor_j, FREQ, Y, X); the Mueller helpers
+        # want the matrix axes last.
+        jp = bds_p[jvar].values.transpose(2, 3, 4, 0, 1)
+        jq = bds_q[jvar].values.transpose(2, 3, 4, 0, 1)
+        m = jones_to_mueller_cross(jp, jq)
+        s = mueller_to_stokes(m).transpose(3, 4, 0, 1, 2)
+        data_vars[mvar] = xarray.DataArray(m.transpose(3, 4, 0, 1, 2).astype(np.complex64), dims=sdims, coords=scoords)
+        s = s.real.astype(np.float32) if same_telescope else s.astype(np.complex64)
+        data_vars[svar] = xarray.DataArray(s, dims=sdims, coords=scoords)
+
+    if same_telescope:
+        jcoords = dict(receptor_i=[0, 1], receptor_j=[0, 1], X=degs_x, Y=degs_y, FREQ=freqs)
+        jdims = ("receptor_i", "receptor_j", "FREQ", "Y", "X")
+        for jvar in ("jones", "njones"):
+            data_vars[jvar] = xarray.DataArray(bds_p[jvar].values, dims=jdims, coords=jcoords)
+
+    xds = xarray.Dataset(data_vars)
+    xds.attrs.update(bds_p.attrs)
+    # fits_header is part of the BDS contract, so it must describe the data
+    # actually present: a frequency intersection leaves p's NAXIS3/CRVAL3/CDELT3
+    # describing the unsliced cube. Copy before editing -- attrs.update() above
+    # aliases the opened store's dict.
+    hdr = dict(xds.attrs.get("fits_header", {}))
+    if hdr:
+        hdr["NAXIS3"] = len(freqs)
+        hdr["CRVAL3"] = float(freqs[0])
+        if len(freqs) > 1:
+            hdr["CDELT3"] = float(freqs[1] - freqs[0])
+        xds.attrs["fits_header"] = hdr
+    if not same_telescope:
+        # Side p's single-telescope provenance would be misleading on a cross
+        # block; telescope_p/telescope_q below carry both sides instead.
+        for key in ("telescope", "antenna", "source_file", "source_doc"):
+            xds.attrs.pop(key, None)
+    xds.attrs.update(
+        freqs=freqs,
+        group=group,
+        telescope_p=bds_p.attrs.get("telescope", expected_p),
+        telescope_q=bds_q.attrs.get("telescope", expected_q),
+    )
+    return xds
+
+
 class BeamWizard(object):
     """Attaches to a beam dataset and provides beam-interpolation conveniences.
 
@@ -131,6 +320,15 @@ class BeamWizard(object):
     ``katbeam_bds.synthesize_katbeam_bds``, and ``npix``/``fov_deg``/``num_freq``
     which only apply to it). A katbeam dataset carries only the normalised
     variables, since katbeam beams are on-axis normalised by construction.
+
+    ``group`` selects a baseline group instead of a single telescope: ``"MM"``
+    (MeerKAT-MeerKAT), ``"MPM"`` (MeerKAT-MeerKAT+) or ``"MPMP"``
+    (MeerKAT+-MeerKAT+). It requires ``band`` (currently only ``"L"``), is
+    mutually exclusive with ``bds_name`` and with ``beam_model="katbeam"``, and
+    switches to the MdV-2026 beam generation so all three groups are mutually
+    consistent. The mixed group's ``stokes``/``nstokes`` are complex64 and its
+    ``jones``/``njones`` are absent, since a cross baseline has no single Jones
+    matrix. With ``group=None`` (the default) nothing changes.
 
     ``image_name`` is optional. Without an image the wizard runs in BDS-only
     mode: ``interpolate_beam`` and the prefilter/frequency helpers work, but
@@ -156,6 +354,7 @@ class BeamWizard(object):
         image_name: Optional[str] = None,
         *,
         band: Optional[str] = None,
+        group: Optional[str] = None,
         beam_model: str = "mdv",
         npix: Optional[int] = None,
         fov_deg: Optional[float] = None,
@@ -163,7 +362,18 @@ class BeamWizard(object):
     ):
         if beam_model not in ("mdv", "katbeam"):
             raise ValueError(f"beam_model must be 'mdv' or 'katbeam', got {beam_model!r}")
+        if group is not None:
+            if group not in GROUP_TELESCOPES:
+                raise ValueError(f"group must be one of {tuple(GROUP_TELESCOPES)}, got {group!r}")
+            if beam_model != "mdv":
+                raise ValueError(
+                    f"group={group!r} is not available for beam_model={beam_model!r}: katbeam "
+                    "provides only per-correlation power beams and has no MeerKAT+ model."
+                )
         self.beam_model = beam_model
+        self.group = group
+        self.telescope_p = None
+        self.telescope_q = None
         self.log = log
 
         if beam_model == "katbeam":
@@ -179,6 +389,25 @@ class BeamWizard(object):
             from meerkat_beams.katbeam_bds import synthesize_katbeam_bds
 
             self.bds = synthesize_katbeam_bds(band, npix=npix, fov_deg=fov_deg, num_freq=num_freq)
+        elif group is not None:
+            if bds_name is not None:
+                raise ValueError(
+                    "group and bds_name are mutually exclusive: a baseline group is assembled "
+                    "from a matched pair of cached beam datasets, so pass band= instead"
+                )
+            if band is None:
+                raise ValueError("group requires band")
+            if npix is not None or fov_deg is not None or num_freq is not None:
+                raise ValueError("npix, fov_deg and num_freq only apply to beam_model='katbeam'")
+            from meerkat_beams import cache
+
+            path_p, path_q = cache.ensure_group_bds(band, group)
+            log.info(f"opening group {group} beam datasets: p={path_p}, q={path_q}")
+            ds_p = xarray.open_zarr(path_p)
+            ds_q = ds_p if path_q == path_p else xarray.open_zarr(path_q)
+            self.bds = _build_group_bds(ds_p, ds_q, group)
+            self.telescope_p = self.bds.attrs["telescope_p"]
+            self.telescope_q = self.bds.attrs["telescope_q"]
         else:
             if (bds_name is None) == (band is None):
                 raise ValueError("exactly one of bds_name or band must be provided")
@@ -328,6 +557,12 @@ class BeamWizard(object):
                 raise ValueError(
                     f"var={var!r} is not available for beam_model='katbeam' (katbeam "
                     f"beams are on-axis normalised by construction; use 'n{var}'). "
+                    f"Available: {', '.join(available)}."
+                )
+            if self.group is not None and var in ("jones", "njones"):
+                raise ValueError(
+                    f"var={var!r} is not available for group={self.group!r}: a cross baseline has "
+                    f"no single Jones matrix, only the Mueller/Stokes outer product. "
                     f"Available: {', '.join(available)}."
                 )
             raise ValueError(f"var={var!r} is not in this beam dataset. Available: {', '.join(available)}.")

@@ -1,10 +1,10 @@
 ---
 type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr
-description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), and the xradio primary-beam schema.
-tags: [mdv, bds, xradio, zarr, schema, data-model, katbeam]
-timestamp: 2026-10-01T00:00:00Z
-last_verified_commit: ad10c54
+description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, and the xradio primary-beam schema.
+tags: [mdv, bds, xradio, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
+timestamp: 2026-10-02T12:02:46Z
+last_verified_commit: eac4bd0
 ---
 
 # Data model — MdV npz, BDS zarr, xradio zarr
@@ -242,6 +242,113 @@ L'Hôpital limit `π/4 = 0.7853981633974483` and logs the count. This is not
 optional: a non-finite value reaching `spline_filter` smears across the entire
 slab.
 
+## Baseline-group beam datasets
+
+A MeerKAT+ array mixes two dish types, so a baseline's beam depends on
+*which pair* of antennas forms it. `BeamWizard(band="L", group=...)`
+assembles that per-pair beam on the fly from two single-telescope BDSs; no
+group product is ever written to disk.
+
+### The three groups
+
+| group | p (first antenna) | q (second antenna) | `nstokes` dtype | `jones`/`njones` |
+|---|---|---|---|---|
+| `MM` | MeerKAT | MeerKAT | `float32` | present |
+| `MPM` | MeerKAT | MeerKAT Extension | `complex64` | **absent** |
+| `MPMP` | MeerKAT Extension | MeerKAT Extension | `float32` | present |
+
+`mueller`/`nmueller` are `complex64` for all three, as in a
+single-telescope BDS.
+
+For a baseline between antennas p and q the visibility is
+`V_pq = J_p X J_q^H`, so the coherency-basis block is
+`kron(J_p, conj(J_q))` (`utils.jones_to_mueller_cross`). When p and q are
+the same telescope this is real up to numerical noise and the Stokes
+variables take `.real`, exactly as `mdv_beams_to_bds` does. For `MPM` it
+is genuinely complex and is kept that way: discarding the imaginary part
+would discard a real part of the mixed-baseline response.
+
+**The `p = MeerKAT` convention is fixed**, matching MS antenna indexing
+where MKE antennas follow the MeerKAT ones. A caller needing the opposite
+ordering conjugates: baseline reversal Hermitian-conjugates the coherency
+matrix, which in the Stokes basis is plain complex conjugation with *no*
+transpose, because `P @ S == conj(S)` for the standard linear-feed basis
+(`tests/test_group_bds.py::test_swapping_p_and_q_conjugates_the_stokes_block`).
+At the coherency level the relation is instead a permutation of the
+coherency index `2*receptor_1 + receptor_2` by `[0, 2, 1, 3]`
+(`tests/test_jones_mueller.py`) — `kron(A, B)` and `kron(B, A)` differ by
+that permutation, not by a transpose.
+
+### Normalisation
+
+Both sides are normalised by their *own* on-axis Jones inverse first (the
+stored `njones`), then crossed. The product of two on-axis-normalised
+Jones matrices is the identity on axis, so `MPM`'s `nstokes` behaves
+exactly like `MM`'s and `MPMP`'s. **A caller predicting apparent flux uses
+`nstokes`/`nmueller`**; `stokes`/`mueller` are the raw voltage products.
+
+### Extra attrs
+
+A group dataset carries the usual `fits_header`, `x0`, `y0`, `dx`, `dy`,
+`freqs`, plus `group`, `telescope_p` and `telescope_q`. For `MPM` the
+single-telescope provenance attrs (`telescope`, `antenna`, `source_file`,
+`source_doc`) are dropped, since side p's values would misdescribe a cross
+block.
+
+### Provenance attrs on a single-telescope BDS
+
+`mdv_beams_to_bds` copies `PROVENANCE_ATTRS` — `telescope`, `antenna`,
+`band`, `source_file`, `source_doc` — from a zarr input's attrs onto the
+BDS. Keys absent from the input are not written, so a legacy BDS carries
+none of them. `_build_group_bds` reads `telescope` to verify it paired the
+right two stores; a BDS missing it **warns and proceeds** rather than
+failing, so hand-built and pre-2026 stores stay usable.
+
+### Two MdV generations
+
+| generation | grid | channels | extent | products |
+|---|---|---|---|---|
+| legacy | 128 x 128 | 1024 | +-4 deg (L) | `MeerKAT_{U,L,S0,S4}` |
+| MdV-2026 | 64 x 64 | 63 | +-2 deg (L) | `MeerKAT_L_mdv2026`, `MKE_L` |
+
+`group=None` (the default) resolves the legacy generation, unchanged.
+Asking for **any** group switches to MdV-2026, so all three groups are
+mutually consistent; the two generations are never mixed within one
+wizard.
+
+### L band only
+
+Only L band has a matched pair. In L band `beam_eavg_L` (MKE) and
+`beam_mavg_L` (MeerKAT) are both 64 x 64, `CDELT1 = 0.0625` deg, 63
+channels from 869.375 MHz — identical grids, no resampling. MKE's
+`beam_eavg_S3` (2420-3268 MHz, 0.03125 deg, +-1 deg) has no counterpart:
+`beam_mavg_S04` aligns exactly in frequency (MKE S3 is its channels
+48-110) but sits on a half-size +-0.5 deg grid, while `beam_mavg_S0` +
+`beam_mavg_S4` match spatially but leave a 27 MHz hole at 2611-2639 MHz,
+straddling the middle of MKE S3. S-band group requests therefore raise.
+Single-telescope MKE S3 is unaffected.
+
+`_build_group_bds` requires exactly matching `X`/`Y` axes and `x0`, `y0`,
+`dx`, `dy` and performs **no spatial resampling**. Channel centres are
+matched within `FREQ_MATCH_ATOL_HZ = 1 kHz` rather than for equality (a
+1e9 Hz centre round-tripped through float32 moves by ~64 Hz, against a
+13.375 MHz narrowest channel), and both sides are sliced to the
+intersection when one covers more channels than the other.
+
+The match must be **injective**: if two of p's channels fall within the
+tolerance of one of q's, the assembly raises rather than using q's plane
+twice. Nothing downstream could detect that aliasing, since both sides
+would still come out the same length. It is unreachable with MdV spacing
+and is treated as a corrupt input, not something to resolve by picking a
+nearest match. The retained channels must also be **evenly spaced**: the
+BDS `fits_header` describes FREQ as a linear axis (`CRVAL3 + k*CDELT3`),
+which cannot represent a gapped set — one `CDELT3` misplaces every plane
+after the gap — so a gapped intersection raises rather than producing a
+dataset whose documented header contradicts its data. When a contiguous
+slice does happen, `NAXIS3`, `CRVAL3` and `CDELT3` are refreshed to
+describe the sliced cube, since the header must not keep describing p's
+unsliced one.
+
 ## xradio zarr
 
 Produced by `bds-to-xradio` (from a BDS) or `mdv-to-xradio` (directly from
@@ -318,3 +425,8 @@ script — not the BDS `mueller` variable itself).
 - `tests/test_bds_to_xradio.py`, `tests/test_beam_wizard.py`,
   `tests/test_beam_orientation_mueller.py` (mueller/nmueller coverage)
 - `tests/conftest.py` (L-band cache warm-up, `MBEAMS_OFFLINE`)
+- `src/meerkat_beams/utils.py` (`jones_to_mueller_cross`, `GROUP_TELESCOPES`,
+  `FREQ_MATCH_ATOL_HZ`, `_build_group_bds`)
+- `tests/test_group_bds.py`, `tests/test_jones_mueller.py`,
+  `tests/test_mdv_beams_to_bds_attrs.py`, `tests/test_group_integration.py`
+- issue #30 (MeerKAT+ Mueller blocks per baseline group)

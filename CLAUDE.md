@@ -25,7 +25,7 @@ Maintenance rules:
 ```
 src/meerkat_beams/
 ├── utils.py                # shared: BeamWizard, PowerBeam, logging, zarr constants
-├── cache.py                # on-demand download + BDS cache (per band)
+├── cache.py                # on-demand download + BDS cache (keyed on product name)
 ├── katbeam_bds.py          # synthesize a BDS-shaped dataset from katbeam (analytic)
 ├── cabs/<cmd>.yml          # Stimela cab definitions (one per command)
 ├── cli/<cmd>.py            # hip-cargo-generated Typer + container dispatch
@@ -66,7 +66,10 @@ rotation-averaged beam maps, and full time/frequency zarr rendering
 (`get_time_freq_beam`, `enrich_bds_xradio`). A `beam_model` selector picks the
 source: `"mdv"` (default) opens a BDS zarr, `"katbeam"` synthesizes one
 analytically from `katbeam` with no download and nothing on disk (see
-`katbeam_bds.py`). `get_rotation_averaged_beam` also takes
+`katbeam_bds.py`). A `group` selector (`"MM"`/`"MPM"`/`"MPMP"`, requires
+`band`, mutually exclusive with `bds_name` and with `beam_model="katbeam"`)
+instead cross-multiplies two single-telescope BDSs into an in-memory
+baseline-group dataset and switches to the MdV-2026 generation. `get_rotation_averaged_beam` also takes
 `average="pa"|"azimuth"` — the latter averages over a uniform full turn instead
 of the observation's parallactic angles, needs no time axis, and returns a
 circularly symmetric map. Its method-by-method contract
@@ -76,7 +79,13 @@ image construction paths, canonical `dim_names`) is documented in
 it reads and writes is documented in
 [`docs/wiki/data-model.md`](docs/wiki/data-model.md). The on-disk band
 cache (`cache.py`) backing `BeamWizard(band=...)` is covered by
-[`docs/wiki/design-decisions.md`](docs/wiki/design-decisions.md) (D6).
+[`docs/wiki/design-decisions.md`](docs/wiki/design-decisions.md) (D6); it is
+keyed on **product name** (`MeerKAT_<BAND>` for the legacy bands,
+`MeerKAT_L_mdv2026` / `MKE_L` for the 2026 generation), and
+`ensure_group_bds(band, group)` returns the matched `(p, q)` pair. The 2026
+products carry `PLACEHOLDER` gdrive IDs until published: `ensure_product_bds`
+refuses to download a placeholder and tells you to stage the input zarr by
+hand, which `scripts/stage_group_cache.py` does.
 
 ### Logging
 `LOGGER` / `log` (same object). Console handler is kept on the module-level `CONSOLE`; change level via `set_console_logging_level(level)`. Don't create additional handlers.
@@ -90,6 +99,8 @@ cache (`cache.py`) backing `BeamWizard(band=...)` is covered by
 - **BDS (beam dataset)**: zarr holding normalised & unnormalised Jones, Stokes, and Mueller-coherency beams (`jones`/`njones`, `stokes`/`nstokes`, `mueller`/`nmueller`) + a synthesized FITS header in `.attrs["fits_header"]` and scalar attrs `x0`, `y0`, `dx`, `dy`, `freqs`. Produced by `mdv-beams-to-bds` — full schema in `docs/wiki/data-model.md`.
 - **xradio zarr**: schema-compatible primary-beam image `(time, frequency, polarization, l, m)` with `l`/`m` in radians and a `direction` attribute block. Produced by `bds-to-xradio` or `mdv-to-xradio`.
 - **Normalised vs not**: `njones` / `nstokes` are pre-multiplied by the inverse of the central-pixel Jones matrix so the on-axis beam is the identity; use these unless you specifically need raw voltage beams.
+- **MeerKAT+ (MKE)**: the MeerKAT Extension dishes. MdV's 2026 report (SSA-0004B-0002 Rev 01) ships `eavg` (extension-average) beams alongside the `mavg` MeerKAT ones, on a **different grid generation** from the legacy archive products: 64×64 / 63 channels / ±2° (L), versus the legacy 128×128 / 1024 channels / ±4°.
+- **Baseline groups**: on a mixed array the beam depends on which pair of dishes forms a baseline. `BeamWizard(band="L", group=...)` serves `MM` (MeerKAT–MeerKAT), `MPM` (MeerKAT–MeerKAT+) and `MPMP` (MeerKAT+–MeerKAT+), assembled **in memory** from two single-telescope BDSs — nothing group-shaped is written to disk. The first antenna of a baseline is MeerKAT by fixed convention, so `MPM`'s Stokes variables are **complex64** (the autos stay float32) and its `jones`/`njones` are absent. Partitioning visibilities into groups is the calling application's job (issue #30); `partition_mueller` (issue #27) is a later branch. **L band only** — no matched MeerKAT counterpart exists for MKE's S3 product (see `docs/wiki/design-decisions.md` D15; do not re-litigate without new MdV data).
 
 Full field/variable/dtype tables for all three formats:
 [`docs/wiki/data-model.md`](docs/wiki/data-model.md).
@@ -97,7 +108,7 @@ Full field/variable/dtype tables for all three formats:
 ## Conventions
 
 - Python support policy: **3.11–3.13 full** (scientific stack, tested in CI); **3.10 lightweight only** — base install (CLI + hip-cargo container dispatch), no `[full]` stack, deliberately excluded from the CI test matrix (a dedicated `lightweight` CI job pins base-install + `mbeams --help` on 3.10 instead — do not add 3.10 to the test matrix). Test-group deps carry `python_version >= '3.11'` markers for the same reason.
-- Runtime dep is `hip-cargo>=0.3.0`, resolved from PyPI — the transitional git-main pin is retired (see `docs/wiki/design-decisions.md` D8). The `Dockerfile`'s `git` install layer predates that re-pin and has **not** been removed yet as of this commit (still present, per its own inline comment) — don't assume it's gone. The scientific stack (`xarray`, `zarr<3`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask-ms`, `wget`) is under the `[full]` extra. `katbeam` is in the `[full]` extra (resolved from PyPI) **and** pinned to git main in the `dev` and `test` groups — `BeamWizard(beam_model="katbeam")` uses it at runtime (issue #22), while the git pin stays because PyPI's only release (0.1) has no S-band model and has a narrower L table (900–1650 vs 856–1712 MHz). So **S-band katbeam works only in a dev checkout**, not from a published `[full]` install. The git pin knowingly reintroduces the pattern D8 retired for hip-cargo, scoped to dev/test only — see `docs/wiki/design-decisions.md` D11.
+- Runtime dep is `hip-cargo>=0.4.0`, resolved from PyPI — the transitional git-main pin is retired (see `docs/wiki/design-decisions.md` D8). The floor moves with upstream; what D8 settles is that the source is PyPI, not git. The `Dockerfile`'s `git` install layer predates that re-pin and has **not** been removed yet as of this commit (still present, per its own inline comment) — don't assume it's gone. The scientific stack (`xarray`, `zarr<3`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask-ms`, `wget`) is under the `[full]` extra. `katbeam` is in the `[full]` extra (resolved from PyPI) **and** pinned to git main in the `dev` and `test` groups — `BeamWizard(beam_model="katbeam")` uses it at runtime (issue #22), while the git pin stays because PyPI's only release (0.1) has no S-band model and has a narrower L table (900–1650 vs 856–1712 MHz). So **S-band katbeam works only in a dev checkout**, not from a published `[full]` install. The git pin knowingly reintroduces the pattern D8 retired for hip-cargo, scoped to dev/test only — see `docs/wiki/design-decisions.md` D11.
 - Ruff: `line-length=120`, `target-version=py310`, rules `E,F,I,N,W` with `E741`/`N806` ignored (domain names: `l`, `m`, `I`, `S`, `Sinv`). Pre-commit runs `ruff-check --fix` and `ruff-format`.
 - Core function signatures mirror their CLI signatures (same names/defaults) with plain types. Don't move Typer conversions into core. CLI passes `parse_upath`-parsed path objects directly (no `str(...)` coercion); core accepts anything `str`-coercible / path-like.
 - Commits: conventional prefixes, **enforced** by `conventional-pre-commit` at the `commit-msg` stage. Allowed types: `feat fix refactor perf docs deps chore ci style test build`. Fresh clones need `pre-commit install --hook-type commit-msg` — plain `pre-commit install` does not wire up the `commit-msg` hook.

@@ -107,9 +107,9 @@ def test_ensure_band_bds_skips_download_when_input_exists(tmp_path, monkeypatch)
 
     convert_calls = []
 
-    def stub_convert(band):
-        convert_calls.append(band)
-        out = cache.bds_path(band)
+    def stub_convert(product):
+        convert_calls.append(product)
+        out = cache.bds_path_for_product(product)
         out.mkdir(parents=True)
         (out / ".zgroup").write_text("{}")
 
@@ -118,7 +118,7 @@ def test_ensure_band_bds_skips_download_when_input_exists(tmp_path, monkeypatch)
 
     result = cache.ensure_band_bds("U")
     assert result == str(cache.bds_path("U"))
-    assert convert_calls == ["U"]
+    assert convert_calls == ["MeerKAT_U"]
 
 
 @pytest.mark.unit
@@ -136,13 +136,13 @@ def test_ensure_band_bds_clears_stale_partials(tmp_path, monkeypatch, caplog):
     stale_bds.mkdir(parents=True)
     (stale_bds / "junk").write_text("x")
 
-    def stub_download(band):
-        inp = cache.input_zarr_path(band)
+    def stub_download(product):
+        inp = cache.input_zarr_path_for_product(product)
         inp.mkdir(parents=True)
         (inp / ".zgroup").write_text("{}")
 
-    def stub_convert(band):
-        out = cache.bds_path(band)
+    def stub_convert(product):
+        out = cache.bds_path_for_product(product)
         out.mkdir(parents=True)
         (out / ".zgroup").write_text("{}")
 
@@ -176,7 +176,7 @@ def test_download_and_extract_writes_atomic(tmp_path, monkeypatch):
         _make_fake_tarball(Path(output), "MeerKAT_U.zarr")
 
     monkeypatch.setattr(cache, "_gdown_download", fake_gdown_download)
-    cache._download_and_extract("U")
+    cache._download_and_extract("MeerKAT_U")
 
     inp = cache.input_zarr_path("U")
     assert inp.is_dir()
@@ -193,7 +193,7 @@ def test_download_and_extract_failure_cleans_partial(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cache, "_gdown_download", boom)
     with pytest.raises(Exception):
-        cache._download_and_extract("U")
+        cache._download_and_extract("MeerKAT_U")
 
     assert not cache.input_zarr_path("U").exists()
     assert not cache._partial(cache.input_zarr_path("U")).exists()
@@ -208,7 +208,7 @@ def test_download_and_extract_missing_gdown(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cache, "_gdown_download", raise_import)
     with pytest.raises(ImportError, match=r"meerkat-beams\[full\]"):
-        cache._download_and_extract("U")
+        cache._download_and_extract("MeerKAT_U")
 
 
 @pytest.mark.unit
@@ -227,7 +227,7 @@ def test_convert_to_bds_atomic(tmp_path, monkeypatch):
         (Path(bds) / ".zgroup").write_text("{}")
 
     monkeypatch.setattr("meerkat_beams.core.mdv_beams_to_bds.mdv_beams_to_bds", stub_mdv)
-    cache._convert_to_bds("U")
+    cache._convert_to_bds("MeerKAT_U")
 
     out = cache.bds_path("U")
     assert out.is_dir()
@@ -253,7 +253,7 @@ def test_convert_to_bds_failure_preserves_input(tmp_path, monkeypatch):
 
     monkeypatch.setattr("meerkat_beams.core.mdv_beams_to_bds.mdv_beams_to_bds", boom)
     with pytest.raises(RuntimeError, match="conversion failed"):
-        cache._convert_to_bds("U")
+        cache._convert_to_bds("MeerKAT_U")
 
     assert not cache.bds_path("U").exists()
     assert not cache._partial(cache.bds_path("U")).exists()
@@ -270,13 +270,13 @@ def test_clear_partials_removes_stale_tarball(tmp_path, monkeypatch, caplog):
     stale_tarball = inp.parent / "MeerKAT_U.zarr.tgz"
     stale_tarball.write_text("garbage from a killed download")
 
-    def stub_download(band):
-        out = cache.input_zarr_path(band)
+    def stub_download(product):
+        out = cache.input_zarr_path_for_product(product)
         out.mkdir(parents=True)
         (out / ".zgroup").write_text("{}")
 
-    def stub_convert(band):
-        out = cache.bds_path(band)
+    def stub_convert(product):
+        out = cache.bds_path_for_product(product)
         out.mkdir(parents=True)
         (out / ".zgroup").write_text("{}")
 
@@ -288,3 +288,114 @@ def test_clear_partials_removes_stale_tarball(tmp_path, monkeypatch, caplog):
 
     assert not stale_tarball.exists(), "stale tarball should have been removed"
     assert any("tarball" in r.message.lower() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Product keying and baseline groups
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_product_paths_under_cache_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+    assert cache.input_zarr_path_for_product("MKE_L") == tmp_path / "inputs" / "MKE_L.zarr"
+    assert cache.bds_path_for_product("MKE_L") == tmp_path / "bds" / "MKE_L.bds.zarr"
+
+
+@pytest.mark.unit
+def test_legacy_band_paths_delegate_to_product_paths(tmp_path, monkeypatch):
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+    assert cache.input_zarr_path("U") == cache.input_zarr_path_for_product("MeerKAT_U")
+    assert cache.bds_path("U") == cache.bds_path_for_product("MeerKAT_U")
+
+
+@pytest.mark.unit
+def test_group_products_table():
+    assert cache.SUPPORTED_GROUPS == ("MM", "MPM", "MPMP")
+    assert cache.SUPPORTED_GROUP_BANDS == ("L",)
+    assert cache.GROUP_PRODUCTS[("L", "MM")] == ("MeerKAT_L_mdv2026", "MeerKAT_L_mdv2026")
+    assert cache.GROUP_PRODUCTS[("L", "MPM")] == ("MeerKAT_L_mdv2026", "MKE_L")
+    assert cache.GROUP_PRODUCTS[("L", "MPMP")] == ("MKE_L", "MKE_L")
+
+
+@pytest.mark.unit
+def test_ensure_group_bds_rejects_unknown_group(tmp_path, monkeypatch):
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+    with pytest.raises(ValueError, match="group must be one of"):
+        cache.ensure_group_bds("L", "XX")
+
+
+@pytest.mark.unit
+def test_ensure_group_bds_rejects_unsupported_band(tmp_path, monkeypatch):
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+    with pytest.raises(ValueError, match="no matched MeerKAT/MeerKAT. beam counterpart"):
+        cache.ensure_group_bds("S3", "MPM")
+
+
+@pytest.mark.unit
+def test_ensure_group_bds_converts_each_product_once(tmp_path, monkeypatch):
+    """MM names the same product twice: it must be converted once, not twice."""
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+    for product in ("MeerKAT_L_mdv2026",):
+        inp = cache.input_zarr_path_for_product(product)
+        inp.mkdir(parents=True)
+        (inp / ".zgroup").write_text("{}")
+
+    convert_calls = []
+
+    def stub_convert(product):
+        convert_calls.append(product)
+        out = cache.bds_path_for_product(product)
+        out.mkdir(parents=True)
+        (out / ".zgroup").write_text("{}")
+
+    monkeypatch.setattr(cache, "_convert_to_bds", stub_convert)
+    p, q = cache.ensure_group_bds("L", "MM")
+    assert p == q == str(cache.bds_path_for_product("MeerKAT_L_mdv2026"))
+    assert convert_calls == ["MeerKAT_L_mdv2026"]
+
+
+@pytest.mark.unit
+def test_ensure_group_bds_returns_two_paths_for_mpm(tmp_path, monkeypatch):
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+    for product in ("MeerKAT_L_mdv2026", "MKE_L"):
+        inp = cache.input_zarr_path_for_product(product)
+        inp.mkdir(parents=True)
+        (inp / ".zgroup").write_text("{}")
+
+    def stub_convert(product):
+        out = cache.bds_path_for_product(product)
+        out.mkdir(parents=True)
+        (out / ".zgroup").write_text("{}")
+
+    monkeypatch.setattr(cache, "_convert_to_bds", stub_convert)
+    p, q = cache.ensure_group_bds("L", "MPM")
+    assert p == str(cache.bds_path_for_product("MeerKAT_L_mdv2026"))
+    assert q == str(cache.bds_path_for_product("MKE_L"))
+
+
+@pytest.mark.unit
+def test_placeholder_product_raises_instead_of_downloading(tmp_path, monkeypatch):
+    """An unpublished product must not reach gdown with a bogus id."""
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+
+    def must_not_download(*a, **kw):
+        raise AssertionError("gdown must not be called for a placeholder id")
+
+    monkeypatch.setattr(cache, "_gdown_download", must_not_download)
+    with pytest.raises(RuntimeError, match="not yet published"):
+        cache.ensure_product_bds("MKE_L")
+
+
+@pytest.mark.unit
+def test_placeholder_error_names_the_cache_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+    with pytest.raises(RuntimeError, match=str(cache.input_zarr_path_for_product("MKE_L"))):
+        cache.ensure_product_bds("MKE_L")
+
+
+@pytest.mark.unit
+def test_ensure_product_bds_rejects_unknown_product(tmp_path, monkeypatch):
+    monkeypatch.setenv("MBEAMS_CACHE_DIR", str(tmp_path))
+    with pytest.raises(ValueError, match="unknown beam product"):
+        cache.ensure_product_bds("NotAProduct")

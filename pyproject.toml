@@ -19,7 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "hip-cargo>=0.3.0",
+    "hip-cargo>=0.4.0",
 ]
 
 [project.optional-dependencies]
