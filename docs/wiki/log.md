@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-01T00:00:00Z
+timestamp: 2026-10-02T08:48:53Z
 ---
 
 # Wiki changelog
@@ -102,3 +102,28 @@ azimuthal averaging.
   (D8) as its hard blocker. That blocker landed first: `hip-cargo>=0.3.0` now
   resolves from PyPI (commit `3bb9b3d`) instead of a `git+...@main` pin,
   unblocking issue #17, which itself remains open.
+
+## 2026-10-02 — MeerKAT+ beams and MM/MPM/MPMP baseline groups (issue #30)
+
+- `data-model.md`: new "Baseline-group beam datasets" section — the three
+  groups and their dtypes, the `p = MeerKAT` convention and the conjugation
+  rule for the reversed ordering, normalise-then-cross, the group attrs, the
+  `PROVENANCE_ATTRS` carried by `mdv_beams_to_bds`, the two MdV generations,
+  and why groups are L-band only.
+- `beamwizard.md`: new "`group` — baseline-group beams" section — the
+  constructor-contract table, the in-memory dataset and its ~25 MB footprint,
+  and the `MPM` `jones`/`njones` absence.
+- `design-decisions.md`: D12 (on-the-fly assembly, not stored), D13 (complex
+  `MPM` with p = MeerKAT, and the two easily-confused reversal identities),
+  D14 (normalise each Jones first, then cross), D15 (generation follows group;
+  L band only, blocked on data not code).
+- `index.md`: `data-model.md` and `beamwizard.md` entries extended.
+- Code: `jones_to_mueller_cross`, `GROUP_TELESCOPES`, `_build_group_bds`,
+  `BeamWizard(group=...)`, `cache` re-keyed on product names with
+  `ensure_group_bds`, `scripts/stage_group_cache.py`.
+- The MdV-2026 and MKE cache entries carry `PLACEHOLDER` gdrive IDs: the
+  tarballs are not public yet, so `ensure_product_bds` refuses to download
+  them and points at manual staging. Fill in `MDV2026_GDRIVE_IDS` when they
+  are published.
+- `partition_mueller` (issue #27) is deliberately **not** in this change; it
+  is a thin wrapper to be built on this foundation.

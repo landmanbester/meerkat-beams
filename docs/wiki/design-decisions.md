@@ -2,9 +2,9 @@
 type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
-tags: [design, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam]
-timestamp: 2026-10-01T00:00:00Z
-last_verified_commit: ad10c54
+tags: [design, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+]
+timestamp: 2026-10-02T08:48:53Z
+last_verified_commit: f1c2cd4
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -441,6 +441,122 @@ single construction line rather than a refactor of three call sites in a
   alternative to. Reducing the chunk size alone does not help, because dask's
   threaded scheduler holds every live block concurrently.
 
+## D12 — Baseline-group beams assembled on the fly, not stored
+
+**Context:** Issue #30: a MeerKAT+ array mixes two dish types, so the beam on a
+baseline depends on which pair of antennas forms it. Three groups are needed —
+`MM`, `MPM`, `MPMP` — with the partitioning of visibilities left to the calling
+application (pfb-imaging, QuartiCal).
+
+**Decision:** BDS files on disk stay single-telescope; MKE is just another BDS.
+`BeamWizard(band=..., group=...)` opens the two relevant stores and builds the
+group's variables in memory at construction, assigning the result to `self.bds`.
+
+**Rationale:** At the MdV-2026 grid (64 x 64 x 63) one Mueller variable is ~8 MB
+and the full set ~25 MB, so eager assembly costs nothing and leaves
+`_get_prefilter` and every downstream method untouched. The alternatives — baking
+all three groups into the BDS schema (3x the Mueller on disk, a schema change,
+three artefacts to distribute), one BDS per group, or lazy per-`(i, j)`
+assembly — only pay off at the legacy 128 x 128 x 1024 size, which the 2026
+generation does not use.
+
+**Consequences:**
+- A group wizard has no file behind it. Nothing reopens `self.bds`, and the
+  dataset does not survive the process.
+- Adding a group is a table entry (`GROUP_TELESCOPES`, `cache.GROUP_PRODUCTS`),
+  not a data migration.
+- Every existing `BeamWizard` method works against a group with no change,
+  which is what makes `partition_mueller` (issue #27) a thin wrapper later.
+
+## D13 — The mixed group stays complex, with p = MeerKAT
+
+**Context:** For a baseline between antennas p and q, `V_pq = J_p X J_q^H`, so
+the Stokes-basis block is `S^-1 (kron(J_p, conj(J_q))) S`. When p and q are the
+same telescope this is real and `mdv_beams_to_bds`'s existing `.real` cast
+applies. For a mixed pair it is genuinely complex, and it depends on which
+antenna is first.
+
+**Decision:** `MPM` keeps `complex64` Stokes variables; `MM` and `MPMP` take
+`.real.astype(np.float32)` as before. The convention is fixed: the **first**
+antenna of the baseline is MeerKAT and the second MeerKAT+.
+
+**Rationale:** The imaginary part is a real component of the mixed-baseline
+response, not numerical noise — discarding it to give callers one uniform dtype
+would lose physics. The ordering matches MS antenna indexing, where MKE antennas
+follow the MeerKAT ones, so a consistently-ordered partition always has
+p in MeerKAT. Making the ordering a constructor argument was considered and
+rejected: one documented convention beats two code paths that must agree.
+
+**Consequences:**
+- Callers must handle a complex block for `MPM` and a real one for the autos.
+- The opposite ordering is a plain conjugate, with **no transpose**: baseline
+  reversal Hermitian-conjugates the coherency matrix, and `P @ S == conj(S)` for
+  the standard linear-feed basis, so `M_st(q,p) == conj(M_st(p,q))`. Beware the
+  tempting wrong version — at the *coherency* level the relation is a permutation
+  of the index `2*receptor_1 + receptor_2` by `[0, 2, 1, 3]`, because
+  `kron(A, B)` and `kron(B, A)` differ by that permutation and not by a
+  transpose. Both are pinned by tests (`test_group_bds.py`,
+  `test_jones_mueller.py`); an early draft of each test asserted the conjugate
+  transpose and was wrong.
+- `jones`/`njones` are absent for `MPM`: a cross baseline has no single Jones
+  matrix, only the outer product.
+
+## D14 — Normalise each Jones first, then cross
+
+**Context:** A group block can be normalised either by crossing the raw Jones
+cubes and dividing by the result's own centre, or by crossing the two already
+on-axis-normalised `njones` cubes.
+
+**Decision:** Cross the stored `njones`, which are each pre-multiplied by the
+inverse of their own central-pixel Jones.
+
+**Rationale:** The product of two on-axis-normalised Jones matrices is the
+identity on axis, so `MPM`'s `nstokes` behaves exactly like `MM`'s and
+`MPMP`'s, and no new normalisation code is needed. Verified on the real beams:
+all three groups are the identity on axis to 1e-3.
+
+**Consequences:** A caller predicting apparent flux uses `nstokes`/`nmueller`;
+`stokes`/`mueller` are the raw voltage products. This was folklore before and is
+now stated in `data-model.md`.
+
+## D15 — Generation follows group; L band only
+
+**Context:** Two MdV generations exist on incompatible grids: the legacy
+128 x 128 / 1024-channel / +-4 deg products behind `cache.BAND_GDRIVE_IDS`, and
+the MdV-2026 64 x 64 / 63-channel / +-2 deg products, which are the only ones
+with a matched MeerKAT/MeerKAT+ pair.
+
+**Decision:** `group=None` resolves the legacy generation, unchanged. Asking for
+**any** group switches to MdV-2026. Only L band supports groups; an S-band group
+request raises. `_build_group_bds` requires exactly matching spatial grids and
+performs no resampling.
+
+**Rationale:** Mixing generations within one wizard would make `MM` and `MPM`
+incomparable, which defeats the point of asking for a group. An explicit
+`generation=` argument orthogonal to `group` was rejected for exactly that
+reason. On L band the pair matches exactly (`beam_eavg_L` and `beam_mavg_L`:
+both 64 x 64, `CDELT1 = 0.0625` deg, 63 channels from 869.375 MHz), so no
+resampling is needed at all. S band has no such pair: MKE's `beam_eavg_S3`
+(2420-3268 MHz, 0.03125 deg, +-1 deg) can pair with `beam_mavg_S04`, whose
+channels align exactly (MKE S3 is its channels 48-110) but which sits on a
+half-size +-0.5 deg grid, or with `beam_mavg_S0` + `beam_mavg_S4`, which match
+spatially but leave a 27 MHz hole at 2611-2639 MHz straddling the middle of
+MKE S3. Both were rejected over baking a cross-grid interpolation path in under
+time pressure. **Do not re-litigate this without new MdV data** — the blocker is
+the data, not the code.
+
+**Consequences:**
+- Single-telescope MKE S3 works today; only S-band *groups* are blocked.
+- Channel centres are matched within `FREQ_MATCH_ATOL_HZ = 1 kHz` rather than
+  for equality, since a 1e9 Hz centre round-tripped through float32 moves by
+  ~64 Hz against a 13.375 MHz narrowest channel. One side covering more channels
+  is sliced to the intersection.
+- The MdV-2026 and MKE products are not published, so their `cache` entries
+  carry `PLACEHOLDER_GDRIVE_ID`. `ensure_product_bds` refuses to download a
+  placeholder and tells the caller to stage the input zarr by hand;
+  `scripts/stage_group_cache.py` does that. Fill the real IDs into
+  `MDV2026_GDRIVE_IDS` when the tarballs are published.
+
 ## Sources
 
 - `src/meerkat_beams/utils.py:247-263,301-335` (`_get_prefilter`,
@@ -478,3 +594,11 @@ single construction line rather than a refactor of three call sites in a
   `docs/wiki/data-model.md`
 - CLAUDE.md ("Architecture", "CLI ↔ cab generation", "Conventions"
   sections)
+- issue #30 (MeerKAT+ Mueller blocks per baseline group), issue #27
+  (`partition_mueller`, the follow-up this foundation is for)
+- `src/meerkat_beams/utils.py` (`jones_to_mueller_cross`, `GROUP_TELESCOPES`,
+  `FREQ_MATCH_ATOL_HZ`, `_build_group_bds`)
+- `src/meerkat_beams/cache.py` (`GROUP_PRODUCTS`, `MDV2026_GDRIVE_IDS`,
+  `ensure_group_bds`, `ensure_product_bds`)
+- `tests/test_group_bds.py`, `tests/test_jones_mueller.py`,
+  `tests/test_group_integration.py`, `tests/test_beam_wizard_group.py`

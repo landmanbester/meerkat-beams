@@ -1,10 +1,10 @@
 ---
 type: reference
 title: BeamWizard interpolation and rendering internals
-description: beam_model (mdv/katbeam) and average (pa/azimuth) selectors, interpolate_beam prefilter/off-cube/spline-order/freq-guard semantics, get_source_coordinates transforms, optional-image paths, get_time_freq_beam canonical dim_names, and enrich_bds_xradio.
-tags: [beamwizard, interpolation, scipy, zarr, xradio, utils, katbeam]
-timestamp: 2026-10-01T00:00:00Z
-last_verified_commit: ad10c54
+description: beam_model (mdv/katbeam), group (MM/MPM/MPMP) and average (pa/azimuth) selectors, interpolate_beam prefilter/off-cube/spline-order/freq-guard semantics, get_source_coordinates transforms, optional-image paths, get_time_freq_beam canonical dim_names, and enrich_bds_xradio.
+tags: [beamwizard, interpolation, scipy, zarr, xradio, utils, katbeam, baseline-groups, meerkat+]
+timestamp: 2026-10-02T08:48:53Z
+last_verified_commit: f1c2cd4
 ---
 
 # BeamWizard interpolation and rendering internals
@@ -267,12 +267,48 @@ spanning a full turn (`test_azimuthal_matches_pa_average_given_full_pa_coverage`
 and the azimuthal map is invariant under both axis flips and transposition
 (`test_azimuthal_average_is_circularly_symmetric`).
 
+## `group` — baseline-group beams
+
+`group` selects a MeerKAT/MeerKAT+ baseline group instead of a single
+telescope. It is a third selector alongside `beam_model` and `average`, and
+it changes only *what `self.bds` holds* — every method below works against a
+group dataset unchanged.
+
+| condition | behaviour |
+|---|---|
+| `group=None` (default) | exactly today's behaviour; legacy MdV generation |
+| `group` with `bds_name` | `ValueError` — a group needs two stores; pass `band` |
+| `group` without `band` | `ValueError` |
+| `group` with `beam_model="katbeam"` | `ValueError` — katbeam has no MKE model and gives only power beams |
+| `group` not in `{MM, MPM, MPMP}` | `ValueError` naming the three |
+| `group` with a band other than `"L"` | `ValueError` naming the supported group bands |
+
+`cache.ensure_group_bds(band, group)` returns the `(p, q)` BDS paths —
+the same path twice for `MM`/`MPMP`, which is then opened once —
+and `_build_group_bds` cross-multiplies their Jones cubes into an
+**in-memory** `xarray.Dataset`. There is no file behind a group wizard, so
+nothing reopens it; at the MdV-2026 grid (64 x 64 x 63) the four Mueller/Stokes
+variables come to roughly 25 MB. `_get_prefilter` caches per
+`(var, i, j, order)` against that in-memory dataset exactly as it does for a
+file-backed one, so a full 16-element Stokes assembly holds 16 prefiltered
+cubes on top of it.
+
+`jones`/`njones` are absent for `MPM`, and `_get_prefilter` raises a
+group-specific message saying a cross baseline has no single Jones matrix,
+mirroring the katbeam hint. The schema, the `p = MeerKAT` convention and the
+conjugation rule for the reversed ordering are in
+[data-model.md](data-model.md).
+
 ## Sources
 
 - `src/meerkat_beams/utils.py:247-263` (`_get_prefilter`)
 - `src/meerkat_beams/utils.py:265-299` (`get_source_coordinates`)
 - `src/meerkat_beams/utils.py:301-335` (`interpolate_beam`)
 - `src/meerkat_beams/utils.py:189-230` (`attach_image`)
+- `src/meerkat_beams/utils.py` (`GROUP_TELESCOPES`, `_build_group_bds`,
+  `_align_group_freqs`, `_check_group_grids`, the `group` branch of `__init__`)
+- `src/meerkat_beams/cache.py` (`ensure_group_bds`, `GROUP_PRODUCTS`)
+- `tests/test_beam_wizard_group.py`, `tests/test_group_bds.py`
 - `src/meerkat_beams/utils.py:232-245` (`set_field_centre`)
 - `src/meerkat_beams/utils.py:655-916` (`get_time_freq_beam`)
 - `src/meerkat_beams/utils.py:722-728` (`_CANONICAL_DIM_NAMES` guard)
