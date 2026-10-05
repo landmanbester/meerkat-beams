@@ -34,7 +34,7 @@ jobs:
       # Python version, and hashes of uv.lock / pyproject.toml, so a separate
       # actions/cache step on ~/.cache/uv would just duplicate it.
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.0.1
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
 
