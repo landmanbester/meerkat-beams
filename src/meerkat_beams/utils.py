@@ -1103,6 +1103,47 @@ class BeamWizard(object):
                         empty.
             NotImplementedError: If weights is not None.
         """
+        if self.beam_model == "katbeam":
+            raise ValueError(
+                "partition_mueller is not available for beam_model='katbeam'. This is a scope "
+                "decision rather than a limitation: katbeam has no MeerKAT+ model, so it can "
+                "never serve the MM/MPM/MPMP baseline groups this entry point exists alongside, "
+                "and one return type answering for two beam provenances is harder to reason "
+                "about than one that does not. Keep a katbeam fallback on the caller's side."
+            )
+        if weights is not None:
+            raise NotImplementedError(
+                "weighted time averaging is not implemented. weights= is reserved for a "
+                "per-timestamp weight applied in the parallactic-angle average, broadcasting "
+                "against times after time_stepping has been applied. Pass weights=None for the "
+                "uniform average."
+            )
+        if np.ndim(freq) != 0:
+            raise ValueError(
+                f"freq must be a scalar frequency in Hz, got shape {np.shape(freq)}. "
+                "partition_mueller answers for one partition at one effective frequency; "
+                "pass float(freq)."
+            )
+        for name, sel in (("stokes_out", stokes_out), ("stokes_in", stokes_in)):
+            if not sel:
+                raise ValueError(f"{name} must name at least one Stokes parameter, got {sel!r}")
+            bad = [c for c in sel if c not in "IQUV"]
+            if bad:
+                raise ValueError(
+                    f"{name}={sel!r} contains {bad!r}, which is not in 'IQUV'. Stokes parameters "
+                    "are one upper case character each, matching the BDS stokes_i/stokes_j labels."
+                )
+            if len(set(sel)) != len(sel):
+                raise ValueError(
+                    f"{name}={sel!r} repeats a Stokes parameter. A duplicated row or column is a "
+                    "caller bug rather than a request; drop the repeat."
+                )
+        if times.size == 0:
+            raise ValueError("times is empty: there is nothing to average over. Pass the partition's timestamps.")
+        if times.isscalar:
+            # A single timestamp is a reasonable partition, but the averaging loop
+            # indexes the angle array, and a scalar Time gives a 0-d one.
+            times = times.reshape(1)
         var = "nstokes" if normalised else "stokes"
         block = None
         for a, i in enumerate(stokes_out):

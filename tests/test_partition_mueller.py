@@ -205,3 +205,94 @@ def test_an_attached_image_centre_survives_a_different_field_centre(bds_path, im
     before = bw.centre
     bw.partition_mueller(field_centre=SkyCoord(ra=10.0, dec=-45.0, unit="deg"), times=TIMES, freq=FREQ, l=L, m=M)
     assert bw.centre is before
+
+
+def _call(bw, **kwargs):
+    """partition_mueller with valid defaults, so each test overrides one thing."""
+    defaults = dict(field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M)
+    defaults.update(kwargs)
+    return bw.partition_mueller(**defaults)
+
+
+@pytest.mark.unit
+def test_katbeam_is_refused_as_a_scope_decision():
+    bw = BeamWizard(band="L", beam_model="katbeam", npix=16, fov_deg=2.0, num_freq=3)
+    with pytest.raises(ValueError, match="no MeerKAT. model"):
+        _call(bw)
+
+
+@pytest.mark.unit
+def test_weights_are_reserved(bw):
+    with pytest.raises(NotImplementedError, match="weighted time averaging"):
+        _call(bw, weights=np.ones(len(TIMES)))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", [np.float64(1.1e9), np.array(1.1e9)])
+def test_freq_accepts_numpy_scalars(bw, value):
+    """np.float64 and 0-d arrays are scalars and must not be refused."""
+    block = _call(bw, freq=value)
+    reference = _call(bw, freq=FREQ)
+    assert np.array_equal(block, reference)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", [np.array([1.1e9]), [1.1e9], np.array([1.0e9, 1.1e9])])
+def test_freq_array_raises(bw, value):
+    """A frequency axis is a shape ambiguity; the message must say what to pass."""
+    with pytest.raises(ValueError, match=r"float\(freq\)"):
+        _call(bw, freq=value)
+
+
+@pytest.mark.unit
+def test_scalar_time_is_accepted(bw):
+    """One timestamp, not wrapped in a list, is a reasonable partition."""
+    single = Time("2024-01-01T00:00:00")
+    block = _call(bw, times=single)
+    wrapped = _call(bw, times=single.reshape(1))
+    assert block.shape == (4, 1, len(M), len(L))
+    assert np.array_equal(block, wrapped)
+
+
+@pytest.mark.unit
+def test_empty_times_raises(bw):
+    """Rather than divide by zero and return NaN."""
+    with pytest.raises(ValueError, match="times is empty"):
+        _call(bw, times=Time([], format="isot"))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("field", ["stokes_out", "stokes_in"])
+def test_empty_stokes_selection_raises(bw, field):
+    with pytest.raises(ValueError, match="at least one Stokes parameter"):
+        _call(bw, **{field: ""})
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("field", ["stokes_out", "stokes_in"])
+def test_unknown_stokes_character_raises(bw, field):
+    with pytest.raises(ValueError, match="not in 'IQUV'"):
+        _call(bw, **{field: "IX"})
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("field", ["stokes_out", "stokes_in"])
+def test_lower_case_stokes_raises(bw, field):
+    """Lower case is refused, not coerced: the BDS labels are upper case."""
+    with pytest.raises(ValueError, match="upper case"):
+        _call(bw, **{field: "iq"})
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("field", ["stokes_out", "stokes_in"])
+def test_repeated_stokes_character_raises(bw, field):
+    with pytest.raises(ValueError, match="repeats a Stokes parameter"):
+        _call(bw, **{field: "IQI"})
+
+
+@pytest.mark.unit
+def test_frequency_outside_the_bds_range_is_left_to_interpolate_beam(bw):
+    """Already guarded downstream; duplicating it would mean two messages to keep
+    in step, so the existing one must still be what surfaces."""
+    with pytest.raises(ValueError, match="fall outside the BDS frequency range"):
+        _call(bw, freq=5.0e9)
