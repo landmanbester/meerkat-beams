@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-06T12:23:40Z
+timestamp: 2026-10-06T12:29:30Z
 ---
 
 # Wiki changelog
@@ -172,4 +172,6 @@ azimuthal averaging.
   files it covers was non-empty for a page just verified. All three are now
   stamped at `523df91`, the last commit touching `src/meerkat_beams/utils.py`.
   A stamp cannot name the commit that contains it, so the convention is the last
-  commit that changed the covered code, not the commit of the page edit.
+  commit that changed the covered code, not the commit of the page edit. That
+  rule now lives in `CLAUDE.md`'s maintenance rules rather than in each
+  implementation plan, which is where the wrong instruction came from.

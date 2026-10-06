@@ -15,7 +15,19 @@ Maintenance rules:
 - Read the relevant wiki page before working in a subsystem it covers.
 - If a change invalidates or extends a page, update that page plus its
   `timestamp` and `last_verified_commit` **in the same session**, and add a
-  line to `docs/wiki/log.md`.
+  line to `docs/wiki/log.md`. This applies to every page the change touches,
+  `index.md` included — extending its Pages table is extending a page.
+- `last_verified_commit` is **the last commit that changed the code the page
+  covers** — not the pre-commit `HEAD`, and not the commit carrying the page
+  edit. A stamp cannot name the commit that contains it: writing the hash
+  changes the file, which changes the hash. Stamping with the `HEAD` you see
+  before committing names a commit that predates the page's own edits, so
+  `git diff <stamp>..HEAD -- <files the page covers>` is non-empty for a page
+  you just verified and the staleness check fires on every fresh page. Commit
+  the code first, then stamp the page at that commit in a docs-only commit —
+  which leaves the covered files untouched, so the check stays clean.
+  `log.md` is the exception and carries no `last_verified_commit`: it is a
+  chronological record that covers no code, so only its `timestamp` moves.
 - Specs and plans under `docs/superpowers/` are ephemeral working scratch —
   gitignored, never cited. Fold any durable fact they contain into the wiki
   before finishing a branch.
