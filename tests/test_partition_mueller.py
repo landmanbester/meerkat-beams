@@ -296,3 +296,71 @@ def test_frequency_outside_the_bds_range_is_left_to_interpolate_beam(bw):
     in step, so the existing one must still be what surfaces."""
     with pytest.raises(ValueError, match="fall outside the BDS frequency range"):
         _call(bw, freq=5.0e9)
+
+
+MK = "MeerKAT"
+MKE = "MeerKAT Extension"
+
+
+@pytest.fixture(scope="module")
+def group_paths(tmp_path_factory):
+    """Two single-telescope BDSs, as cache.ensure_group_bds would hand back."""
+    tmp = tmp_path_factory.mktemp("partgroup")
+    p = build_telescope_bds(tmp / "mk.zarr", tmp / "mk.bds.zarr", scale=1.0, leak=0.05, telescope=MK)
+    q = build_telescope_bds(tmp / "mke.zarr", tmp / "mke.bds.zarr", scale=0.8, leak=0.12, phase=0.4, telescope=MKE)
+    return str(p), str(q)
+
+
+@pytest.fixture
+def group_wizard(group_paths, monkeypatch):
+    """Factory routing ensure_group_bds at the two local stores."""
+    from meerkat_beams import cache
+
+    p, q = group_paths
+    pairs = {"MM": (p, p), "MPM": (p, q), "MPMP": (q, q)}
+    monkeypatch.setattr(cache, "ensure_group_bds", lambda band, group: pairs[group])
+
+    def make(group):
+        return BeamWizard(band="L", group=group)
+
+    return make
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("group", ["MM", "MPMP"])
+def test_auto_groups_are_real(group_wizard, group):
+    block = _call(group_wizard(group))
+    assert block.dtype == np.float32
+
+
+@pytest.mark.unit
+def test_mixed_group_is_complex(group_wizard):
+    """MPM has no real-valued Mueller block: p=MeerKAT is a fixed convention."""
+    block = _call(group_wizard("MPM"))
+    assert block.dtype == np.complex64
+
+
+@pytest.mark.unit
+def test_mixed_group_imaginary_part_is_not_negligible(group_wizard):
+    """If it were, returning complex64 would be pointless and .real would be safe."""
+    block = _call(group_wizard("MPM"), stokes_out="IQUV", stokes_in="IQUV")
+    assert np.abs(block.imag).max() > 1e-4
+
+
+@pytest.mark.unit
+def test_mixed_group_on_axis_block_is_the_identity(group_wizard):
+    zero = np.array([0.0])
+    block = _call(group_wizard("MPM"), l=zero, m=zero, stokes_out="IQUV", stokes_in="IQUV")
+    np.testing.assert_allclose(block[:, :, 0, 0], np.eye(4), rtol=0, atol=1e-4)
+
+
+@pytest.mark.unit
+def test_mixed_group_tracks_the_geometric_mean_of_the_autos(group_wizard):
+    """The cross I->I beam should sit between the two auto groups, near their
+    geometric mean -- the physical sanity check that the assembly is not using
+    one telescope twice."""
+    mm = _call(group_wizard("MM"))[0, 0]
+    pp = _call(group_wizard("MPMP"))[0, 0]
+    mpm = np.abs(_call(group_wizard("MPM"))[0, 0])
+    expected = np.sqrt(np.clip(mm, 0, None) * np.clip(pp, 0, None))
+    np.testing.assert_allclose(mpm, expected, rtol=0.35, atol=0.02)
