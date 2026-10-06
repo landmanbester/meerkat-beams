@@ -759,6 +759,7 @@ class BeamWizard(object):
         average: str = "pa",
         num_angles: int = 64,
         verbose: int = 1,
+        centre: Optional[SkyCoord] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute the rotation-averaged beam at specified l/m coordinates.
@@ -794,6 +795,13 @@ class BeamWizard(object):
                      symmetric map -- usually enough for image-space mosaicing.
             num_angles: number of angles for average="azimuth" (default 64).
                         Must be at least 2. Ignored when average="pa".
+            centre: Pointing centre for the parallactic-angle computation when
+                    average="pa". If None (default), uses the wizard's own centre
+                    from an attached image or set_field_centre(), which raises if
+                    neither is available. A supplied SkyCoord is used for this
+                    call only and is not stored, so one wizard can serve many
+                    pointings. Ignored when average="azimuth", which has no
+                    centre dependence.
 
         Returns:
             Tuple of (mean_beam, variance_beam) as np.ndarray in (Y, X) index
@@ -882,7 +890,12 @@ class BeamWizard(object):
         if average == "pa":
             # Compute parallactic angles at each time for the field center
             frame = AltAz(obstime=times, location=loc)
-            altaz_centre = self.centre.transform_to(frame)
+            # centre=None falls back to the wizard's own pointing centre (which
+            # raises if no image is attached). A supplied centre is used here and
+            # nowhere else: nothing is stored, so one wizard can serve many
+            # partitions with different pointings.
+            pa_centre = self.centre if centre is None else centre
+            altaz_centre = pa_centre.transform_to(frame)
 
             # Get position angle to NCP (north celestial pole) to determine parallactic angle
             ncp = SkyCoord(ra=0 * u.deg, dec=90 * u.deg)
