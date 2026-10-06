@@ -122,20 +122,27 @@ def build_synthetic_image(path: Path) -> Path:
     return path
 
 
-def jones_beam_cube(scale=1.0, leak=0.0, phase=0.0, n_xy=N_XY, n_freq=None):
+def jones_beam_cube(scale=1.0, leak=0.0, phase=0.0, n_xy=N_XY, n_freq=None, sigma=None):
     """MdV-ordered [HH, HV, VH, VV] complex beam cube, shape (4, NFREQ, NY, NX).
 
-    A Gaussian co-pol envelope scaled by ``scale``, a radial leakage term of
-    peak amplitude ``leak`` in the cross-hands, and a phase ramp of ``phase``
-    radians per half-width across x. All three are zero/unity at the centre
-    pixel, so the on-axis Jones is ``scale * identity`` and normalising by its
-    inverse gives exactly the identity on axis.
+    A Gaussian co-pol envelope of width ``sigma`` pixels (default ``SIGMA_PIX``)
+    scaled by ``scale``, a radial leakage term of peak amplitude ``leak`` in the
+    cross-hands, and a phase ramp of ``phase`` radians per half-width across x.
+    All three are zero/unity at the centre pixel, so the on-axis Jones is
+    ``scale * identity`` and normalising by its inverse gives exactly the
+    identity on axis.
+
+    ``scale`` is divided out by normalisation, so two stores differing only in
+    ``scale`` have near-identical ``nstokes``. Use ``sigma`` when a test needs
+    two telescopes whose *normalised* beams actually differ -- physically the
+    right knob too, since a larger dish gives a narrower beam.
     """
     n_freq = len(FREQS) if n_freq is None else n_freq
+    sigma = SIGMA_PIX if sigma is None else sigma
     i0 = n_xy // 2
     y, x = np.indices((n_xy, n_xy), dtype=np.float64)
     r2 = (x - i0) ** 2 + (y - i0) ** 2
-    envelope = np.exp(-0.5 * r2 / SIGMA_PIX**2)
+    envelope = np.exp(-0.5 * r2 / sigma**2)
     ramp = (x - i0) / max(i0, 1)
     co = scale * envelope * np.exp(1j * phase * ramp)
     # HV and VH must differ, or a swap of the Jones receptor axes is a no-op
@@ -147,12 +154,22 @@ def jones_beam_cube(scale=1.0, leak=0.0, phase=0.0, n_xy=N_XY, n_freq=None):
 
 
 def build_mean_beam_zarr(
-    path, *, scale=1.0, leak=0.0, phase=0.0, telescope=None, antenna=None, band="L", freqs=None, degs=None
+    path,
+    *,
+    scale=1.0,
+    leak=0.0,
+    phase=0.0,
+    telescope=None,
+    antenna=None,
+    band="L",
+    freqs=None,
+    degs=None,
+    sigma=None,
 ):
     """MdV-shaped mean-beam zarr, i.e. exactly what mdv_beams_to_bds consumes."""
     freqs = FREQS if freqs is None else np.asarray(freqs, dtype=float)
     degs = (np.arange(N_XY) - I0) * DELTA if degs is None else np.asarray(degs, dtype=float)
-    beam = jones_beam_cube(scale=scale, leak=leak, phase=phase, n_xy=len(degs), n_freq=len(freqs))
+    beam = jones_beam_cube(scale=scale, leak=leak, phase=phase, n_xy=len(degs), n_freq=len(freqs), sigma=sigma)
     ds = xarray.Dataset(
         {"BEAM": xarray.DataArray(beam, dims=("corr", "chan", "l_beam", "m_beam"))},
         coords={"corr": ["XX", "XY", "YX", "YY"], "chan": freqs, "l_beam": degs, "m_beam": degs},

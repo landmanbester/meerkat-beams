@@ -152,3 +152,17 @@ azimuthal averaging.
   and that the amortisation worth having is the per-wizard prefilter cache.
 - D17 records that katbeam is excluded by scope, and corrects the premise in
   issue #27: `katbeam_bds.py` does produce a full 4×4 Stokes beam.
+- Post-review fixes: the `partition_mueller` fixtures were not discriminating.
+  The single-telescope BDS used `scale=1.0`, which makes `stokes` and `nstokes`
+  bit-identical (normalising by an identity on-axis Jones is a no-op), so every
+  assertion about `normalised=False` passed for the wrong reason; it now uses
+  `scale=0.7`. The two group BDSs differed only in `scale`, which normalisation
+  divides out, leaving their `nstokes` 3e-5 apart — so the cross-group
+  geometric-mean check accepted either auto group in the cross's place; the MKE
+  fixture now has a narrower beam (`sigma=3.5`, the physical case for 15 m
+  dishes) and the tolerance is tight enough to reject both substitutions.
+  `jones_beam_cube`/`build_mean_beam_zarr` grew a `sigma` argument for this.
+  The normalisation row in this page's `partition_mueller` table had the
+  relationship inverted ("divided by the Jones inverse" is multiplying by the
+  matrix) and is corrected to match `data-model.md` and D14; the orientation row
+  no longer implies the shape test covers transposed content.

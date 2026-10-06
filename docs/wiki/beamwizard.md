@@ -3,8 +3,8 @@ type: reference
 title: BeamWizard interpolation and rendering internals
 description: beam_model (mdv/katbeam), group (MM/MPM/MPMP) and average (pa/azimuth) selectors, interpolate_beam prefilter/off-cube/spline-order/freq-guard semantics, get_source_coordinates transforms, optional-image paths, get_time_freq_beam canonical dim_names, enrich_bds_xradio, and partition_mueller with the centre= override.
 tags: [beamwizard, interpolation, scipy, zarr, xradio, utils, katbeam, baseline-groups, meerkat+, partition-mueller, mueller]
-timestamp: 2026-10-06T09:59:14Z
-last_verified_commit: f71b7ef
+timestamp: 2026-10-06T10:15:21Z
+last_verified_commit: 6f59aa9
 ---
 
 # BeamWizard interpolation and rendering internals
@@ -326,8 +326,8 @@ Contract, all four parts pinned by `tests/test_partition_mueller.py`:
 
 | | |
 |---|---|
-| orientation | `(Y, X)` — axis -2 is m/north, axis -1 is l/east, inherited from `get_rotation_averaged_beam`. A non-square-grid test makes a transpose a shape error rather than a wrong answer. |
-| normalisation | `normalised=True` (the default) reads `nstokes` and is what apparent-flux prediction wants: it is divided by the central-pixel Jones inverse, so the on-axis response is the identity and the model's flux scale survives. `normalised=False` reads `stokes`, which additionally folds in the absolute voltage gain — degenerate with the scale calibration already set. |
+| orientation | `(Y, X)` — axis -2 is m/north, axis -1 is l/east, inherited from `get_rotation_averaged_beam`. A non-square-grid test turns a transposed *output array* into a shape error. Transposed *content* — an `xp`/`yp` swap, which keeps the shape — is pinned one level down, by `tests/test_beam_wizard.py` plus this method's exact-equality-with-`get_rotation_averaged_beam` test; it is not directly testable on the synthetic fixture, whose beam is near-radially-symmetric (see the trap noted in `tests/test_beam_wizard.py`). |
+| normalisation | `normalised=True` (the default) reads `nstokes` and is what apparent-flux prediction wants: it is pre-multiplied by the inverse of the central-pixel Jones matrix, so the on-axis response is the identity and the model's flux scale survives. `normalised=False` reads `stokes`, which additionally folds in the absolute voltage gain — degenerate with the flux scale that calibration has already set. |
 | no `1/n` | The bare beam. The wgridder's geometric n-term stays on the caller's side (pfb-imaging D22). |
 | dtype | `float32` for a single telescope and for `MM`/`MPMP`; `complex64` for `MPM`. See [D13](design-decisions.md) — taking `.real` here would undo the fixed `p = MeerKAT` convention. |
 

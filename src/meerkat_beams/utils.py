@@ -1068,7 +1068,7 @@ class BeamWizard(object):
                         identity and the intrinsic model's flux scale survives the
                         multiplication. Raw ``stokes`` additionally folds the
                         absolute voltage gain into the prediction, which is
-                        degenerate with the flux scale calibration has already set.
+                        degenerate with the flux scale that calibration has already set.
             weights: Reserved; must be None. See the NotImplementedError text.
 
         Returns:

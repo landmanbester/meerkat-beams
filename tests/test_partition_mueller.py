@@ -16,7 +16,10 @@ FREQ = 1.1e9
 def bds_path(tmp_path_factory):
     """A real BDS, built by running mdv_beams_to_bds on a synthetic mean-beam zarr."""
     tmp = tmp_path_factory.mktemp("partmueller")
-    return str(build_telescope_bds(tmp / "mk.zarr", tmp / "mk.bds.zarr", scale=1.0, leak=0.05, phase=0.3))
+    # scale != 1.0 on purpose: with an identity on-axis Jones, normalising is a
+    # no-op and `stokes` == `nstokes` bit for bit, which makes every assertion
+    # about normalised=False pass for the wrong reason.
+    return str(build_telescope_bds(tmp / "mk.zarr", tmp / "mk.bds.zarr", scale=0.7, leak=0.05, phase=0.3))
 
 
 @pytest.fixture(scope="module")
@@ -306,8 +309,15 @@ MKE = "MeerKAT Extension"
 def group_paths(tmp_path_factory):
     """Two single-telescope BDSs, as cache.ensure_group_bds would hand back."""
     tmp = tmp_path_factory.mktemp("partgroup")
+    # The two must differ in beam *width*, not just scale: normalisation divides
+    # scale out, so scale-only fixtures give near-identical nstokes and the
+    # cross-group geometric-mean check passes even when one telescope is used
+    # twice. A narrower MKE beam is also the physical case -- 15 m dishes
+    # against MeerKAT's 13.5 m.
     p = build_telescope_bds(tmp / "mk.zarr", tmp / "mk.bds.zarr", scale=1.0, leak=0.05, telescope=MK)
-    q = build_telescope_bds(tmp / "mke.zarr", tmp / "mke.bds.zarr", scale=0.8, leak=0.12, phase=0.4, telescope=MKE)
+    q = build_telescope_bds(
+        tmp / "mke.zarr", tmp / "mke.bds.zarr", scale=0.8, leak=0.12, phase=0.4, sigma=3.5, telescope=MKE
+    )
     return str(p), str(q)
 
 
@@ -363,4 +373,38 @@ def test_mixed_group_tracks_the_geometric_mean_of_the_autos(group_wizard):
     pp = _call(group_wizard("MPMP"))[0, 0]
     mpm = np.abs(_call(group_wizard("MPM"))[0, 0])
     expected = np.sqrt(np.clip(mm, 0, None) * np.clip(pp, 0, None))
-    np.testing.assert_allclose(mpm, expected, rtol=0.35, atol=0.02)
+    # The identity is exact for the co-pol-dominated I->I term, not approximate:
+    # |kron(E_p, conj(E_q))| == sqrt(|E_p|^2 |E_q|^2). Measured deviations on this
+    # fixture are 0.5% for the true cross against 100% for MPMP substituted and
+    # four orders for MM, so a tight tolerance is what gives the test its teeth --
+    # the loose rtol=0.35/atol=0.02 copied from the real-data integration test
+    # accepted either auto group in the cross's place.
+    np.testing.assert_allclose(mpm, expected, rtol=0.02, atol=1e-5)
+
+
+@pytest.mark.unit
+def test_normalised_false_differs_from_the_default(bw):
+    """Guards the normalised= contract against a fixture that cannot see it.
+
+    With an on-axis Jones of exactly the identity, normalising is a no-op and
+    `stokes` and `nstokes` are bit-identical, so every assertion about
+    normalised=False passes for the wrong reason. The fixture's scale must keep
+    the two variables apart.
+    """
+    default = _call(bw)
+    raw = _call(bw, normalised=False)
+    assert not np.allclose(default, raw)
+
+
+@pytest.mark.unit
+def test_the_two_auto_groups_differ_enough_to_constrain_the_cross(group_wizard):
+    """Guards the geometric-mean check against near-identical fixtures.
+
+    Normalisation divides `scale` out, so two stores differing only in scale have
+    near-identical normalised beams -- and the geometric mean of two identical
+    maps is each of them, which makes the cross-group check pass even when one
+    telescope is used twice. The two fixtures must differ in beam *width*.
+    """
+    mm = _call(group_wizard("MM"))[0, 0]
+    pp = _call(group_wizard("MPMP"))[0, 0]
+    assert np.abs(mm - pp).max() > 0.05
