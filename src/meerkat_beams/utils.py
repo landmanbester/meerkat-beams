@@ -1009,6 +1009,131 @@ class BeamWizard(object):
 
         return beam_mean, beam_var
 
+    def partition_mueller(
+        self,
+        *,
+        field_centre: SkyCoord,
+        times: Time,
+        freq: float,
+        l: np.ndarray,
+        m: np.ndarray,
+        stokes_out: str = "IQUV",
+        stokes_in: str = "I",
+        location: Optional[EarthLocation] = None,
+        time_stepping: int = 1,
+        pixel_stepping: int = 1,
+        normalised: bool = True,
+        weights: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        """Rotation-averaged Stokes-basis Mueller block for one data partition.
+
+        Answers "what is the average beam over this chunk of data, on this image
+        grid?" so that an intrinsic Stokes model can be turned into an apparent
+        one before degridding::
+
+            apparent_stokes[i] = sum_j  M[i, j] * model_stokes[j]
+
+        The beam source is the wizard: whatever ``bds_name``/``band``/``group`` it
+        was constructed with is what this serves. Deciding which visibilities
+        belong to which baseline group, time chunk or frequency chunk is the
+        calling application's job, so a mixed array means one wizard per group.
+
+        Args:
+            field_centre: Where the antennas point -- the pointing centre, not the
+                          image tangent point. Parallactic angles are computed for
+                          this direction. Not stored: one wizard serves many
+                          partitions with different pointings.
+            times: The chunk's timestamps. The parallactic-angle average runs over
+                   these. A scalar Time (a single timestamp) is accepted.
+            freq: The chunk's effective frequency in Hz, a scalar.
+            l: Output grid in degrees, East positive, relative to field_centre.
+            m: Output grid in degrees, North positive, relative to field_centre.
+               1D l/m are meshed internally; 2D l/m must already be (Y, X)-shaped
+               and are passed through in that orientation.
+            stokes_out: Subset of "IQUV" selecting the block's rows, in the order
+                        given. Defaults to the full "IQUV".
+            stokes_in: Subset of "IQUV" selecting the block's columns, in the order
+                       given. Defaults to "I" -- the apparent-from-intrinsic-I
+                       column, which is what a total-intensity model needs.
+            location: Observer EarthLocation. None means MeerKAT.
+            time_stepping: Use every Nth timestamp. Defaults to 1, unlike
+                           get_rotation_averaged_beam's 4, because a data partition
+                           is already a narrow time range.
+            pixel_stepping: Compute every Nth pixel and interpolate back to the
+                            full grid. Defaults to 1.
+            normalised: True (default) reads ``nstokes``, False reads ``stokes``.
+                        **A caller predicting apparent flux wants the default.**
+                        ``nstokes`` is pre-multiplied by the inverse of the
+                        central-pixel Jones matrix, so the on-axis response is the
+                        identity and the intrinsic model's flux scale survives the
+                        multiplication. Raw ``stokes`` additionally folds the
+                        absolute voltage gain into the prediction, which is
+                        degenerate with the flux scale calibration has already set.
+            weights: Reserved; must be None. See the NotImplementedError text.
+
+        Returns:
+            ``(len(stokes_out), len(stokes_in), NY, NX)`` in **(Y, X)** index order
+            -- axis -2 is m/north, axis -1 is l/east, the FITS convention -- where
+            NY = len(m) and NX = len(l) for 1D inputs. dtype follows the data:
+            float32 for a single telescope and for the ``MM``/``MPMP`` baseline
+            groups, complex64 for ``MPM``, whose first antenna is MeerKAT by fixed
+            convention and which therefore has no real-valued Mueller block.
+
+            This is the **bare** beam: no ``1/n`` geometric term. Folding the
+            gridder's n-term in is the caller's concern and stays on their side of
+            the fence.
+
+        Notes:
+            Pure numpy -- no dask, no Ray. The two consumers distribute completely
+            differently, so distribution stays in the applications.
+
+            Cost: the spline prefilter cache holds one filtered cube per
+            ``(var, i, j, order)`` key for as long as the wizard lives, so the
+            first call pays for ``len(stokes_out) * len(stokes_in)`` of them and
+            later calls pay nothing. That is why this is a method -- hold one
+            wizard per worker and reuse it. Sizes: a legacy 128x128x1024 float32
+            BDS is ~67 MB per cube (~270 MB at the ``stokes_in="I"`` default,
+            ~1.1 GB for a full 4x4); the MdV-2026 64x64x63 products are ~1 MB per
+            cube (~16 MB for a full 4x4), or ~2 MB per complex64 cube for ``MPM``.
+
+        Raises:
+            ValueError: If the wizard uses beam_model='katbeam', if freq is not a
+                        scalar, if stokes_out/stokes_in are empty, contain a
+                        character outside "IQUV", or repeat one, or if times is
+                        empty.
+            NotImplementedError: If weights is not None.
+        """
+        var = "nstokes" if normalised else "stokes"
+        block = None
+        for a, i in enumerate(stokes_out):
+            for b, j in enumerate(stokes_in):
+                # The variance is discarded: the consumers predict apparent flux
+                # from the mean, and nothing in the requesting issues wants the
+                # spread. It stays one get_rotation_averaged_beam call away.
+                mean, _ = self.get_rotation_averaged_beam(
+                    l=l,
+                    m=m,
+                    times=times,
+                    loc=location,
+                    freq=np.array([float(freq)]),
+                    time_stepping=time_stepping,
+                    pixel_stepping=pixel_stepping,
+                    var=var,
+                    i=i,
+                    j=j,
+                    average="pa",
+                    centre=field_centre,
+                    verbose=0,
+                )
+                if block is None:
+                    # get_rotation_averaged_beam accumulates in float64/complex128;
+                    # the block mirrors the BDS storage dtype instead, which halves
+                    # what a worker holds and is all the precision the data has.
+                    dtype = np.complex64 if np.iscomplexobj(mean) else np.float32
+                    block = np.empty((len(stokes_out), len(stokes_in)) + mean.shape, dtype=dtype)
+                block[a, b] = mean
+        return block
+
     def get_time_freq_beam(
         self,
         filename: str,
