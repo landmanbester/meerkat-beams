@@ -15,7 +15,19 @@ Maintenance rules:
 - Read the relevant wiki page before working in a subsystem it covers.
 - If a change invalidates or extends a page, update that page plus its
   `timestamp` and `last_verified_commit` **in the same session**, and add a
-  line to `docs/wiki/log.md`.
+  line to `docs/wiki/log.md`. This applies to every page the change touches,
+  `index.md` included — extending its Pages table is extending a page.
+- `last_verified_commit` is **the last commit that changed the code the page
+  covers** — not the pre-commit `HEAD`, and not the commit carrying the page
+  edit. A stamp cannot name the commit that contains it: writing the hash
+  changes the file, which changes the hash. Stamping with the `HEAD` you see
+  before committing names a commit that predates the page's own edits, so
+  `git diff <stamp>..HEAD -- <files the page covers>` is non-empty for a page
+  you just verified and the staleness check fires on every fresh page. Commit
+  the code first, then stamp the page at that commit in a docs-only commit —
+  which leaves the covered files untouched, so the check stays clean.
+  `log.md` is the exception and carries no `last_verified_commit`: it is a
+  chronological record that covers no code, so only its `timestamp` moves.
 - Specs and plans under `docs/superpowers/` are ephemeral working scratch —
   gitignored, never cited. Fold any durable fact they contain into the wiki
   before finishing a branch.
@@ -72,7 +84,16 @@ instead cross-multiplies two single-telescope BDSs into an in-memory
 baseline-group dataset and switches to the MdV-2026 generation. `get_rotation_averaged_beam` also takes
 `average="pa"|"azimuth"` — the latter averages over a uniform full turn instead
 of the observation's parallactic angles, needs no time axis, and returns a
-circularly symmetric map. Its method-by-method contract
+circularly symmetric map.
+`partition_mueller` returns one data partition's rotation-averaged Stokes-basis
+Mueller block, shape `(len(stokes_out), len(stokes_in), NY, NX)` in `(Y, X)` order,
+for `pfb-imaging` and `QuartiCal` to turn an intrinsic Stokes model into an
+apparent one (issue #27). It is a method so the per-`(var, i, j)` prefilter cache
+is reused across partitions, takes the pointing centre per call via
+`get_rotation_averaged_beam`'s new `centre=` without mutating the wizard, returns
+the bare beam with no `1/n`, and is refused for `beam_model="katbeam"` by scope
+(see `docs/wiki/design-decisions.md` D16, D17).
+Its method-by-method contract
 (prefilter caching and dtype, off-cube policy, spline order, the optional-
 image construction paths, canonical `dim_names`) is documented in
 [`docs/wiki/beamwizard.md`](docs/wiki/beamwizard.md); the BDS/xradio schema
@@ -100,7 +121,7 @@ hand, which `scripts/stage_group_cache.py` does.
 - **xradio zarr**: schema-compatible primary-beam image `(time, frequency, polarization, l, m)` with `l`/`m` in radians and a `direction` attribute block. Produced by `bds-to-xradio` or `mdv-to-xradio`.
 - **Normalised vs not**: `njones` / `nstokes` are pre-multiplied by the inverse of the central-pixel Jones matrix so the on-axis beam is the identity; use these unless you specifically need raw voltage beams.
 - **MeerKAT+ (MKE)**: the MeerKAT Extension dishes. MdV's 2026 report (SSA-0004B-0002 Rev 01) ships `eavg` (extension-average) beams alongside the `mavg` MeerKAT ones, on a **different grid generation** from the legacy archive products: 64×64 / 63 channels / ±2° (L), versus the legacy 128×128 / 1024 channels / ±4°.
-- **Baseline groups**: on a mixed array the beam depends on which pair of dishes forms a baseline. `BeamWizard(band="L", group=...)` serves `MM` (MeerKAT–MeerKAT), `MPM` (MeerKAT–MeerKAT+) and `MPMP` (MeerKAT+–MeerKAT+), assembled **in memory** from two single-telescope BDSs — nothing group-shaped is written to disk. The first antenna of a baseline is MeerKAT by fixed convention, so `MPM`'s Stokes variables are **complex64** (the autos stay float32) and its `jones`/`njones` are absent. Partitioning visibilities into groups is the calling application's job (issue #30); `partition_mueller` (issue #27) is a later branch. **L band only** — no matched MeerKAT counterpart exists for MKE's S3 product (see `docs/wiki/design-decisions.md` D15; do not re-litigate without new MdV data).
+- **Baseline groups**: on a mixed array the beam depends on which pair of dishes forms a baseline. `BeamWizard(band="L", group=...)` serves `MM` (MeerKAT–MeerKAT), `MPM` (MeerKAT–MeerKAT+) and `MPMP` (MeerKAT+–MeerKAT+), assembled **in memory** from two single-telescope BDSs — nothing group-shaped is written to disk. The first antenna of a baseline is MeerKAT by fixed convention, so `MPM`'s Stokes variables are **complex64** (the autos stay float32) and its `jones`/`njones` are absent. Partitioning visibilities into groups is the calling application's job (issue #30); the per-partition Mueller block it then asks for is `BeamWizard.partition_mueller` (issue #27), which has no `group=` argument of its own because the caller already holds the right wizard. **L band only** — no matched MeerKAT counterpart exists for MKE's S3 product (see `docs/wiki/design-decisions.md` D15; do not re-litigate without new MdV data).
 
 Full field/variable/dtype tables for all three formats:
 [`docs/wiki/data-model.md`](docs/wiki/data-model.md).

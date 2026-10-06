@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+]
-timestamp: 2026-10-02T12:02:46Z
-last_verified_commit: eac4bd0
+timestamp: 2026-10-06T12:23:40Z
+last_verified_commit: 523df91
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -626,3 +626,58 @@ you touch the fixtures.
   `ensure_group_bds`, `ensure_product_bds`)
 - `tests/test_group_bds.py`, `tests/test_jones_mueller.py`,
   `tests/test_group_integration.py`, `tests/test_beam_wizard_group.py`
+
+## D16 — `partition_mueller` assembles, it does not fuse
+
+**Context.** A full 4×4 Mueller block means 16 calls to
+`get_rotation_averaged_beam`. Each call recomputes the parallactic-angle geometry
+and the rotated beam-pixel coordinates for the same times and the same pixels, so a
+fused implementation could compute those once and interpolate all 16 elements
+against them.
+
+**Decision.** `partition_mueller` loops over `get_rotation_averaged_beam`, one call
+per `(i, j)`, and stacks the means. No fused inner loop.
+
+**Rationale.** The per-element cost is dominated by the order-3 `map_coordinates`
+call, which evaluates 64 spline taps per point; the shared coordinate preparation
+is roughly six numpy operations over the same points — on the order of 10% of the
+work. Buying that 10% costs either a duplicated averaging core or a restructuring
+of a load-bearing method that is already under test. One definition of
+"rotation-averaged beam" is worth more than 10%.
+
+The amortisation that actually matters is already there and is per *wizard*, not
+per call: `_get_prefilter` caches on `(var, i, j, order)`, so the second and
+subsequent partitions pay nothing for prefiltering. That is why `partition_mueller`
+is a method.
+
+**Consequences.** A fused version remains a drop-in replacement behind the same
+signature if profiling in `pfb-imaging` ever justifies it — which is itself an
+argument for having fixed the signature. The prefilter cache holds one cube per
+block element for the wizard's lifetime; the sizes are tabulated in
+[`beamwizard.md`](beamwizard.md) and in the method's docstring.
+
+## D17 — katbeam is out of `partition_mueller` by scope, not by limitation
+
+**Context.** `pfb-imaging` supports both `katbeam` and `BeamWizard`. Issue #27
+proposed either giving `partition_mueller` a katbeam path returning a diagonal
+block, or declaring katbeam the caller's own fallback, on the grounds that katbeam
+"only gives per-correlation power beams, so at best it can produce a diagonal
+Mueller".
+
+**Decision.** `partition_mueller` raises `ValueError` for
+`beam_model="katbeam"`, and the message says the exclusion is a scope decision.
+
+**Rationale.** The stated grounds do not hold for this codebase:
+`katbeam_bds.py` already synthesizes a full 4×4 `nstokes`/`nmueller` from a
+diagonal Jones, and because HH ≠ VV the I↔Q coupling is genuinely non-zero. So a
+katbeam path would have cost no extra code. The reason to leave it out is
+different: katbeam has no MeerKAT+ model, so it could never serve the
+`MM`/`MPM`/`MPMP` baseline groups this entry point exists alongside, and one
+return type answering for two beam provenances is harder to reason about than one
+that does not. `pfb-imaging` already has its katbeam fallback on its own side.
+
+**Consequences.** A caller wanting an analytic Mueller block for a MeerKAT-only
+array implements it, or asks for this decision to be revisited — in which case the
+work is a few lines, not a feature. The error message is explicit so nobody
+rediscovers the false premise. Note that `BeamWizard(beam_model="katbeam")` keeps
+working for everything else, including `get_rotation_averaged_beam`.

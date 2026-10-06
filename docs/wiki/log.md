@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-02T12:02:46Z
+timestamp: 2026-10-06T12:29:30Z
 ---
 
 # Wiki changelog
@@ -138,3 +138,40 @@ azimuthal averaging.
   cache entry and stages through a `.partial` + `os.replace` so a failed copy
   leaves the previous entry serving; D8 and CLAUDE.md updated for the
   `hip-cargo>=0.4.0` floor (commit `4b07822`, which predates this branch).
+
+## 2026-10-06 — partition_mueller
+
+- `BeamWizard.partition_mueller` documented in `beamwizard.md`: one per-partition
+  Stokes Mueller block for `pfb-imaging` and `QuartiCal` (issue #27), with the
+  four contract points — `(Y, X)` orientation, `nstokes` for apparent flux, no
+  `1/n`, and dtype following the data — plus the prefilter memory table.
+- `centre=` on `get_rotation_averaged_beam` documented in the same section: it is
+  how a partition's pointing centre reaches the parallactic-angle computation
+  without mutating a wizard shared across chunks.
+- D16 records that the method assembles rather than fuses the 16 element calls,
+  and that the amortisation worth having is the per-wizard prefilter cache.
+- D17 records that katbeam is excluded by scope, and corrects the premise in
+  issue #27: `katbeam_bds.py` does produce a full 4×4 Stokes beam.
+- Post-review fixes: the `partition_mueller` fixtures were not discriminating.
+  The single-telescope BDS used `scale=1.0`, which makes `stokes` and `nstokes`
+  bit-identical (normalising by an identity on-axis Jones is a no-op), so every
+  assertion about `normalised=False` passed for the wrong reason; it now uses
+  `scale=0.7`. The two group BDSs differed only in `scale`, which normalisation
+  divides out, leaving their `nstokes` 3e-5 apart — so the cross-group
+  geometric-mean check accepted either auto group in the cross's place; the MKE
+  fixture now has a narrower beam (`sigma=3.5`, the physical case for 15 m
+  dishes) and the tolerance is tight enough to reject both substitutions.
+  `jones_beam_cube`/`build_mean_beam_zarr` grew a `sigma` argument for this.
+  The normalisation row in this page's `partition_mueller` table had the
+  relationship inverted ("divided by the Jones inverse" is multiplying by the
+  matrix) and is corrected to match `data-model.md` and D14; the orientation row
+  no longer implies the shape test covers transposed content.
+- Frontmatter correction: `beamwizard.md`, `design-decisions.md` and `index.md`
+  were stamped with the commit *preceding* the one that carried their edits, so
+  each page failed its own staleness contract — `git diff <stamp>..HEAD` over the
+  files it covers was non-empty for a page just verified. All three are now
+  stamped at `523df91`, the last commit touching `src/meerkat_beams/utils.py`.
+  A stamp cannot name the commit that contains it, so the convention is the last
+  commit that changed the covered code, not the commit of the page edit. That
+  rule now lives in `CLAUDE.md`'s maintenance rules rather than in each
+  implementation plan, which is where the wrong instruction came from.
