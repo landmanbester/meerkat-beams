@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-02T12:02:46Z
+timestamp: 2026-10-06T12:23:40Z
 ---
 
 # Wiki changelog
@@ -166,3 +166,10 @@ azimuthal averaging.
   relationship inverted ("divided by the Jones inverse" is multiplying by the
   matrix) and is corrected to match `data-model.md` and D14; the orientation row
   no longer implies the shape test covers transposed content.
+- Frontmatter correction: `beamwizard.md`, `design-decisions.md` and `index.md`
+  were stamped with the commit *preceding* the one that carried their edits, so
+  each page failed its own staleness contract — `git diff <stamp>..HEAD` over the
+  files it covers was non-empty for a page just verified. All three are now
+  stamped at `523df91`, the last commit touching `src/meerkat_beams/utils.py`.
+  A stamp cannot name the commit that contains it, so the convention is the last
+  commit that changed the covered code, not the commit of the page edit.
