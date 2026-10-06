@@ -138,3 +138,17 @@ azimuthal averaging.
   cache entry and stages through a `.partial` + `os.replace` so a failed copy
   leaves the previous entry serving; D8 and CLAUDE.md updated for the
   `hip-cargo>=0.4.0` floor (commit `4b07822`, which predates this branch).
+
+## 2026-10-06 — partition_mueller
+
+- `BeamWizard.partition_mueller` documented in `beamwizard.md`: one per-partition
+  Stokes Mueller block for `pfb-imaging` and `QuartiCal` (issue #27), with the
+  four contract points — `(Y, X)` orientation, `nstokes` for apparent flux, no
+  `1/n`, and dtype following the data — plus the prefilter memory table.
+- `centre=` on `get_rotation_averaged_beam` documented in the same section: it is
+  how a partition's pointing centre reaches the parallactic-angle computation
+  without mutating a wizard shared across chunks.
+- D16 records that the method assembles rather than fuses the 16 element calls,
+  and that the amortisation worth having is the per-wizard prefilter cache.
+- D17 records that katbeam is excluded by scope, and corrects the premise in
+  issue #27: `katbeam_bds.py` does produce a full 4×4 Stokes beam.

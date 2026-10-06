@@ -1,10 +1,10 @@
 ---
 type: reference
 title: BeamWizard interpolation and rendering internals
-description: beam_model (mdv/katbeam), group (MM/MPM/MPMP) and average (pa/azimuth) selectors, interpolate_beam prefilter/off-cube/spline-order/freq-guard semantics, get_source_coordinates transforms, optional-image paths, get_time_freq_beam canonical dim_names, and enrich_bds_xradio.
-tags: [beamwizard, interpolation, scipy, zarr, xradio, utils, katbeam, baseline-groups, meerkat+]
-timestamp: 2026-10-02T09:00:59Z
-last_verified_commit: eac4bd0
+description: beam_model (mdv/katbeam), group (MM/MPM/MPMP) and average (pa/azimuth) selectors, interpolate_beam prefilter/off-cube/spline-order/freq-guard semantics, get_source_coordinates transforms, optional-image paths, get_time_freq_beam canonical dim_names, enrich_bds_xradio, and partition_mueller with the centre= override.
+tags: [beamwizard, interpolation, scipy, zarr, xradio, utils, katbeam, baseline-groups, meerkat+, partition-mueller, mueller]
+timestamp: 2026-10-06T09:59:14Z
+last_verified_commit: f71b7ef
 ---
 
 # BeamWizard interpolation and rendering internals
@@ -298,6 +298,72 @@ group-specific message saying a cross baseline has no single Jones matrix,
 mirroring the katbeam hint. The schema, the `p = MeerKAT` convention and the
 conjugation rule for the reversed ordering are in
 [data-model.md](data-model.md).
+
+## `partition_mueller` — one partition's Stokes Mueller block
+
+`partition_mueller` answers "what is the average beam over this chunk of data, on
+this image grid?" and returns
+`(len(stokes_out), len(stokes_in), NY, NX)` so a caller can turn an intrinsic
+Stokes model into an apparent one: `apparent[i] = sum_j M[i, j] * model[j]`.
+
+It exists so `pfb-imaging` and `QuartiCal` stop each carrying the same loop over
+`get_rotation_averaged_beam`, the same `(Y, X)` orientation convention, and the
+same `stokes`-vs-`nstokes` decision (issue #27, consumed by ratt-ru/pfb-imaging#278
+and landmanbester/pfb-model-spec#22).
+
+**It is a method, not a free function, and that is the point.** `_get_prefilter`
+caches spline coefficients on `(var, i, j, order)` on the wizard, so the first call
+pays for `len(stokes_out) * len(stokes_in)` filtered cubes and every later
+partition pays nothing. Hold one wizard per worker and reuse it. A free function
+would either rebuild the wizard per chunk — fatal in a Ray worker's inner loop — or
+need a module-level cache.
+
+The beam source is whatever the wizard was built with. There is no `group=`
+argument: partitioning visibilities into baseline groups happens outside this
+package, so a mixed array means one wizard per group.
+
+Contract, all four parts pinned by `tests/test_partition_mueller.py`:
+
+| | |
+|---|---|
+| orientation | `(Y, X)` — axis -2 is m/north, axis -1 is l/east, inherited from `get_rotation_averaged_beam`. A non-square-grid test makes a transpose a shape error rather than a wrong answer. |
+| normalisation | `normalised=True` (the default) reads `nstokes` and is what apparent-flux prediction wants: it is divided by the central-pixel Jones inverse, so the on-axis response is the identity and the model's flux scale survives. `normalised=False` reads `stokes`, which additionally folds in the absolute voltage gain — degenerate with the scale calibration already set. |
+| no `1/n` | The bare beam. The wgridder's geometric n-term stays on the caller's side (pfb-imaging D22). |
+| dtype | `float32` for a single telescope and for `MM`/`MPMP`; `complex64` for `MPM`. See [D13](design-decisions.md) — taking `.real` here would undo the fixed `p = MeerKAT` convention. |
+
+Pure numpy: no dask, no Ray. The two consumers distribute differently, so
+distribution stays in the applications.
+
+Memory, worth knowing before a worker loops on it — one prefiltered cube per
+`(var, i, j, order)` key, held for the wizard's lifetime:
+
+| beam dataset | one cube | `stokes_in="I"` (4) | full 4×4 (16) |
+|---|---|---|---|
+| legacy L, 128×128×1024 float32 | ~67 MB | ~270 MB | ~1.1 GB |
+| MdV-2026 L, 64×64×63 float32 | ~1 MB | ~4 MB | ~16 MB |
+| MdV-2026 L group `MPM`, complex64 | ~2 MB | ~8 MB | ~32 MB |
+
+`weights=` is accepted and must be `None`: it is reserved for a per-timestamp
+weight in the parallactic-angle average (the visibilities in a chunk are not
+uniformly weighted — flagging and varying integration time see to that) and raises
+`NotImplementedError` otherwise. Accepting the keyword now means adding it later is
+not a change consumers have to track.
+
+A scalar `Time` (one timestamp, not wrapped in a list) is reshaped and accepted; an
+empty `Time` raises, rather than dividing by zero and returning a NaN map. `freq`
+must be scalar — a numpy scalar or 0-d array is fine, a 1-element array raises and
+says to pass `float(freq)`, because `float()` on an array with an axis is a
+`TypeError` that tells the caller nothing.
+
+### `centre=` on `get_rotation_averaged_beam`
+
+`get_rotation_averaged_beam` grew `centre: Optional[SkyCoord] = None` to serve this.
+`None` is exactly the old behaviour (`self.centre`, raising if no image is
+attached); a supplied `SkyCoord` is used for the parallactic-angle computation and
+**not stored**, so one wizard serves many pointings. Ignored for
+`average="azimuth"`, which has no centre dependence. The alternative —
+`set_field_centre` per chunk — mutates an object shared across chunks, which is why
+it is not what `partition_mueller` does.
 
 ## Sources
 
