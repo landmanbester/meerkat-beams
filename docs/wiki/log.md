@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-06T12:29:30Z
+timestamp: 2026-10-13T12:00:00Z
 ---
 
 # Wiki changelog
@@ -175,3 +175,16 @@ azimuthal averaging.
   commit that changed the covered code, not the commit of the page edit. That
   rule now lives in `CLAUDE.md`'s maintenance rules rather than in each
   implementation plan, which is where the wrong instruction came from.
+
+## 2026-10-13 — issue triage
+
+- `beam-orientation.md`: the #13 cross-ref now records the issue as closed
+  (ratt-ru/pfb-imaging#237 merged; `hci` is `(Y, X)`-conformant and validated
+  against an asymmetric beam). Only that bullet was touched and the page was
+  not re-verified against code, so `last_verified_commit` is unchanged.
+- Issue #21 (upstream to suricat-beams) closed as not planned: meerkat-beams is
+  the canonical package. No wiki page cited #21.
+- `design-decisions.md` D8: no longer says issue #16 is open. It was closed on
+  2026-07-27 (as fixed by PR #8) with its Dockerfile `git`-layer item still
+  undone, so that leftover now has no tracking issue. Prose fix only;
+  `last_verified_commit` is unchanged.

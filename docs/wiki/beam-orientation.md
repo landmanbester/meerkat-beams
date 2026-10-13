@@ -3,7 +3,7 @@ type: Subsystem Notes
 title: Beam orientation and (Y, X) map-order conventions
 description: The settled (Y, X) rotation-averaged map order, parallactic-angle rotation averaging, the still-provisional beam-orientation convention with its open M1 validation, and the katbeam comparison probe that corroborates the BDS transpose but not the sign flips.
 tags: [beam, orientation, conventions, rotation, parallactic, yx-order, katbeam]
-timestamp: 2026-07-28T14:35:00Z
+timestamp: 2026-10-13T12:00:00Z
 last_verified_commit: a62c7e1
 ---
 
@@ -318,12 +318,11 @@ Pinned by `tests/test_beam_orientation_ms_io.py`,
   ascending — useful context if you're chasing the "BDS Y-axis flip" knob
   above. That page does **not** cover the physical beam-orientation
   convention question above; that is owned here (PR #8's M1).
-- issue #13 (this repo) — track pfb-imaging `hci` conformance with the
-  `(ny, nx)` order this package now returns. Per pfb-imaging's own
-  `docs/wiki/image-and-beam-orientation.md` §7, the corrected `(Y, X)`
-  construction is already implemented and validated there as of its
-  `last_verified_commit`; treat issue #13 as a cross-repo tracking item to
-  re-check, not evidence of a known-open bug in pfb-imaging today.
+- issue #13 (this repo, closed 2026-10-13) — pfb-imaging `hci` conformance
+  with the `(ny, nx)` order. Done: ratt-ru/pfb-imaging#237 merged, `hci`
+  fills `(Y, X)` buffers with no implicit transpose, validated against an
+  asymmetric analytic beam (pfb-imaging wiki §5–6), and pfb-imaging pins
+  `meerkat-beams>=0.1.0` from PyPI.
 - issue #14 — breifast has not adopted this package yet; its current
   on-receipt transpose remains correct (do not touch it). The transpose
   will become stale, and should be dropped, once breifast adopts this

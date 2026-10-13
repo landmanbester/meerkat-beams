@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+]
-timestamp: 2026-10-06T12:23:40Z
+timestamp: 2026-10-13T12:00:00Z
 last_verified_commit: 523df91
 ---
 
@@ -235,17 +235,17 @@ the floor itself is expected to keep moving.
 **Consequences:** The `git` install layer in the Dockerfile (present
 *solely* for the git dependency, per its own inline comment) is now
 unnecessary and can be dropped — but has **not** been removed yet as of
-this commit; that cleanup, plus updating CLAUDE.md's "Conventions" note
-and re-confirming `test_roundtrip.py` against the tagged release, is
-tracked by issue #16 (still open — its checklist items beyond the
-version bump remain outstanding). Do not assume the Dockerfile has
-already been updated just because the dependency has.
+this commit. Issue #16, which tracked that cleanup, was closed on
+2026-07-27 as fixed by PR #8 even though the Dockerfile item was not done,
+so the leftover `git` layer is now **untracked by any open issue**. Do not
+assume the Dockerfile has already been updated just because the dependency
+has.
 
 **Source:** `pyproject.toml:22`; commits `3bb9b3d` ("build: depend on
 hip-cargo>=0.3.0") and `4b07822` ("build: upgrade hip-cargo >= 0.4.0");
 `uv.lock` (`hip-cargo` package entry, `source =
 { registry = ... }`); issue #16 ("M2: Re-pin from hip-cargo git main to
-the next tagged release").
+the next tagged release", closed 2026-07-27); `Dockerfile:8-11`.
 
 ## D9 — "No PyPI release" decision reversed
 
