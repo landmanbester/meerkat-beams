@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+]
-timestamp: 2026-10-13T12:00:00Z
-last_verified_commit: 523df91
+timestamp: 2026-10-13T14:00:00Z
+last_verified_commit: 2a15cbb
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -232,20 +232,21 @@ emits the unquoted form, so the cab had to be regenerated to keep
 `test_roundtrip.py` green. What D8 settles is the *source* (PyPI, not git);
 the floor itself is expected to keep moving.
 
-**Consequences:** The `git` install layer in the Dockerfile (present
-*solely* for the git dependency, per its own inline comment) is now
-unnecessary and can be dropped — but has **not** been removed yet as of
-this commit. Issue #16, which tracked that cleanup, was closed on
-2026-07-27 as fixed by PR #8 even though the Dockerfile item was not done,
-so the leftover `git` layer is now **untracked by any open issue**. Do not
-assume the Dockerfile has already been updated just because the dependency
-has.
+**Consequences:** The `git` install layer in the Dockerfile, present
+*solely* for the git dependency, has been removed (commit `2a15cbb`): the
+`[full]` extra the image installs has no git dependencies, and the image
+builds and runs `mbeams --help` without `git`. Issue #16 tracked the re-pin
+and was closed on 2026-07-27. The only git dependency left in
+`pyproject.toml` is the dev/test-only `katbeam` pin (D11), which the image
+never installs — if a git dependency ever enters `[full]`, the image needs
+`git` again.
 
 **Source:** `pyproject.toml:22`; commits `3bb9b3d` ("build: depend on
 hip-cargo>=0.3.0") and `4b07822` ("build: upgrade hip-cargo >= 0.4.0");
 `uv.lock` (`hip-cargo` package entry, `source =
 { registry = ... }`); issue #16 ("M2: Re-pin from hip-cargo git main to
-the next tagged release", closed 2026-07-27); `Dockerfile:8-11`.
+the next tagged release", closed 2026-07-27); `Dockerfile`; commit
+`2a15cbb`.
 
 ## D9 — "No PyPI release" decision reversed
 
@@ -256,19 +257,20 @@ either vendor it or wait for the upstream `suricat-beams` port.
 depend on; pointing a merged pfb-imaging feature at a git fork is not
 acceptable.
 
-**Decision:** Reversed — a release is now being cut. Tracked by issue #17
-("Cut the first PyPI release of meerkat-beams"), which names D8 (the
+**Decision:** Reversed — the package is released on PyPI (`0.0.1` on
+2026-07-27, `0.1.0` on 2026-10-06). Issue #17
+("Cut the first PyPI release of meerkat-beams", closed 2026-07-28) named D8 (the
 hip-cargo git dependency) as its hard blocker: a git dependency in
 `pyproject.toml` cannot be published to PyPI as-is.
 
-**Consequences:** Issue #17's scope (version bump via `tbump`, packaging
-metadata verification, a `publish` GitHub Actions workflow preferring
-PyPI Trusted Publishing, TestPyPI dry run, then tag + publish) is
-unblocked now that D8 has landed, but issue #17 itself is still open —
-do not assume a release has already shipped.
+**Consequences:** Consumers pin a real version — pfb-imaging depends on
+`meerkat-beams>=0.1.0`. The upstream `suricat-beams` port that the original
+plan relied on is no longer planned (issue #21, closed 2026-10-13):
+meerkat-beams is the canonical package.
 
 **Source:** PR #8 merge note ("Update (2026-07-24): the original 'no
-PyPI release' plan has been reversed..."); issue #16; issue #17.
+PyPI release' plan has been reversed..."); issue #16; issue #17; issue #21;
+tags `v0.0.1`, `v0.1.0`.
 
 ## D10 — PEP 440 versions and a generated changelog
 
@@ -325,8 +327,8 @@ the `[[file]]` entry fought it. hip-cargo has the hook and no such entry.
   new commits are gated.
 - git-cliff is invoked via `uvx`, not declared as a dependency — cutting a
   release on a cold machine needs network access.
-- Issue #17 remains open: this lands the machinery only. No tag was cut, and
-  the version is still `0.0.0`.
+- This landed the machinery only. The first releases cut with it were
+  `v0.0.1` and `v0.1.0` (see D9).
 
 **Source:** `tbump.toml`; `cliff.toml`; `.pre-commit-config.yaml`;
 `.github/workflows/publish-container.yml`; `~/software/hip-cargo` at v0.3.0
@@ -590,11 +592,10 @@ you touch the fixtures.
   `_CANONICAL_DIM_NAMES` guard)
 - `src/meerkat_beams/cache.py` (cache layout, `BAND_GDRIVE_IDS`,
   `ensure_band_bds`, `.partial` atomicity)
-- `pyproject.toml:6-9,22,93-98` (Python support policy, hip-cargo
+- `pyproject.toml:6-9,22,120-130` (Python support policy, hip-cargo
   dependency, test-group markers)
 - `.github/workflows/ci.yml:68-146` (test matrix + `lightweight` job)
-- `Dockerfile` (`git` install layer, inline comment noting it is
-  transitional)
+- `Dockerfile` (no `git` layer since commit `2a15cbb`)
 - `tests/test_beam_wizard.py`: `test_subpixel_matches_direct_scipy`,
   `test_prefilter_complex_var_is_complex64_without_warning`,
   `test_out_of_range_xy_returns_zero`,

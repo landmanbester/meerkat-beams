@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-13T12:00:00Z
+timestamp: 2026-10-13T14:00:00Z
 ---
 
 # Wiki changelog
@@ -188,3 +188,15 @@ azimuthal averaging.
   2026-07-27 (as fixed by PR #8) with its Dockerfile `git`-layer item still
   undone, so that leftover now has no tracking issue. Prose fix only;
   `last_verified_commit` is unchanged.
+
+## 2026-10-13 — Dockerfile git layer dropped; design-decisions restamped
+
+- `design-decisions.md` D8: the Dockerfile `git` layer is gone (commit
+  `2a15cbb`), which supersedes the "untracked leftover" note above. D9 and D10
+  no longer say issue #17 is open or that the version is `0.0.0`. Both PyPI
+  releases are recorded, and D9 notes the suricat-beams port is dropped (#21).
+  Sources cite the test group at `pyproject.toml:120-130` (was `93-98`).
+- Restamped `design-decisions.md` at `2a15cbb`, the last commit touching code it
+  covers. The page was re-checked against every covered file that changed since
+  `523df91`: the 0.1.0 release commit, the `setup-uv` bumps, and the
+  `:latest` cab reset (`2be9618`) that D10's tag cycle predicts.
