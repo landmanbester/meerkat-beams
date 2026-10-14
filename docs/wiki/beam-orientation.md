@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Beam orientation and (Y, X) map-order conventions
 description: The settled (Y, X) rotation-averaged map order, parallactic-angle rotation averaging, the still-provisional beam-orientation convention with its open M1 validation, and the katbeam comparison probe that corroborates the BDS transpose but not the sign flips.
 tags: [beam, orientation, conventions, rotation, parallactic, yx-order, katbeam]
-timestamp: 2026-07-28T14:35:00Z
-last_verified_commit: a62c7e1
+timestamp: 2026-10-14T09:38:21Z
+last_verified_commit: 3800462
 ---
 
 # Beam orientation and (Y, X) map-order conventions
@@ -29,13 +29,13 @@ which is about the sky→pixel transform, not the array layout.
 
 ## Settled: `(Y, X)` map order
 
-`get_rotation_averaged_beam` (`src/meerkat_beams/utils.py:426`) returns
+`get_rotation_averaged_beam` (`src/meerkat_beams/utils.py:744`) returns
 `(mean, variance)` maps in `(Y, X)` index order — FITS convention, axis 0 =
 m/north, axis 1 = l/east:
 
 ```python
 if l.ndim == 1 and m.ndim == 1:
-    ll, mm = np.meshgrid(l, m)          # utils.py:511, default indexing="xy"
+    ll, mm = np.meshgrid(l, m)          # utils.py:862, default indexing="xy"
 elif l.ndim == 2 and m.ndim == 2:
     ...
     ll, mm = l, m                        # 2D inputs passed through as-is
@@ -46,7 +46,7 @@ For 1D `l`/`m` inputs the default `np.meshgrid(l, m)` (`"xy"` indexing, not
 needed. With `spi` given (or a single frequency) the returned shape is
 `(NY, NX)`; otherwise `(NFREQ, NY, NX)`. 2D `l`/`m` inputs must already be
 `(Y, X)`-shaped grids and are passed through in that orientation
-(`utils.py:472-478` docstring).
+(`utils.py:811-813` docstring).
 
 The pfb-imaging `hci` command consumes these maps as `(Y, X)` with **no
 on-receipt transpose** (confirmed by pfb-imaging's own
@@ -86,12 +86,16 @@ Two `BeamWizard` methods rotate through parallactic angle:
   the beam as parallactic angle rotates over the supplied `times`. With
   `spi` given, returns a frequency-averaged gain weighted by
   `(f/f0)**spi`.
-- `get_rotation_averaged_beam` (`utils.py:426`, described above) — mean +
+- `get_rotation_averaged_beam` (`utils.py:744`, described above) — mean +
   variance over the same parallactic-angle rotations, but for a full l/m
   grid (degrees) instead of a single source track. `time_stepping`
   subsamples the time axis; `pixel_stepping > 1` computes on a coarser
   spatial grid and linearly upsamples back (`map_coordinates`) to the full
-  grid; `chunk_size` bounds memory for large grids.
+  grid; `chunk_size` bounds memory for large grids. `average="azimuth"`
+  instead averages over a uniform full turn of `num_angles` angles (no time
+  axis needed, circularly symmetric result), and `centre=` overrides the
+  pointing centre per call — both documented in `beamwizard.md`. Neither
+  changes the `(Y, X)` output order.
 
 Pinned by `test_time_variable_beamgain_at_centre`,
 `test_rotation_averaged_beam_on_axis`,
@@ -100,7 +104,7 @@ Pinned by `test_time_variable_beamgain_at_centre`,
 
 ## PROVISIONAL: the orientation convention
 
-`get_source_coordinates` (`utils.py:265`) converts a source's separation
+`get_source_coordinates` (`utils.py:583`) converts a source's separation
 and position angle from the field centre into beam-pixel offsets:
 
 ```python
@@ -112,7 +116,7 @@ if swap:
     x, y = y, x
 ```
 
-(`utils.py:292-296`). That inline comment is original and accurate: this
+(`utils.py:610-614`). That inline comment is original and accurate: this
 convention has **never been rigorously verified**, only assumed. It is not
 equivalent in status to the `(Y, X)` map order above — do not present it as
 settled.
@@ -122,8 +126,9 @@ settled.
 Mueller matrix as parallactic angle rotates (see the design context folded
 into `docs/wiki/design-decisions.md`). As of this branch, the recovered
 Stokes dynamic spectra for the offset pointings are **not flat/unpolarised**
-as expected — the convention has not passed validation. This is called out
-as the top-priority blocking item in PR #8's merge note.
+as expected — the convention has not passed validation. PR #8's merge note
+called this the top-priority blocking item; PR #8 merged without resolving
+it, and it is now tracked by issues #9–#12 (below).
 
 **Falsification method.** `scripts/test_beam_orientation.py` runs the full
 pipeline (download calibrator MS → phase-rotate → noise-weighted baseline
@@ -178,7 +183,7 @@ independent in data provenance; see "How well the two models actually agree"
 below before leaning on it. Re-run with:
 
 ```bash
-uv sync --group dev --extra full          # katbeam is a dev/test dependency
+uv sync --group dev --extra full          # dev pins katbeam git main (S band)
 uv run python scripts/compare_katbeam.py --band L --freqs 900 1070 1284 1500 1650
 ```
 
@@ -198,7 +203,7 @@ on a cache-built L-band BDS across 900–1650 MHz:
 | I | 2.544e-3 | 1.767e-2 | ×6.95 |
 
 All three products agree and the margin is large, so the BDS trailing axes
-are labelled the right way round — the `mdv_beams_to_bds.py:26`/`:130`
+are labelled the right way round — the `mdv_beams_to_bds.py:75`/`:107-112`
 `Y,X` assumption (whose inline comment flags itself as unverified) is
 corroborated. `fwhm_vs_freq.png` shows the same thing directly and more
 simply: **both** models put the m-axis FWHM above the l-axis, and `ours_l`
@@ -286,7 +291,7 @@ conclusion* they're meant to produce is still open.
   `ORIGINAL_POINTING` dict keyed by `FIELD_ID` (`ms_io.py:31-37`).
   **Note:** that fallback dict's comment block records that the field names
   for `Offset1` and `J1939-6342` were originally swapped and have since
-  been corrected in `ms_io.py:18-27` — cite `ms_io.py`, not the design
+  been corrected in `ms_io.py:18-30` — cite `ms_io.py`, not the design
   spec, for the correct per-field `(ra, dec)` values.
 - **Plots** (`scripts/beam_orientation/plots.py`): per-Stokes
   dynamic-spectrum (`dyn_spectrum`), time-profile (`time_profile`), and
@@ -295,7 +300,7 @@ conclusion* they're meant to produce is still open.
 - **Calibrator MS caching** (`scripts/beam_orientation/download.py`): the
   PKS 1934-638 calibrator MS is cached at
   `cache.cache_root()/test_ms/<MS_BASENAME>/`
-  (`MS_BASENAME = "pks1934_offset.ms"`, `download.py:25-39`) — same
+  (`MS_BASENAME = "pks1934_offset.ms"`, `download.py:25-40`) — same
   unlocked, single-process download posture as the per-band BDS cache (see
   `docs/wiki/beamwizard.md` / `CLAUDE.md` cache section).
 - **Single source of truth for calibrator facts** (`tests/conftest.py`):
@@ -318,31 +323,33 @@ Pinned by `tests/test_beam_orientation_ms_io.py`,
   ascending — useful context if you're chasing the "BDS Y-axis flip" knob
   above. That page does **not** cover the physical beam-orientation
   convention question above; that is owned here (PR #8's M1).
-- issue #13 (this repo) — track pfb-imaging `hci` conformance with the
-  `(ny, nx)` order this package now returns. Per pfb-imaging's own
-  `docs/wiki/image-and-beam-orientation.md` §7, the corrected `(Y, X)`
-  construction is already implemented and validated there as of its
-  `last_verified_commit`; treat issue #13 as a cross-repo tracking item to
-  re-check, not evidence of a known-open bug in pfb-imaging today.
+- issue #13 (this repo, closed 2026-10-13) — pfb-imaging `hci` conformance
+  with the `(ny, nx)` order. Done: ratt-ru/pfb-imaging#237 merged, `hci`
+  fills `(Y, X)` buffers with no implicit transpose, validated against an
+  asymmetric analytic beam (pfb-imaging wiki §5–6), and pfb-imaging pins
+  `meerkat-beams>=0.1.0` from PyPI.
 - issue #14 — breifast has not adopted this package yet; its current
   on-receipt transpose remains correct (do not touch it). The transpose
   will become stale, and should be dropped, once breifast adopts this
   package — see post-mortem above and issue #14's explicit "do not action
   until breifast actually switches" note.
+  breifast should adopt `meerkat-beams` from PyPI, not suricat-beams (the
+  upstream port is dropped, issue #21).
 - issue #15 — port killick's per-pixel time-covariance accumulation and
   chase an outstanding ~24x amplitude discrepancy between per-channel and
   frequency-averaged beam tracks.
 
-Sources: `scripts/compare_katbeam.py` (band->model map, `registration_roll`,
+Sources: `src/meerkat_beams/katbeam_bds.py` (`KATBEAM_MODEL_FOR_BAND`,
+`require_model`), `scripts/compare_katbeam.py` (`registration_roll`,
 `apply_orientation`, `orientation_sweep`, `residual_stats`),
-`tests/test_compare_katbeam.py` (84 hermetic unit tests, including the
+`tests/test_compare_katbeam.py` (hermetic unit tests, including the
 one-pixel-mirror regression guards),
 `outputs/compare_katbeam/L/metrics.json` (generated, untracked -- regenerate
 with the command above), `pyproject.toml` (katbeam git-main pin in the `dev`
-and `test` groups), `src/meerkat_beams/core/mdv_beams_to_bds.py:26,130` (the
+and `test` groups), `src/meerkat_beams/core/mdv_beams_to_bds.py:75,107-112` (the
 `Y,X` assumption this probe tests),
-`src/meerkat_beams/utils.py:265-299` (`get_source_coordinates`),
-`src/meerkat_beams/utils.py:426-511` (`get_rotation_averaged_beam`),
+`src/meerkat_beams/utils.py:583-617` (`get_source_coordinates`),
+`src/meerkat_beams/utils.py:744-1010` (`get_rotation_averaged_beam`),
 `tests/test_beam_wizard.py` (tests listed above),
 `scripts/test_beam_orientation.py:1-56`,
 `scripts/beam_orientation/mueller.py:91-131` (`assemble_mueller`),

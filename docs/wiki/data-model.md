@@ -3,8 +3,8 @@ type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr
 description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, and the xradio primary-beam schema.
 tags: [mdv, bds, xradio, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
-timestamp: 2026-10-02T12:02:46Z
-last_verified_commit: eac4bd0
+timestamp: 2026-10-14T09:38:21Z
+last_verified_commit: 2a15cbb
 ---
 
 # Data model — MdV npz, BDS zarr, xradio zarr
@@ -30,7 +30,7 @@ Raw voltage beams from the SARAO archive
 
 ### Two input branches in `mdv_beams_to_bds`, different antenna handling
 
-`mdv_beams_to_bds` (`src/meerkat_beams/core/mdv_beams_to_bds.py:22-35`)
+`mdv_beams_to_bds` (`src/meerkat_beams/core/mdv_beams_to_bds.py:28-43`)
 accepts either an `.npz` file or a per-antenna mean-beam zarr, and the two
 branches disagree on whether antenna selection is needed:
 
@@ -60,7 +60,7 @@ and the `.npz` branch still does.
 ## BDS zarr
 
 Produced by `mdv-beams-to-bds`. Holds **six** data variables
-(`src/meerkat_beams/core/mdv_beams_to_bds.py:110-121`):
+(`src/meerkat_beams/core/mdv_beams_to_bds.py:105-114`):
 
 | variable | dtype | dims | normalisation |
 |---|---|---|---|
@@ -83,7 +83,7 @@ real Stokes like `stokes`/`nstokes` are) — hence `complex64` rather than
 `float32` despite sharing the `stokes_i`/`stokes_j` dims. Added in commit
 `2d6d0dc` ("feat(bds): add mueller term to bds").
 
-Additional dataset-level attrs (`mdv_beams_to_bds.py:120-121`):
+Additional dataset-level attrs (`mdv_beams_to_bds.py:115-117`):
 
 - `.attrs["fits_header"]` — a synthesized FITS header dict (`SIMPLE`,
   `NAXIS{1,2,3}`, `CRPIX{1,2,3}`, `CRVAL{1,2,3}`, `CDELT{1,2,3}`,
@@ -91,6 +91,8 @@ Additional dataset-level attrs (`mdv_beams_to_bds.py:120-121`):
 - `x0`, `y0` — centre pixel index (both equal `len(degs) // 2`).
 - `dx`, `dy` — degrees/pixel (both equal `degs[1] - degs[0]`).
 - `freqs` — the frequency axis in Hz.
+- provenance attrs copied from a zarr input — see "Provenance attrs on a
+  single-telescope BDS" below.
 
 **Normalised vs raw:** the `n…` variants (`njones`, `nstokes`, `nmueller`)
 are pre-multiplied by the inverse of the central-pixel Jones matrix so the
@@ -98,7 +100,7 @@ on-axis beam is the identity — use these unless raw voltage beams are
 specifically needed.
 
 When `compress=True`, all six variables get Delta(float32) + Blosc
-zstd/clevel=5 encoding (`mdv_beams_to_bds.py:123-130`) — note the filter
+zstd/clevel=5 encoding (`mdv_beams_to_bds.py:119-126`) — note the filter
 is `Delta(dtype="float32")` even for the `complex64` variables (`jones`,
 `njones`, `mueller`, `nmueller`); this matches the module-level
 `ZARR_FILTERS` convention documented in `utils.py`.
@@ -413,8 +415,8 @@ script — not the BDS `mueller` variable itself).
 
 ## Sources
 
-- `src/meerkat_beams/core/mdv_beams_to_bds.py:12-131` (`mdv_beams_to_bds`;
-  antenna-branch asymmetry at `:22-35`, six-variable write at `:110-121`)
+- `src/meerkat_beams/core/mdv_beams_to_bds.py:18-127` (`mdv_beams_to_bds`;
+  antenna-branch asymmetry at `:28-43`, six-variable write at `:105-114`)
 - `src/meerkat_beams/core/bds_to_xradio.py:11-130` (`bds_to_xradio`,
   `_resolve_elements`)
 - commit `2d6d0dc` ("feat(bds): add mueller term to bds")
