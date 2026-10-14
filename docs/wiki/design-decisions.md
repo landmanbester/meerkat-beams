@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+]
-timestamp: 2026-10-13T14:00:00Z
+timestamp: 2026-10-14T09:38:21Z
 last_verified_commit: 2a15cbb
 ---
 
@@ -22,13 +22,13 @@ elsewhere.
 (once per source/time), so filtering on every call would be wasteful, and
 double-filtering would silently corrupt the interpolated values.
 
-**Decision:** `_get_prefilter` (`src/meerkat_beams/utils.py:247`) runs
+**Decision:** `_get_prefilter` (`src/meerkat_beams/utils.py:550-581`) runs
 `scipy.ndimage.spline_filter` once per `(var, i, j, order)` key and caches
-the result; `interpolate_beam` (`utils.py:301`) then calls
+the result; `interpolate_beam` (`utils.py:619-653`) then calls
 `map_coordinates` against that cached array with `prefilter=False`
-(`utils.py:326-332`). The cache's output dtype is **not** unconditionally
+(`utils.py:646-653`). The cache's output dtype is **not** unconditionally
 `float32` — it is chosen per variable kind: `np.complex64 if
-np.iscomplexobj(da) else np.float32` (`utils.py:257-262`). Complex
+np.iscomplexobj(da) else np.float32` (`utils.py:575-579`). Complex
 variables (`jones`, `njones`, `mueller`, `nmueller`) cache as `complex64`;
 real variables (`stokes`, `nstokes`) cache as `float32`. Passing a real
 dtype for complex input would make scipy implicitly promote it (a
@@ -48,7 +48,7 @@ their imaginary part without raising. See `beamwizard.md` for the full
 prefilter contract, including how the dtype rule propagates through
 `get_time_freq_beam`'s zarr writes.
 
-**Source:** `utils.py:247,257-262,326-332`; `test_subpixel_matches_direct_scipy`,
+**Source:** `utils.py:550-581,646-653`; `test_subpixel_matches_direct_scipy`,
 `test_prefilter_complex_var_is_complex64_without_warning`
 (`tests/test_beam_wizard.py`); commit `0f2a4f4` ("test: add tests for
 complex Mueller term" — landed the dtype-aware cache).
@@ -62,14 +62,14 @@ leaving it implicit means a future scipy version or a copy-pasted call
 site could silently change behavior (e.g. to nearest-edge extrapolation).
 
 **Decision:** `interpolate_beam` passes `mode="constant", cval=0.0`
-explicitly (`utils.py:333`) rather than relying on the scipy default.
+explicitly (`utils.py:651-652`) rather than relying on the scipy default.
 Out-of-cube coordinates return `0`, not a nearest-edge value or `NaN`.
 
 **Consequences:** Callers requesting positions well outside the beam
 support get zero gain, not an error or an extrapolated guess — relevant
 for sources near the edge of a wide field.
 
-**Source:** `utils.py:333`; `test_out_of_range_xy_returns_zero`
+**Source:** `utils.py:651-652`; `test_out_of_range_xy_returns_zero`
 (`tests/test_beam_wizard.py`).
 
 ## D3 — `get_time_freq_beam` accepts only canonical `dim_names`
@@ -81,7 +81,7 @@ array to match an arbitrary `dim_names` ordering is not implemented.
 
 **Decision:** Only the canonical xradio order
 `("time", "frequency", "polarization", "l", "m")` is accepted; any other
-tuple raises `ValueError` (`utils.py:722-726`).
+tuple raises `ValueError` (`utils.py:1245-1250`).
 
 **Rationale:** A non-canonical tuple would relabel the dims without
 reordering the underlying array — silent data corruption, not a
@@ -92,7 +92,7 @@ without implementing real permutation of the array first; a caller
 wanting a different axis order must transpose the opened dataset
 themselves after the fact.
 
-**Source:** `utils.py:722-726`; `test_time_freq_beam_rejects_non_canonical_dim_names`
+**Source:** `utils.py:1245-1250`; `test_time_freq_beam_rejects_non_canonical_dim_names`
 (`tests/test_beam_wizard.py`).
 
 ## D4 — Rotation-averaged maps are `(Y, X)` (FITS) order
@@ -106,7 +106,7 @@ hidden elsewhere because the MeerKAT rotation-averaged beam is nearly
 circularly symmetric, so a transpose barely changes it.
 
 **Decision:** `np.meshgrid(l, m)` (default `"xy"` indexing, not `"ij"`,
-`utils.py:511`) now returns `(NY, NX)`-shaped maps natively, matching
+`utils.py:862`) now returns `(NY, NX)`-shaped maps natively, matching
 FITS convention (axis 0 = m/north, axis 1 = l/east). Settled at commit
 `616906b`.
 
@@ -120,7 +120,7 @@ between this settled index-order question and the still-provisional
 physical orientation convention (D9-adjacent, not in this ledger's
 numbered list — see `beam-orientation.md`).
 
-**Source:** `utils.py:511`; `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
+**Source:** `utils.py:854-862`; `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
 `test_rotation_averaged_beam_map_indexes_as_y_x` (`tests/test_beam_wizard.py`);
 `beam-orientation.md`.
 
@@ -144,7 +144,7 @@ checks `mbeams --help` on 3.10. Test-group deps in `pyproject.toml` carry
 change intended to work on 3.10 should be smoke-tested against the base
 install, not the full test suite.
 
-**Source:** `pyproject.toml:6-9,93-98`; `.github/workflows/ci.yml:68-146`
+**Source:** `pyproject.toml:6-9,120-130`; `.github/workflows/ci.yml:117-140`
 (the `lightweight` job); CLAUDE.md ("Conventions" section).
 
 ## D6 — Band cache under `MBEAMS_CACHE_DIR`
@@ -176,9 +176,9 @@ unlocked, single-process download posture. Any new "supported bands" work
 must update `BAND_GDRIVE_IDS`, not a separate hardcoded list — code that
 special-cases band names elsewhere risks drifting from this registry.
 
-**Source:** `cache.py:26-32` (`BAND_GDRIVE_IDS`/`SUPPORTED_BANDS`),
-`cache.py:1-18` (module docstring: cache layout, resolution order,
-concurrency posture), `cache.py:54-69` (`ensure_band_bds`);
+**Source:** `cache.py:29-35` (`BAND_GDRIVE_IDS`/`SUPPORTED_BANDS`),
+`cache.py:1-21` (module docstring: cache layout, resolution order,
+concurrency posture), `cache.py:103-107` (`ensure_band_bds`);
 `test_beam_wizard_band_routes_through_cache` (`tests/test_beam_wizard.py`),
 `test_registry_contains_expected_bands`,
 `test_ensure_band_bds_rejects_unknown_band`,
@@ -253,8 +253,8 @@ the next tagged release", closed 2026-07-27); `Dockerfile`; commit
 **Context:** PR #8's original merge note treated `meerkat-beams` as a
 demonstrator branch not intended for its own release — consumers would
 either vendor it or wait for the upstream `suricat-beams` port.
-`pfb-imaging#237` now needs an installable, versioned `meerkat-beams` to
-depend on; pointing a merged pfb-imaging feature at a git fork is not
+`pfb-imaging#237` (merged 2026-07-27) needed an installable, versioned
+`meerkat-beams` to depend on; pointing a merged pfb-imaging feature at a git fork is not
 acceptable.
 
 **Decision:** Reversed — the package is released on PyPI (`0.0.1` on
@@ -585,16 +585,16 @@ you touch the fixtures.
 
 ## Sources
 
-- `src/meerkat_beams/utils.py:247-263,301-335` (`_get_prefilter`,
+- `src/meerkat_beams/utils.py:550-581,619-653` (`_get_prefilter`,
   `interpolate_beam`)
-- `src/meerkat_beams/utils.py:426-511` (`get_rotation_averaged_beam`)
-- `src/meerkat_beams/utils.py:655-728` (`get_time_freq_beam`,
+- `src/meerkat_beams/utils.py:744-1010` (`get_rotation_averaged_beam`)
+- `src/meerkat_beams/utils.py:1178-1250` (`get_time_freq_beam`,
   `_CANONICAL_DIM_NAMES` guard)
 - `src/meerkat_beams/cache.py` (cache layout, `BAND_GDRIVE_IDS`,
   `ensure_band_bds`, `.partial` atomicity)
 - `pyproject.toml:6-9,22,120-130` (Python support policy, hip-cargo
   dependency, test-group markers)
-- `.github/workflows/ci.yml:68-146` (test matrix + `lightweight` job)
+- `.github/workflows/ci.yml:58-140` (test matrix + `lightweight` job)
 - `Dockerfile` (no `git` layer since commit `2a15cbb`)
 - `tests/test_beam_wizard.py`: `test_subpixel_matches_direct_scipy`,
   `test_prefilter_complex_var_is_complex64_without_warning`,
@@ -612,8 +612,9 @@ you touch the fixtures.
   (Y, X)-ordered maps")
 - commit `3bb9b3d` ("build: depend on hip-cargo>=0.3.0")
 - issue #16 ("M2: Re-pin from hip-cargo git main to the next tagged
-  release")
-- issue #17 ("Cut the first PyPI release of meerkat-beams")
+  release", closed 2026-07-27)
+- issue #17 ("Cut the first PyPI release of meerkat-beams", closed
+  2026-07-28)
 - PR #8 (merge note, M1/M2 checklists)
 - `docs/wiki/beamwizard.md`, `docs/wiki/beam-orientation.md`,
   `docs/wiki/data-model.md`

@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-13T14:00:00Z
+timestamp: 2026-10-14T09:38:21Z
 ---
 
 # Wiki changelog
@@ -200,3 +200,31 @@ azimuthal averaging.
   covers. The page was re-checked against every covered file that changed since
   `523df91`: the 0.1.0 release commit, the `setup-uv` bumps, and the
   `:latest` cab reset (`2be9618`) that D10's tag cycle predicts.
+
+## 2026-10-14 — PR #35 review: line citations, stamps, CLAUDE.md
+
+- Every `file:line` citation in `beamwizard.md`, `beam-orientation.md`,
+  `data-model.md` and `design-decisions.md` re-pointed at the current code.
+  Most `utils.py` ones predated the katbeam, baseline-group and
+  `partition_mueller` work and pointed at unrelated code. Pages stamped at
+  `523df91` passed the staleness check anyway, because the drift happened
+  before that stamp — a clean check does not prove the line numbers are right.
+- `design-decisions.md`: D5's `pyproject.toml`/`ci.yml` citations match the
+  Sources list; D9 no longer speaks of pfb-imaging#237 in the present tense;
+  issues #16 and #17 are marked closed in Sources.
+- `beam-orientation.md` fully re-verified and restamped `a62c7e1` -> `3800462`
+  (the version bump in `pyproject.toml` is the last covered change). Updates:
+  the rotation-averaging section mentions `average="azimuth"` and `centre=`;
+  the M1 status says PR #8 merged with it unresolved and points at #9–#12;
+  the #14 bullet says breifast should adopt meerkat-beams; the katbeam
+  band->model map is cited in `katbeam_bds.py`, where it moved.
+- `data-model.md` restamped `eac4bd0` -> `2a15cbb` (it cites the Dockerfile's
+  `.[full]` install); its content already reflected `6fa7ded`. The attrs list
+  now points at the provenance-attrs section.
+- `beamwizard.md` keeps `523df91`: nothing it covers changed since.
+- Frontmatter timestamps on the 2026-10-13 entries above were earlier than the
+  events they record; all touched pages now carry the real edit time.
+- `CLAUDE.md` (not a wiki page): dropped the stale "Current branch" section
+  (`dev001`, PR #8 merged 2026-07-27), replaced the two references to the
+  deleted `docs/progress.md` with design-decisions D7, and corrected Ruff's
+  `target-version` to `py311`.
