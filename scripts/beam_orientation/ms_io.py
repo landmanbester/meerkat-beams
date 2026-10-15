@@ -70,17 +70,14 @@ def _read_pointing_table(path: str, times: np.ndarray) -> tuple[float, float] | 
     fall back to ORIGINAL_POINTING.
     """
     try:
-        from daskms import xds_from_table
+        import arcae
 
-        groups = xds_from_table(f"{path}::POINTING")
-        if not groups:
-            return None
-        pnt = groups[0].compute()
-        if "DIRECTION" not in pnt or "TIME" not in pnt:
+        pnt = arcae.table(f"{path}::POINTING")
+        if pnt.nrow() == 0 or not {"DIRECTION", "TIME"}.issubset(pnt.columns()):
             return None
         return _pointing_from_direction(
-            np.asarray(pnt.TIME.values),
-            np.asarray(pnt.DIRECTION.values),
+            pnt.getcol("TIME"),
+            pnt.getcol("DIRECTION"),
             float(np.min(times)),
             float(np.max(times)),
         )
@@ -119,39 +116,33 @@ class MSBundle:
 
 
 def read_ms(path: str | Path, field_id: int = 0) -> MSBundle:
-    from daskms import xds_from_ms, xds_from_table
+    import arcae
+    from arcae.lib.arrow_tables import Table
 
     path = str(path)
-    # Main-table groups by DDID + FIELD_ID + SCAN; we expect exactly one group.
-    main = xds_from_ms(
-        path,
-        columns=("CORRECTED_DATA", "WEIGHT_SPECTRUM", "FLAG", "UVW", "TIME", "ANTENNA1", "ANTENNA2", "FLAG_ROW"),
-        group_cols=("DATA_DESC_ID", "FIELD_ID"),
-        taql_where=(f"FIELD_ID == {field_id}"),
-    )
+    main = Table.from_taql(f"SELECT * FROM '{path}' WHERE FIELD_ID == {field_id}")
+    ddids = np.unique(main.getcol("DATA_DESC_ID"))
     # make sure only a single DDID is present
-    assert len(main) == 1, f"expected exactly one group in main table, got {len(main)}"
-    xds = main[0].compute()
+    assert ddids.size == 1, f"expected exactly one DATA_DESC_ID in main table, got {ddids.size}"
+    col = {
+        c: main.getcol(c)
+        for c in ("CORRECTED_DATA", "WEIGHT_SPECTRUM", "FLAG", "UVW", "TIME", "ANTENNA1", "ANTENNA2", "FLAG_ROW")
+    }
 
     # Spectral window for the freq axis.
-    spw = xds_from_table(f"{path}::SPECTRAL_WINDOW")[0].compute()
-    ddid = int(xds.attrs.get("DATA_DESC_ID", 0))
-    pol_id = xds_from_table(f"{path}::DATA_DESCRIPTION")[0].compute()
-    spw_idx = int(pol_id.SPECTRAL_WINDOW_ID.values[ddid])
-    freq = np.asarray(spw.CHAN_FREQ.values[spw_idx], dtype=float)
+    ddid = int(ddids[0])
+    spw_idx = int(arcae.table(f"{path}::DATA_DESCRIPTION").getcol("SPECTRAL_WINDOW_ID")[ddid])
+    freq = np.asarray(arcae.table(f"{path}::SPECTRAL_WINDOW").getcol("CHAN_FREQ")[spw_idx], dtype=float)
 
     # Field table for the phase centre.
-    field = xds_from_table(
-        f"{path}::FIELD",
-        taql_where=(f"SOURCE_ID == {field_id}"),
-    )[0].compute()
-    phase_dir = field.PHASE_DIR.values.squeeze()
+    field = Table.from_taql(f"SELECT PHASE_DIR FROM '{path}::FIELD' WHERE SOURCE_ID == {field_id}")
+    phase_dir = field.getcol("PHASE_DIR").squeeze()
     ra_rad, dec_rad = phase_dir[0], phase_dir[1]
 
     # Reshape (row, chan, corr) -> (Nb, Nt, Nf, Ncorr).
-    ant1 = np.asarray(xds.ANTENNA1.values)
-    ant2 = np.asarray(xds.ANTENNA2.values)
-    time_row = np.asarray(xds.TIME.values)
+    ant1 = col["ANTENNA1"]
+    ant2 = col["ANTENNA2"]
+    time_row = col["TIME"]
 
     times = np.unique(time_row)
     pointing_centre = _resolve_pointing_centre(path, field_id, times)
@@ -168,17 +159,17 @@ def read_ms(path: str | Path, field_id: int = 0) -> MSBundle:
         out[inv, time_idx] = col
         return out
 
-    # get flag and apply FLAG_ROW + autocorrs
-    flag = xds.FLAG.values
-    flag_row = xds.FLAG_ROW.values | (ant1 == ant2)
+    # get flag and apply FLAG_ROW + autocorrs (arcae returns booleans as uint8)
+    flag = col["FLAG"].astype(bool)
+    flag_row = col["FLAG_ROW"].astype(bool) | (ant1 == ant2)
     flag = flag | flag_row[:, None, None]
 
-    vis = _reshape(np.asarray(xds.CORRECTED_DATA.values), 0.0 + 0.0j)
-    ws = _reshape(np.asarray(xds.WEIGHT_SPECTRUM.values), 0.0)
+    vis = _reshape(col["CORRECTED_DATA"], 0.0 + 0.0j)
+    ws = _reshape(col["WEIGHT_SPECTRUM"], 0.0)
     flag = _reshape(np.asarray(flag), True)
 
     uvw = np.zeros((Nb, Nt, 3), dtype=float)
-    uvw_row = np.asarray(xds.UVW.values)
+    uvw_row = col["UVW"]
     time_idx = np.searchsorted(times, time_row)
     uvw[inv, time_idx] = uvw_row
 

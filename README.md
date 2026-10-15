@@ -8,7 +8,7 @@ MeerKAT primary-beam model handling: download MdV beam files from the SARAO arch
 pip install meerkat-beams[full]
 ```
 
-The `[full]` extra pulls in the scientific stack (`xarray`, `zarr<3`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask-ms`, `wget`, `gdown`). Use plain `meerkat-beams` only if you need the CLI metadata for Stimela without running the implementations locally.
+The `[full]` extra pulls in the scientific stack (`xarray`, `zarr<3`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask`, `wget`, `gdown`, plus `hip-cargo[s3]` for `s3://` paths). Use plain `meerkat-beams` only if you need the CLI metadata for Stimela without running the implementations locally.
 
 ### Python support
 

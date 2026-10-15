@@ -1,8 +1,8 @@
 import sys
 
+import arcae
 import matplotlib.pyplot as plt
 import numpy as np
-from pyrap.tables import table
 
 
 def freq_profile(
@@ -53,7 +53,7 @@ def freq_profile_tim(
 
 try:
     ms_name = sys.argv[1]
-    freq = table(ms_name + "::SPECTRAL_WINDOW").getcol("CHAN_FREQ").squeeze()
+    freq = arcae.table(ms_name + "::SPECTRAL_WINDOW").getcol("CHAN_FREQ").squeeze()
 except Exception:
     freq = np.linspace(0.8e9, 1.67e9, 1000)
 fluxes = freq_profile(freq)
