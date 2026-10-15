@@ -117,15 +117,19 @@ class MSBundle:
 
 def read_ms(path: str | Path, field_id: int = 0) -> MSBundle:
     import arcae
-    from arcae.lib.arrow_tables import Table
 
     path = str(path)
-    main = Table.from_taql(f"SELECT * FROM '{path}' WHERE FIELD_ID == {field_id}")
-    ddids = np.unique(main.getcol("DATA_DESC_ID"))
+    # Select rows in NumPy rather than TaQL: arcae's from_taql aborts the
+    # interpreter (uncatchable C++ exception) on a bad path or a quote in it.
+    main = arcae.table(path)
+    rows = np.flatnonzero(main.getcol("FIELD_ID") == field_id)
+    assert rows.size > 0, f"no main-table rows for FIELD_ID {field_id}"
+    index = (rows,)
+    ddids = np.unique(main.getcol("DATA_DESC_ID", index=index))
     # make sure only a single DDID is present
     assert ddids.size == 1, f"expected exactly one DATA_DESC_ID in main table, got {ddids.size}"
     col = {
-        c: main.getcol(c)
+        c: main.getcol(c, index=index)
         for c in ("CORRECTED_DATA", "WEIGHT_SPECTRUM", "FLAG", "UVW", "TIME", "ANTENNA1", "ANTENNA2", "FLAG_ROW")
     }
 
@@ -134,9 +138,9 @@ def read_ms(path: str | Path, field_id: int = 0) -> MSBundle:
     spw_idx = int(arcae.table(f"{path}::DATA_DESCRIPTION").getcol("SPECTRAL_WINDOW_ID")[ddid])
     freq = np.asarray(arcae.table(f"{path}::SPECTRAL_WINDOW").getcol("CHAN_FREQ")[spw_idx], dtype=float)
 
-    # Field table for the phase centre.
-    field = Table.from_taql(f"SELECT PHASE_DIR FROM '{path}::FIELD' WHERE SOURCE_ID == {field_id}")
-    phase_dir = field.getcol("PHASE_DIR").squeeze()
+    # Field table for the phase centre. FIELD_ID in the main table is a row
+    # number into FIELD.
+    phase_dir = arcae.table(f"{path}::FIELD").getcol("PHASE_DIR")[field_id].squeeze()
     ra_rad, dec_rad = phase_dir[0], phase_dir[1]
 
     # Reshape (row, chan, corr) -> (Nb, Nt, Nf, Ncorr).
@@ -151,12 +155,12 @@ def read_ms(path: str | Path, field_id: int = 0) -> MSBundle:
     Nb = pairs.shape[0]
     Nf = freq.size
 
-    def _reshape(col, fill):
-        Ncorr = col.shape[-1] if col.ndim == 3 else 1
-        out = np.full((Nb, Nt, Nf, Ncorr), fill, dtype=col.dtype)
+    def _reshape(arr, fill):
+        Ncorr = arr.shape[-1] if arr.ndim == 3 else 1
+        out = np.full((Nb, Nt, Nf, Ncorr), fill, dtype=arr.dtype)
         # Row-by-row scatter. Single scan so this is small.
         time_idx = np.searchsorted(times, time_row)
-        out[inv, time_idx] = col
+        out[inv, time_idx] = arr
         return out
 
     # get flag and apply FLAG_ROW + autocorrs (arcae returns booleans as uint8)
