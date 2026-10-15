@@ -30,7 +30,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import zarr
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
@@ -44,7 +43,7 @@ from beam_orientation import mueller, phase_rotate, plots  # noqa: E402
 from beam_orientation.download import ensure_ms  # noqa: E402
 from beam_orientation.ms_io import read_ms  # noqa: E402
 
-from meerkat_beams.utils import BeamWizard, log  # noqa: E402
+from meerkat_beams.utils import BeamWizard, log, zarr_create_array, zarr_open_group  # noqa: E402
 from tests.conftest import dec as DEC_STR  # noqa: E402, N812
 from tests.conftest import ra as RA_STR  # noqa: E402, N812
 
@@ -219,11 +218,15 @@ def _write_zarr(
     freq: np.ndarray,
     perturbation: str,
 ) -> None:
-    root = zarr.open(str(path), mode="w")
-    root.create_dataset("B", data=B.astype(np.complex64), chunks=False)
-    root.create_dataset("cond_M", data=cond.astype(np.float32), chunks=False)
-    root.create_dataset("time", data=times_sec.astype(np.float64), chunks=False)
-    root.create_dataset("frequency", data=freq.astype(np.float64), chunks=False)
+    root = zarr_open_group(str(path), mode="w")
+    # One chunk per array (zarr 2's chunks=False, which zarr 3 does not accept).
+    for name, arr in (
+        ("B", B.astype(np.complex64)),
+        ("cond_M", cond.astype(np.float32)),
+        ("time", times_sec.astype(np.float64)),
+        ("frequency", freq.astype(np.float64)),
+    ):
+        zarr_create_array(root, name, data=arr, chunks=arr.shape)
     root.attrs["source"] = "PKS 1934-638"
     root.attrs["polarization"] = ["I", "Q", "U", "V"]
     root.attrs["band"] = "L"

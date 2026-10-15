@@ -96,7 +96,7 @@ def build_synthetic_bds(path: Path) -> Path:
     )
     xds.attrs["fits_header"] = fits_header
     xds.attrs.update(x0=I0, y0=I0, dx=DELTA, dy=DELTA, freqs=FREQS)
-    xds.to_zarr(str(path), mode="w")
+    xds.to_zarr(str(path), mode="w")  # format left to zarr: v3 under zarr 3, exercising v3 inputs
     return path
 
 
@@ -179,7 +179,7 @@ def build_mean_beam_zarr(
     if antenna is not None:
         ds.attrs["antenna"] = antenna
     ds.attrs["band"] = band
-    ds.to_zarr(str(path), mode="w")
+    ds.to_zarr(str(path), mode="w")  # format left to zarr: v3 under zarr 3, exercising v3 inputs
     return path
 
 
@@ -190,3 +190,29 @@ def build_telescope_bds(zarr_path, bds_path, **kwargs):
     build_mean_beam_zarr(zarr_path, **kwargs)
     mdv_beams_to_bds(str(zarr_path), str(bds_path))
     return bds_path
+
+
+def build_synthetic_npz(tmp_path: Path) -> Path:
+    """Write a tiny MdV-shaped NPZ (2 antennas, last = array_average). Returns the path."""
+    n_pol, n_ant, n_freq, n_y, n_x = 4, 2, 3, 7, 7
+    # complex64 with both real and imag content so part dispatch is non-trivial.
+    beam = (
+        np.linspace(1.0, 2.0, n_pol * n_ant * n_freq * n_y * n_x, dtype=np.float32).reshape(
+            n_pol, n_ant, n_freq, n_y, n_x
+        )
+        + 1j
+        * np.linspace(0.5, 1.5, n_pol * n_ant * n_freq * n_y * n_x, dtype=np.float32).reshape(
+            n_pol, n_ant, n_freq, n_y, n_x
+        )
+    ).astype(np.complex64)
+
+    path = tmp_path / "synth.npz"
+    np.savez(
+        str(path),
+        beam=beam,
+        freq_MHz=np.linspace(1000.0, 1200.0, n_freq),
+        margin_deg=np.linspace(-0.5, 0.5, n_x),
+        pols=np.array([b"HH", b"HV", b"VH", b"VV"]),
+        antnames=np.array([b"ant0", b"array_average"]),
+    )
+    return path

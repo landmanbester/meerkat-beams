@@ -110,6 +110,55 @@ jobs:
           MBEAMS_OFFLINE: "1"
         run: uv run pytest -v
 
+  # zarr is unpinned (the lock resolves zarr 3, which the test matrix above
+  # covers), but downstream applications may still hold zarr-python 2. Our
+  # writers emit zarr v2 under either major version; this job pins the zarr 2
+  # half of that guarantee.
+  zarr2:
+    name: Tests (zarr-python 2)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for skip checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          MSG=$(gh api repos/${{ github.repository }}/commits/$COMMIT_SHA --jq '.commit.message')
+          if echo "$MSG" | grep -qF '[skip checks]'; then
+            echo "SKIP_CHECKS=true" >> "$GITHUB_ENV"
+            echo "Skipping checks because [skip checks] was found in the commit message."
+          fi
+
+      - name: Check out code
+        if: env.SKIP_CHECKS != 'true'
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.11
+        if: env.SKIP_CHECKS != 'true'
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        if: env.SKIP_CHECKS != 'true'
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies with zarr<3
+        if: env.SKIP_CHECKS != 'true'
+        run: |
+          uv sync --group test --extra full
+          uv pip install 'zarr<3'
+          uv run --no-sync python -c "import zarr; assert zarr.__version__.startswith('2.'), zarr.__version__"
+
+      - name: Run tests
+        if: env.SKIP_CHECKS != 'true'
+        env:
+          MBEAMS_OFFLINE: "1"
+        # --no-sync: a plain `uv run` would re-sync the lock and restore zarr 3.
+        run: uv run --no-sync pytest -v
+
   # Python 3.10 supports ONLY the lightweight base install: the CLI plus
   # hip-cargo container dispatch (--backend docker/podman/...), no [full]
   # scientific stack. This job pins that guarantee; the test matrix above

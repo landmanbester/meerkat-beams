@@ -1,12 +1,19 @@
 """Core implementation for mdv-beams-to-bds command."""
 
-from pathlib import Path
-
 import numpy as np
 import numpy.linalg
 import xarray
 
-from meerkat_beams.utils import LOGGER, jones_to_mueller, mueller_to_stokes
+from meerkat_beams.utils import (
+    LOGGER,
+    ZARR_COMPRESSOR,
+    ZARR_FILTERS,
+    ZARR_FORMAT,
+    is_zarr_group,
+    jones_to_mueller,
+    mueller_to_stokes,
+    require_readable_zarr,
+)
 
 # Attrs copied from an MdV mean-beam zarr onto the BDS it produces. BeamWizard
 # reads `telescope` to verify a baseline group pairs the right two stores; the
@@ -33,7 +40,8 @@ def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
         freqs = mdv["freq_MHz"] * 1e6
         bm = bm[:, -1]  # select average beam (last antenna index)
         provenance = {}
-    elif (Path(mdv_beams) / ".zgroup").exists():
+    elif is_zarr_group(mdv_beams):
+        require_readable_zarr(mdv_beams)
         xds = xarray.open_zarr(mdv_beams, chunks=None)
         bm = xds.BEAM.values  # already mean beam: [4, NFREQ, NY, NX]
         degs = xds.l_beam.values
@@ -118,10 +126,6 @@ def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
 
     encoding = {}
     if compress:
-        from numcodecs import Blosc, Delta
-
-        compressor = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
-        filters = [Delta(dtype="float32")]
         for var in ["jones", "njones", "stokes", "nstokes", "mueller", "nmueller"]:
-            encoding[var] = dict(compressor=compressor, filters=filters)
-    xds.to_zarr(bds, mode="w", encoding=encoding)
+            encoding[var] = dict(compressor=ZARR_COMPRESSOR, filters=ZARR_FILTERS)
+    xds.to_zarr(bds, mode="w", encoding=encoding, zarr_format=ZARR_FORMAT)
