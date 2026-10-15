@@ -25,8 +25,11 @@ dependencies = [
 [project.optional-dependencies]
 # Full scientific stack
 full = [
-    # >=2024.10 for to_zarr(zarr_format=...), which pins our output to zarr v2.
-    "xarray>=2024.10",
+    # >=2025.6: the first xarray whose zarr writes work under zarr-python 3
+    # (2024.10 added to_zarr(zarr_format=...), which pins our output to zarr
+    # v2, but 2024.10-2025.4 fail to write under zarr 3). zarr is unbounded,
+    # so a lower xarray floor would let the resolver pick a broken pair.
+    "xarray>=2025.6",
     "xarray-fits",
     "zarr",
     "numcodecs",

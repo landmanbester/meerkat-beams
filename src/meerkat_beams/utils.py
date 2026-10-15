@@ -78,11 +78,25 @@ def _zarr_major() -> int:
     return int(zarr.__version__.split(".")[0])
 
 
+def require_readable_zarr(path):
+    """Raise a clear error for a zarr v3 input when only zarr-python 2 is installed.
+
+    Inputs may be either format (zarr 3 writes v3 by default), but zarr-python 2
+    cannot read v3, and its own error does not say why.
+    """
+    p = Path(path)
+    if (p / "zarr.json").exists() and not (p / ".zgroup").exists() and _zarr_major() < 3:
+        raise ValueError(f"{path} is a zarr format 3 store; reading it needs zarr-python>=3")
+
+
 def zarr_open_group(path, mode: str):
-    """Open a zarr group, creating any new store in ``ZARR_FORMAT`` under zarr 2 or 3."""
+    """Open a zarr group under zarr 2 or 3; a store created with ``mode="w"``/``"w-"`` is ``ZARR_FORMAT``.
+
+    Other modes open an existing store in whatever format it has.
+    """
     import zarr
 
-    if _zarr_major() >= 3:
+    if _zarr_major() >= 3 and mode in ("w", "w-"):
         return zarr.open_group(path, mode=mode, zarr_format=ZARR_FORMAT)
     return zarr.open_group(path, mode=mode)
 
@@ -98,9 +112,10 @@ def zarr_create_array(group, name: str, compressor=_ZARR_DEFAULT_COMPRESSOR, fil
     semantics: omitting ``compressor`` gives zarr's default compressor, while
     ``compressor=None`` writes the array uncompressed.
     """
+    zarr3 = _zarr_major() >= 3
     if compressor is not _ZARR_DEFAULT_COMPRESSOR:
-        kwargs["compressors" if _zarr_major() >= 3 else "compressor"] = compressor
-    if _zarr_major() >= 3:
+        kwargs["compressors" if zarr3 else "compressor"] = compressor
+    if zarr3:
         return group.create_array(name, filters=filters, **kwargs)
     return group.create_dataset(name, filters=filters, **kwargs)
 
@@ -548,6 +563,7 @@ class BeamWizard(object):
             wcs = WCS(fitshdr)
             self._times = None
         elif is_zarr_group(image_name):
+            require_readable_zarr(image_name)
             log.info(f"obtaining WCS from dataset {image_name}")
             ds = xarray.open_zarr(image_name)
             fitshdr = fits.Header(dict(ds.attrs["fits_header"]))

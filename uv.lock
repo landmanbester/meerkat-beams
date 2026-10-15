@@ -1486,7 +1486,7 @@ requires-dist = [
     { name = "requests", marker = "extra == 'full'", specifier = ">=2.33.1" },
     { name = "scipy", marker = "extra == 'full'" },
     { name = "wget", marker = "extra == 'full'" },
-    { name = "xarray", marker = "extra == 'full'", specifier = ">=2024.10" },
+    { name = "xarray", marker = "extra == 'full'", specifier = ">=2025.6" },
     { name = "xarray-fits", marker = "extra == 'full'" },
     { name = "zarr", marker = "extra == 'full'" },
 ]

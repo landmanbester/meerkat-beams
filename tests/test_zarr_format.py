@@ -11,6 +11,7 @@ import json
 import astropy.units as u
 import numpy as np
 import pytest
+import zarr
 from astropy.time import Time
 
 from meerkat_beams.core.mdv_beams_to_bds import mdv_beams_to_bds
@@ -21,11 +22,11 @@ from meerkat_beams.utils import (
     BeamWizard,
     enrich_bds_xradio,
     is_zarr_group,
+    require_readable_zarr,
     zarr_create_array,
     zarr_open_group,
 )
-from tests._synthetic import DELTA, FREQS, build_synthetic_bds, build_synthetic_image
-from tests.test_mdv_to_xradio import _make_synthetic_npz
+from tests._synthetic import DELTA, FREQS, build_synthetic_bds, build_synthetic_image, build_synthetic_npz
 
 
 def assert_zarr_v2(path, compressed_vars=()):
@@ -73,7 +74,7 @@ def test_get_time_freq_beam_and_enrich_write_v2(tmp_path, compress):
 @pytest.mark.parametrize("compress", [False, True])
 def test_mdv_to_xradio_writes_v2(tmp_path, compress):
     out = tmp_path / "mx.zarr"
-    mdv_to_xradio(str(_make_synthetic_npz(tmp_path)), str(out), part="abs", compress=compress)
+    mdv_to_xradio(str(build_synthetic_npz(tmp_path)), str(out), part="abs", compress=compress)
     assert_zarr_v2(out, compressed_vars=("SKY",) if compress else ())
 
 
@@ -81,7 +82,7 @@ def test_mdv_to_xradio_writes_v2(tmp_path, compress):
 @pytest.mark.parametrize("compress", [False, True])
 def test_mdv_beams_to_bds_writes_v2(tmp_path, compress):
     out = tmp_path / "mb.bds.zarr"
-    mdv_beams_to_bds(mdv_beams=str(_make_synthetic_npz(tmp_path)), bds=str(out), compress=compress)
+    mdv_beams_to_bds(mdv_beams=str(build_synthetic_npz(tmp_path)), bds=str(out), compress=compress)
     beams = ("jones", "njones", "stokes", "nstokes", "mueller", "nmueller")
     assert_zarr_v2(out, compressed_vars=beams if compress else ())
 
@@ -101,6 +102,7 @@ def test_zarr_helpers_round_trip(tmp_path):
     assert meta["compressor"]["id"] == "blosc"
     assert [f["id"] for f in meta["filters"]] == ["delta"]
     assert (path / ".zgroup").exists() and not (path / "zarr.json").exists()
+    assert json.loads((path / "b" / ".zarray").read_text())["fill_value"] is None
 
 
 @pytest.mark.unit
@@ -125,3 +127,30 @@ def test_zarr_create_array_compressor_none_vs_omitted(tmp_path):
     zarr_create_array(g, "omitted", data=np.zeros(4))
     assert json.loads((tmp_path / "c.zarr" / "none" / ".zarray").read_text())["compressor"] is None
     assert json.loads((tmp_path / "c.zarr" / "omitted" / ".zarray").read_text())["compressor"] is not None
+
+
+ZARR3 = int(zarr.__version__.split(".")[0]) >= 3
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(not ZARR3, reason="writing a v3 store needs zarr-python 3")
+def test_zarr_open_group_reads_existing_v3_store(tmp_path):
+    """Only creation modes force ZARR_FORMAT; reading opens a store in the format it has."""
+    path = tmp_path / "v3.zarr"
+    g = zarr.open_group(str(path), mode="w", zarr_format=3)
+    g.attrs["k"] = 1
+    assert dict(zarr_open_group(str(path), mode="r").attrs) == {"k": 1}
+    assert dict(zarr_open_group(str(path), mode="r+").attrs) == {"k": 1}
+    require_readable_zarr(path)  # zarr 3 reads v3: no error
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(ZARR3, reason="the error is for zarr-python 2 only")
+def test_v3_input_under_zarr2_raises_clearly(tmp_path):
+    path = tmp_path / "v3.zarr"
+    path.mkdir()
+    (path / "zarr.json").write_text("{}")
+    with pytest.raises(ValueError, match="needs zarr-python>=3"):
+        require_readable_zarr(path)
+    with pytest.raises(ValueError, match="needs zarr-python>=3"):
+        mdv_beams_to_bds(mdv_beams=str(path), bds=str(tmp_path / "out.bds.zarr"))
