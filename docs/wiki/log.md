@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-15T06:44:18Z
+timestamp: 2026-10-15T11:16:00Z
 ---
 
 # Wiki changelog
@@ -238,3 +238,6 @@ azimuthal averaging.
 - `beam-orientation.md`: `scripts/beam_orientation/ms_io.py` now reads the MS
   with arcae (TaQL row selection, `uint8` boolean columns cast to `bool`);
   line citations re-pointed.
+- `beam-orientation.md` re-verified at `a770184`: `read_ms` selects rows by
+  NumPy mask, not TaQL (`from_taql` aborts the interpreter on a bad path),
+  and indexes FIELD by row number; line citations re-pointed.

@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Beam orientation and (Y, X) map-order conventions
 description: The settled (Y, X) rotation-averaged map order, parallactic-angle rotation averaging, the still-provisional beam-orientation convention with its open M1 validation, and the katbeam comparison probe that corroborates the BDS transpose but not the sign flips.
 tags: [beam, orientation, conventions, rotation, parallactic, yx-order, katbeam]
-timestamp: 2026-10-15T06:44:18Z
-last_verified_commit: b999f68
+timestamp: 2026-10-15T11:16:00Z
+last_verified_commit: a770184
 ---
 
 # Beam orientation and (Y, X) map-order conventions
@@ -283,8 +283,12 @@ conclusion* they're meant to produce is still open.
   (`scripts/beam_orientation/ms_io.py`, read with `arcae` — it used dask-ms
   until issue #28; the port is bit-identical on the bundled test MS).
   `read_ms(path, field_id)` selects the main-table rows of a single
-  `FIELD_ID` with a TaQL query and asserts they span exactly one
-  `DATA_DESC_ID` (`ms_io.py:118-127`). arcae returns boolean columns
+  `FIELD_ID` with a NumPy mask and asserts they span exactly one
+  `DATA_DESC_ID` (`ms_io.py:118-134`). Do not reintroduce TaQL here:
+  arcae's `Table.from_taql` aborts the interpreter (an uncaught C++
+  exception, no Python traceback) on a missing path or a path containing a
+  quote, whereas `arcae.table` raises a catchable `ArrowInvalid`. The phase
+  centre is `FIELD.PHASE_DIR[field_id]`, i.e. `FIELD_ID` used as a row number. arcae returns boolean columns
   (`FLAG`, `FLAG_ROW`) as `uint8`, so they are cast to `bool` before use.
   `_resolve_pointing_centre` (`ms_io.py:89-101`) is a two-tier resolver:
   first tries `_read_pointing_table`, which averages the MS `POINTING`
@@ -356,7 +360,7 @@ and `test` groups), `src/meerkat_beams/core/mdv_beams_to_bds.py:75,107-112` (the
 `tests/test_beam_wizard.py` (tests listed above),
 `scripts/test_beam_orientation.py:1-56`,
 `scripts/beam_orientation/mueller.py:91-131` (`assemble_mueller`),
-`scripts/beam_orientation/ms_io.py:18-187`,
+`scripts/beam_orientation/ms_io.py:18-191`,
 `scripts/beam_orientation/plots.py`, `scripts/beam_orientation/download.py`,
 `scripts/beam_orientation/phase_rotate.py:1-13`, `tests/conftest.py:18-36`,
 `tests/test_beam_orientation_mueller.py::test_assemble_mueller_signs_swap_propagate`,
