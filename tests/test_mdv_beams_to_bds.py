@@ -243,7 +243,7 @@ def test_mdv_beams_to_bds_npz_branch(tmp_path):
 @pytest.mark.unit
 def test_mdv_beams_to_bds_compress_uses_blosc(tmp_path):
     """compress=True must apply the Blosc compressor to each beam variable."""
-    import zarr
+    import json
 
     from meerkat_beams.core.mdv_beams_to_bds import mdv_beams_to_bds
 
@@ -269,8 +269,9 @@ def test_mdv_beams_to_bds_compress_uses_blosc(tmp_path):
     out = tmp_path / "compressed.bds.zarr"
     mdv_beams_to_bds(mdv_beams=str(npz_path), bds=str(out), compress=True)
 
-    z = zarr.open(str(out), mode="r")
-    for v in ("jones", "njones", "stokes", "nstokes"):
-        compressor = z[v].compressor
-        assert compressor is not None, f"{v} not compressed"
-        assert "blosc" in str(type(compressor)).lower(), f"{v} compressor is {compressor}"
+    # Read the on-disk zarr v2 metadata rather than zarr's array API, whose
+    # codec attributes differ between zarr-python 2 and 3.
+    for v in ("jones", "njones", "stokes", "nstokes", "mueller", "nmueller"):
+        meta = json.loads((out / v / ".zarray").read_text())
+        assert meta["compressor"]["id"] == "blosc", f"{v} compressor is {meta['compressor']}"
+        assert [f["id"] for f in meta["filters"]] == ["delta"], f"{v} filters are {meta['filters']}"

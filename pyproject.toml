@@ -25,9 +25,10 @@ dependencies = [
 [project.optional-dependencies]
 # Full scientific stack
 full = [
-    "xarray",
+    # >=2024.10 for to_zarr(zarr_format=...), which pins our output to zarr v2.
+    "xarray>=2024.10",
     "xarray-fits",
-    "zarr<3",
+    "zarr",
     "numcodecs",
     "astropy",
     "numpy",

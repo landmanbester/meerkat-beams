@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from meerkat_beams.utils import LOGGER, ZARR_COMPRESSOR, ZARR_FILTERS
+from meerkat_beams.utils import LOGGER, ZARR_COMPRESSOR, ZARR_FILTERS, ZARR_FORMAT
 
 
 def mdv_to_xradio(
@@ -134,7 +134,7 @@ def mdv_to_xradio(
         enc["compressor"] = ZARR_COMPRESSOR
         enc["filters"] = ZARR_FILTERS
     encoding = {output_var: enc}
-    ds.to_zarr(output, mode="w", encoding=encoding)
+    ds.to_zarr(output, mode="w", encoding=encoding, zarr_format=ZARR_FORMAT)
     zarr.consolidate_metadata(output)
 
     LOGGER.info(f"Written {output}")

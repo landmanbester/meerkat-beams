@@ -76,10 +76,12 @@ def test_mdv_to_xradio_invalid_part_raises(tmp_path):
 
 @pytest.mark.unit
 def test_mdv_to_xradio_compress_true(tmp_path):
-    import zarr
+    import json
 
     npz = _make_synthetic_npz(tmp_path)
     out = tmp_path / "compressed.zarr"
     mdv_to_xradio(str(npz), str(out), antenna=-1, jones="HH", part="real", compress=True)
-    z = zarr.open(str(out), mode="r")
-    assert z["SKY"].compressor is not None
+    # On-disk v2 metadata, not zarr's array API (its codec attributes differ
+    # between zarr-python 2 and 3).
+    meta = json.loads((out / "SKY" / ".zarray").read_text())
+    assert meta["compressor"]["id"] == "blosc"

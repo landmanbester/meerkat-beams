@@ -20,6 +20,7 @@ import shutil
 from pathlib import Path
 
 from meerkat_beams import cache
+from meerkat_beams.utils import is_zarr_group
 
 
 def stage_product(name: str, src, force: bool = False) -> Path:
@@ -32,8 +33,8 @@ def stage_product(name: str, src, force: bool = False) -> Path:
     """
     cache.product_gdrive_id(name)  # raises ValueError for an unknown product
     source = Path(src).expanduser().resolve()
-    if not (source / ".zgroup").exists():
-        raise SystemExit(f"{source} does not look like a zarr store (no .zgroup)")
+    if not is_zarr_group(source):
+        raise SystemExit(f"{source} does not look like a zarr store (no .zgroup or zarr.json)")
     dest = cache.input_zarr_path_for_product(name)
     resolved_dest = dest.resolve() if dest.exists() else dest
 

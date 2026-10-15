@@ -60,6 +60,51 @@ log = LOGGER = create_logger()
 ZARR_COMPRESSOR = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
 ZARR_FILTERS = [Delta(dtype="float32")]
 
+# zarr is unpinned so downstream applications can pick their own major version.
+# Every store we write is zarr format 2 regardless, so its output stays readable
+# by consumers still on zarr-python 2 (zarr 3 reads and writes v2; zarr 2 cannot
+# read v3). Pass this to xarray's to_zarr as zarr_format=ZARR_FORMAT.
+ZARR_FORMAT = 2
+
+
+def is_zarr_group(path) -> bool:
+    """True if ``path`` is a zarr group store in either on-disk format (v2 or v3)."""
+    return (Path(path) / ".zgroup").exists() or (Path(path) / "zarr.json").exists()
+
+
+def _zarr_major() -> int:
+    import zarr
+
+    return int(zarr.__version__.split(".")[0])
+
+
+def zarr_open_group(path, mode: str):
+    """Open a zarr group, creating any new store in ``ZARR_FORMAT`` under zarr 2 or 3."""
+    import zarr
+
+    if _zarr_major() >= 3:
+        return zarr.open_group(path, mode=mode, zarr_format=ZARR_FORMAT)
+    return zarr.open_group(path, mode=mode)
+
+
+_ZARR_DEFAULT_COMPRESSOR = object()
+
+
+def zarr_create_array(group, name: str, compressor=_ZARR_DEFAULT_COMPRESSOR, filters=None, **kwargs):
+    """Create an array in ``group`` with zarr-2-style codec arguments under zarr 2 or 3.
+
+    zarr 3 removed ``Group.create_dataset`` in favour of ``create_array``, which
+    spells the codec argument ``compressors``. Both keep ``create_dataset``'s
+    semantics: omitting ``compressor`` gives zarr's default compressor, while
+    ``compressor=None`` writes the array uncompressed.
+    """
+    if compressor is not _ZARR_DEFAULT_COMPRESSOR:
+        kwargs["compressors" if _zarr_major() >= 3 else "compressor"] = compressor
+    if _zarr_major() >= 3:
+        return group.create_array(name, filters=filters, **kwargs)
+    return group.create_dataset(name, filters=filters, **kwargs)
+
+
 # ---------------------------------------------------------------------------
 # PowerBeam dataclass
 # ---------------------------------------------------------------------------
@@ -502,7 +547,7 @@ class BeamWizard(object):
                 fitshdr = hdul[0].header
             wcs = WCS(fitshdr)
             self._times = None
-        elif (Path(image_name) / ".zgroup").exists():
+        elif is_zarr_group(image_name):
             log.info(f"obtaining WCS from dataset {image_name}")
             ds = xarray.open_zarr(image_name)
             fitshdr = fits.Header(dict(ds.attrs["fits_header"]))
@@ -1383,8 +1428,9 @@ class BeamWizard(object):
 
         # Create zarr store directly (no dask dependency)
         if ds is None:
-            store = zarr.open(filename, mode="w")
-            store.create_dataset(
+            store = zarr_open_group(filename, mode="w")
+            zarr_create_array(
+                store,
                 var_name,
                 shape=shape,
                 chunks=chunks,
@@ -1397,7 +1443,7 @@ class BeamWizard(object):
             # Write coordinate arrays
             for dim_idx, dim in enumerate(dim_names):
                 coord_data = np.asarray(coords[dim])
-                store.create_dataset(dim, data=coord_data, overwrite=True, fill_value=None)
+                zarr_create_array(store, dim, data=coord_data, overwrite=True, fill_value=None)
                 store[dim].attrs["_ARRAY_DIMENSIONS"] = [dim]
             zarr.consolidate_metadata(filename)
 
@@ -1464,7 +1510,7 @@ def enrich_bds_xradio(zarr_path: str, bw: BeamWizard, output_var: str, polarizat
 
     # Fix polarization labels: get_time_freq_beam writes "II", "QQ", etc.
     # xradio expects single-letter Stokes labels "I", "Q", "U", "V"
-    pol_arr = store.create_dataset("polarization", data=np.array(polarizations), overwrite=True)
+    pol_arr = zarr_create_array(store, "polarization", data=np.array(polarizations), overwrite=True)
     pol_arr.attrs["_ARRAY_DIMENSIONS"] = ["polarization"]
 
     # Dimensions are already in xradio order (time, frequency, polarization, l, m)
