@@ -3,8 +3,8 @@ type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr
 description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, and the xradio primary-beam schema.
 tags: [mdv, bds, xradio, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
-timestamp: 2026-10-14T09:38:21Z
-last_verified_commit: 2a15cbb
+timestamp: 2026-10-15T12:00:35Z
+last_verified_commit: b1b7df5
 ---
 
 # Data model — MdV npz, BDS zarr, xradio zarr
@@ -30,7 +30,7 @@ Raw voltage beams from the SARAO archive
 
 ### Two input branches in `mdv_beams_to_bds`, different antenna handling
 
-`mdv_beams_to_bds` (`src/meerkat_beams/core/mdv_beams_to_bds.py:28-43`)
+`mdv_beams_to_bds` (`src/meerkat_beams/core/mdv_beams_to_bds.py:33-49`)
 accepts either an `.npz` file or a per-antenna mean-beam zarr, and the two
 branches disagree on whether antenna selection is needed:
 
@@ -40,7 +40,7 @@ if mdv_beams.endswith(".npz"):
     bm = mdv["beam"]
     ...
     bm = bm[:, -1]  # select average beam (last antenna index)
-elif (Path(mdv_beams) / ".zgroup").exists():
+elif is_zarr_group(mdv_beams):  # .zgroup (v2) or zarr.json (v3)
     xds = xarray.open_zarr(mdv_beams, chunks=None)
     bm = xds.BEAM.values  # already mean beam: [4, NFREQ, NY, NX]
     ...
@@ -60,7 +60,7 @@ and the `.npz` branch still does.
 ## BDS zarr
 
 Produced by `mdv-beams-to-bds`. Holds **six** data variables
-(`src/meerkat_beams/core/mdv_beams_to_bds.py:105-114`):
+(`src/meerkat_beams/core/mdv_beams_to_bds.py:111-120`):
 
 | variable | dtype | dims | normalisation |
 |---|---|---|---|
@@ -83,7 +83,7 @@ real Stokes like `stokes`/`nstokes` are) — hence `complex64` rather than
 `float32` despite sharing the `stokes_i`/`stokes_j` dims. Added in commit
 `2d6d0dc` ("feat(bds): add mueller term to bds").
 
-Additional dataset-level attrs (`mdv_beams_to_bds.py:115-117`):
+Additional dataset-level attrs (`mdv_beams_to_bds.py:121-123`):
 
 - `.attrs["fits_header"]` — a synthesized FITS header dict (`SIMPLE`,
   `NAXIS{1,2,3}`, `CRPIX{1,2,3}`, `CRVAL{1,2,3}`, `CDELT{1,2,3}`,
@@ -99,11 +99,23 @@ are pre-multiplied by the inverse of the central-pixel Jones matrix so the
 on-axis beam is the identity — use these unless raw voltage beams are
 specifically needed.
 
-When `compress=True`, all six variables get Delta(float32) + Blosc
-zstd/clevel=5 encoding (`mdv_beams_to_bds.py:119-126`) — note the filter
-is `Delta(dtype="float32")` even for the `complex64` variables (`jones`,
-`njones`, `mueller`, `nmueller`); this matches the module-level
-`ZARR_FILTERS` convention documented in `utils.py`.
+When `compress=True`, all six variables get the module-level
+`ZARR_FILTERS` + `ZARR_COMPRESSOR` from `utils.py`, i.e. Delta(float32) +
+Blosc zstd/clevel=5 (`mdv_beams_to_bds.py:126-129`) — note the filter is
+`Delta(dtype="float32")` even for the `complex64` variables (`jones`,
+`njones`, `mueller`, `nmueller`).
+
+### On-disk zarr format
+
+Every store the package writes — BDS and both xradio paths — is **zarr
+format 2**, whichever zarr-python is installed: `to_zarr(...,
+zarr_format=ZARR_FORMAT)` for the xarray writers, and
+`zarr_open_group`/`zarr_create_array` (`utils.py:67-105`) for
+`get_time_freq_beam`/`enrich_bds_xradio`'s raw writes. zarr is unpinned
+(design-decisions D18), so output stays readable by consumers still on
+zarr-python 2, which cannot read v3. Inputs are the other way round: a
+mean-beam or image zarr may be v2 or v3 (`is_zarr_group`), since zarr 3
+writes v3 by default. Pinned by `tests/test_zarr_format.py`.
 
 ## Synthesized katbeam BDS
 
@@ -415,7 +427,7 @@ script — not the BDS `mueller` variable itself).
 
 ## Sources
 
-- `src/meerkat_beams/core/mdv_beams_to_bds.py:18-127` (`mdv_beams_to_bds`;
+- `src/meerkat_beams/core/mdv_beams_to_bds.py:24-129` (`mdv_beams_to_bds`;
   antenna-branch asymmetry at `:28-43`, six-variable write at `:105-114`)
 - `src/meerkat_beams/core/bds_to_xradio.py:11-130` (`bds_to_xradio`,
   `_resolve_elements`)

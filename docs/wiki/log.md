@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-15T11:16:00Z
+timestamp: 2026-10-15T12:00:35Z
 ---
 
 # Wiki changelog
@@ -241,3 +241,26 @@ azimuthal averaging.
 - `beam-orientation.md` re-verified at `a770184`: `read_ms` selects rows by
   NumPy mask, not TaQL (`from_taql` aborts the interpreter on a bad path),
   and indexes FIELD by row number; line citations re-pointed.
+
+## 2026-10-15 — zarr unpinned, output stays zarr v2 (verified at `b1b7df5` / `7dbee90`)
+
+- `design-decisions.md`: new D18. `zarr` has no upper bound, so downstream
+  applications pick zarr-python 2 or 3, and every store we write is zarr
+  format 2 under both. Raw writes go through `zarr_open_group` /
+  `zarr_create_array`; tests read `.zarray`, not `Array.compressor`; a `zarr2`
+  CI job covers zarr<3. Records that Blosc output is not byte-reproducible, so
+  compare stores by decoded values. D5's stack list and line citations were
+  re-pointed. Stamped at `7dbee90` (the CI commit).
+- `data-model.md`: new "On-disk zarr format" subsection. The input branch
+  now uses `is_zarr_group`, which accepts v2 or v3, and `compress=True` uses
+  the shared `ZARR_COMPRESSOR`/`ZARR_FILTERS`. Citations re-pointed.
+- `beamwizard.md`: `get_time_freq_beam` writes through the helpers, which keep
+  zarr 2's meaning for `compressor=None` (uncompressed) versus an omitted
+  compressor (default). `enrich_bds_xradio`'s polarization rewrite stays v2.
+  Citations re-pointed.
+- `beam-orientation.md` re-stamped at `b1b7df5`: no content change, but
+  the helpers inserted near the top of `utils.py` shifted every later line, so
+  its `utils.py`, `mdv_beams_to_bds.py` and `scripts/test_beam_orientation.py`
+  citations were re-pointed. The same shift is applied on the three pages above.
+- `CLAUDE.md` / `README.md` (not wiki pages): `zarr<3` replaced; the
+  "Zarr compression" section gained the unpinned/v2 rule.
