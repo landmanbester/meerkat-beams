@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-14T09:38:21Z
+timestamp: 2026-10-15T06:44:18Z
 ---
 
 # Wiki changelog
@@ -228,3 +228,13 @@ azimuthal averaging.
   (`dev001`, PR #8 merged 2026-07-27), replaced the two references to the
   deleted `docs/progress.md` with design-decisions D7, and corrected Ruff's
   `target-version` to `py311`.
+
+## 2026-10-15 — dask-ms dropped from `[full]` (issue #28, verified at `b999f68`)
+
+- `design-decisions.md` D5: the `[full]` stack lists `dask` and
+  `hip-cargo[s3]` instead of `dask-ms`. The package never imported dask-ms;
+  `hip-cargo[s3]` keeps the s3fs that `dask-ms[s3]` used to supply for
+  `s3://` CLI paths.
+- `beam-orientation.md`: `scripts/beam_orientation/ms_io.py` now reads the MS
+  with arcae (TaQL row selection, `uint8` boolean columns cast to `bool`);
+  line citations re-pointed.
