@@ -114,7 +114,7 @@ hand, which `scripts/stage_group_cache.py` does.
 ### Zarr compression
 `ZARR_COMPRESSOR` = Blosc zstd/clevel=5/BITSHUFFLE, `ZARR_FILTERS` = `[Delta(float32)]`. Only applied when a core function is called with `compress=True`.
 
-zarr is **unpinned** so downstream applications choose zarr-python 2 or 3; everything we write is zarr **format 2** (`ZARR_FORMAT`) either way. xarray writers pass `zarr_format=ZARR_FORMAT`; raw writes must go through `zarr_open_group` / `zarr_create_array` (never `create_dataset`/`create_array` directly — the two majors disagree). Inputs may be v2 or v3 (`is_zarr_group`). Assert codecs via the store's `.zarray` JSON, not `Array.compressor`. CI has a `zarr2` job on `zarr<3`. See `docs/wiki/design-decisions.md` D18.
+zarr is **unpinned** so downstream applications choose zarr-python 2 or 3; everything we write is zarr **format 2** (`ZARR_FORMAT`) either way. xarray writers pass `zarr_format=ZARR_FORMAT`; raw writes must go through `zarr_open_group` / `zarr_create_array` (never `create_dataset`/`create_array` directly — the two majors disagree). Inputs may be v2 or v3 (`is_zarr_group`; `require_readable_zarr` gives a clear error for v3 under zarr-python 2). `xarray>=2025.6` is load-bearing: older xarray cannot write under zarr 3. Assert codecs via the store's `.zarray` JSON, not `Array.compressor`. CI has a `zarr2` job on `zarr<3`. See `docs/wiki/design-decisions.md` D18.
 
 ## Domain concepts
 

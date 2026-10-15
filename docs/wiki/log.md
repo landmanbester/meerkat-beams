@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-15T12:00:35Z
+timestamp: 2026-10-15T12:53:13Z
 ---
 
 # Wiki changelog
@@ -264,3 +264,18 @@ azimuthal averaging.
   citations were re-pointed. The same shift is applied on the three pages above.
 - `CLAUDE.md` / `README.md` (not wiki pages): `zarr<3` replaced; the
   "Zarr compression" section gained the unpinned/v2 rule.
+
+## 2026-10-15 — zarr unpin review fixes (verified at `aa82f0a`)
+
+- `design-decisions.md` D18: the xarray floor is now `>=2025.6`, because a
+  bisect showed xarray 2024.10–2025.4 cannot write under zarr 3.
+  `zarr_open_group` forces v2 only when creating a store, and
+  `require_readable_zarr` gives v3-under-zarr-2 inputs a clear error.
+- `data-model.md`: the "On-disk zarr format" section notes the
+  `require_readable_zarr` error, and the stale Sources sub-ranges
+  (`:28-43`/`:105-114`) are fixed.
+- All four code-covering pages were re-stamped at `aa82f0a` and their
+  `utils.py`/`mdv_beams_to_bds.py`/`pyproject.toml` citations re-pointed for
+  the lines the fix shifted.
+- `CLAUDE.md` (not a wiki page): the "Zarr compression" rule mentions
+  `require_readable_zarr` and the load-bearing `xarray>=2025.6` floor.
