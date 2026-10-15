@@ -36,10 +36,11 @@ full = [
     "wget",
     "gdown>=5.0.0",
     "requests>=2.33.1",
-    "dask-ms[s3,xarray,zarr]>=0.2.23",
-    # Imported directly by katbeam_bds for lazy beam synthesis. Arrives
-    # transitively via dask-ms too, but a direct import deserves a direct
-    # declaration.
+    # s3:// support for the CLI's parse_upath paths (s3fs). This used to arrive
+    # via dask-ms[s3]; dask-ms itself was never imported by the package and was
+    # dropped (issue #28).
+    "hip-cargo[s3]",
+    # Imported directly by katbeam_bds for lazy beam synthesis.
     "dask",
     # Analytic MeerKAT beams, selected by BeamWizard(beam_model="katbeam").
     # Resolved from PyPI here, unlike the dev/test groups' git pin: a published
@@ -120,6 +121,8 @@ dev = [
 # Test deps are 3.11+ only: tests never run on 3.10 (lightweight-install-only).
 test = [
     "pytest>=8.0.0",
+    # Also brings arcae, which scripts/beam_orientation/ms_io.py and
+    # scripts/pks1934_flux_scale.py use to read Measurement Sets.
     "xarray-ms>=0.5.4; python_version >= '3.11'",
     "msv4-utils>=0.0.3; python_version >= '3.11'",
     # Also in the dev group (see the note there for why it is a git pin).

@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Beam orientation and (Y, X) map-order conventions
 description: The settled (Y, X) rotation-averaged map order, parallactic-angle rotation averaging, the still-provisional beam-orientation convention with its open M1 validation, and the katbeam comparison probe that corroborates the BDS transpose but not the sign flips.
 tags: [beam, orientation, conventions, rotation, parallactic, yx-order, katbeam]
-timestamp: 2026-10-14T09:38:21Z
-last_verified_commit: 3800462
+timestamp: 2026-10-15T11:16:00Z
+last_verified_commit: a770184
 ---
 
 # Beam orientation and (Y, X) map-order conventions
@@ -280,14 +280,21 @@ The pieces below are implemented and tested; only the *physical-correctness
 conclusion* they're meant to produce is still open.
 
 - **MS selection + pointing-centre resolution**
-  (`scripts/beam_orientation/ms_io.py`). `read_ms(path, field_id)` selects
-  a single `FIELD_ID` group from the MS main table
-  (`taql_where=f"FIELD_ID == {field_id}"`, `ms_io.py:121-131`).
-  `_resolve_pointing_centre` (`ms_io.py:92-104`) is a two-tier resolver:
+  (`scripts/beam_orientation/ms_io.py`, read with `arcae` — it used dask-ms
+  until issue #28; the port is bit-identical on the bundled test MS).
+  `read_ms(path, field_id)` selects the main-table rows of a single
+  `FIELD_ID` with a NumPy mask and asserts they span exactly one
+  `DATA_DESC_ID` (`ms_io.py:118-134`). Do not reintroduce TaQL here:
+  arcae's `Table.from_taql` aborts the interpreter (an uncaught C++
+  exception, no Python traceback) on a missing path or a path containing a
+  quote, whereas `arcae.table` raises a catchable `ArrowInvalid`. The phase
+  centre is `FIELD.PHASE_DIR[field_id]`, i.e. `FIELD_ID` used as a row number. arcae returns boolean columns
+  (`FLAG`, `FLAG_ROW`) as `uint8`, so they are cast to `bool` before use.
+  `_resolve_pointing_centre` (`ms_io.py:89-101`) is a two-tier resolver:
   first tries `_read_pointing_table`, which averages the MS `POINTING`
   table's `DIRECTION` over rows whose `TIME` falls in the selected field's
-  scan window (`ms_io.py:64-89`); on any failure (missing table, missing
-  columns, no matching rows) it falls back to a hardcoded
+  scan window (`ms_io.py:64-86`); on any failure (missing table, empty
+  table, missing columns, no matching rows) it falls back to a hardcoded
   `ORIGINAL_POINTING` dict keyed by `FIELD_ID` (`ms_io.py:31-37`).
   **Note:** that fallback dict's comment block records that the field names
   for `Offset1` and `J1939-6342` were originally swapped and have since
@@ -353,7 +360,7 @@ and `test` groups), `src/meerkat_beams/core/mdv_beams_to_bds.py:75,107-112` (the
 `tests/test_beam_wizard.py` (tests listed above),
 `scripts/test_beam_orientation.py:1-56`,
 `scripts/beam_orientation/mueller.py:91-131` (`assemble_mueller`),
-`scripts/beam_orientation/ms_io.py:18-131`,
+`scripts/beam_orientation/ms_io.py:18-191`,
 `scripts/beam_orientation/plots.py`, `scripts/beam_orientation/download.py`,
 `scripts/beam_orientation/phase_rotate.py:1-13`, `tests/conftest.py:18-36`,
 `tests/test_beam_orientation_mueller.py::test_assemble_mueller_signs_swap_propagate`,

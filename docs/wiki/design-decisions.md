@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+]
-timestamp: 2026-10-14T09:38:21Z
-last_verified_commit: 2a15cbb
+timestamp: 2026-10-15T06:44:18Z
+last_verified_commit: b999f68
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -127,9 +127,10 @@ numbered list — see `beam-orientation.md`).
 ## D5 — Python support policy: 3.11–3.13 full, 3.10 lightweight-only
 
 **Context:** The `[full]` extra pulls in the full scientific stack
-(`xarray`, `zarr<3`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask-ms`,
-`wget`, `gdown`); some of that stack's transitive deps lag on 3.10
-support or aren't worth pinning for a base install.
+(`xarray`, `zarr<3`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask`,
+`wget`, `gdown`, `hip-cargo[s3]`; `dask-ms` was dropped for issue #28);
+some of that stack's transitive deps lag on 3.10 support or aren't worth
+pinning for a base install.
 
 **Decision:** 3.10 is supported only for the lightweight base install
 (CLI + hip-cargo container dispatch, no `[full]`); it is deliberately

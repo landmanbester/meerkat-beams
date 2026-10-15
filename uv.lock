@@ -160,15 +160,6 @@ wheels = [
 ]
 
 [[package]]
-name = "appdirs"
-version = "1.4.4"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/d7/d8/05696357e0311f5b5c316d7b95f46c669dd9c15aaeecbb48c7d0aeb88c40/appdirs-1.4.4.tar.gz", hash = "sha256:7d5d0167b2b1ba821647616af46a749d1c653740dd0d2415100fe26e27afdf41", size = 13470, upload-time = "2020-05-11T07:59:51.037Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3b/00/2344469e2084fb287c2e0b57b72910309874c3245463acd6cf5e3db69324/appdirs-1.4.4-py2.py3-none-any.whl", hash = "sha256:a841dacd6b99318a741b166adb07e19ee71a274450e68237b4650ca1055ab128", size = 9566, upload-time = "2020-05-11T07:59:49.499Z" },
-]
-
-[[package]]
 name = "arcae"
 version = "0.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -656,41 +647,7 @@ wheels = [
 
 [package.optional-dependencies]
 array = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-
-[[package]]
-name = "dask-ms"
-version = "0.2.29"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "appdirs" },
-    { name = "cacheout" },
-    { name = "dask", extra = ["array"] },
-    { name = "donfig" },
-    { name = "fsspec" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "python-casacore" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/85/7f/7fa60f112545908e95d0268eda5297b41b9432d43a5478cc4e7dae4422c4/dask_ms-0.2.29.tar.gz", hash = "sha256:79a16250e0360868424d3f030c4399a52a35d007ba6c4c5ff712ef243efa6697", size = 151105, upload-time = "2026-01-19T08:58:44.071Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5d/48/a19e76c6f52d514ff5733c89809746d2d68ba646036fbc59cbdee4ef0cd3/dask_ms-0.2.29-py3-none-any.whl", hash = "sha256:57625c4fea15f406ed572b0c3dc9c8466f6529fd2598905e647f1c6eea0b13c5", size = 164178, upload-time = "2026-01-19T08:58:42.706Z" },
-]
-
-[package.optional-dependencies]
-s3 = [
-    { name = "s3fs" },
-]
-xarray = [
-    { name = "xarray", version = "2025.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "xarray", version = "2026.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-zarr = [
-    { name = "numcodecs" },
-    { name = "zarr", version = "2.18.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "zarr", version = "2.18.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 
 [[package]]
@@ -716,18 +673,6 @@ name = "docopt"
 version = "0.6.2"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a2/55/8f8cab2afd404cf578136ef2cc5dfb50baa1761b68c9da1fb1e4eed343c9/docopt-0.6.2.tar.gz", hash = "sha256:49b3a825280bd66b3aa83585ef59c4a8c82f2c8a522dbe754a8bc8d08c85c491", size = 25901, upload-time = "2014-06-16T11:18:57.406Z" }
-
-[[package]]
-name = "donfig"
-version = "0.8.1.post1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyyaml" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/25/71/80cc718ff6d7abfbabacb1f57aaa42e9c1552bfdd01e64ddd704e4a03638/donfig-0.8.1.post1.tar.gz", hash = "sha256:3bef3413a4c1c601b585e8d297256d0c1470ea012afa6e8461dc28bfb7c23f52", size = 19506, upload-time = "2024-05-23T14:14:31.513Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/0c/d5/c5db1ea3394c6e1732fb3286b3bd878b59507a8f77d32a2cebda7d7b7cd4/donfig-0.8.1.post1-py3-none-any.whl", hash = "sha256:2a3175ce74a06109ff9307d90a230f81215cbac9a751f4d1c6194644b8204f9d", size = 21592, upload-time = "2024-05-23T14:13:55.283Z" },
-]
 
 [[package]]
 name = "exceptiongroup"
@@ -939,6 +884,11 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/2b/60/40340800369673b76d135b5f991ee3c23bb38ac05a0e5c8ca580feb5cf38/hip_cargo-0.4.0.tar.gz", hash = "sha256:a4cb2ad39ac2eaec064885344bd91f3c1e02a278d007984dfc8593756055696d", size = 92979, upload-time = "2026-09-23T14:57:23.233Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/05/67/529d7a58c8bb624f1567bb27f9b9f66c878634b641f254b52bd9c0144c02/hip_cargo-0.4.0-py3-none-any.whl", hash = "sha256:cdb5756485ec31acbe76e4f5998b881a52886a91fd11733c54a1189499a8bdb5", size = 105858, upload-time = "2026-09-23T14:57:21.821Z" },
+]
+
+[package.optional-dependencies]
+s3 = [
+    { name = "s3fs" },
 ]
 
 [[package]]
@@ -1444,8 +1394,8 @@ full = [
     { name = "astropy", version = "6.1.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "astropy", version = "7.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "dask" },
-    { name = "dask-ms", extra = ["s3", "xarray", "zarr"] },
     { name = "gdown" },
+    { name = "hip-cargo", extra = ["s3"] },
     { name = "katbeam" },
     { name = "matplotlib" },
     { name = "numcodecs" },
@@ -1483,9 +1433,9 @@ test = [
 requires-dist = [
     { name = "astropy", marker = "extra == 'full'" },
     { name = "dask", marker = "extra == 'full'" },
-    { name = "dask-ms", extras = ["s3", "xarray", "zarr"], marker = "extra == 'full'", specifier = ">=0.2.23" },
     { name = "gdown", marker = "extra == 'full'", specifier = ">=5.0.0" },
     { name = "hip-cargo", specifier = ">=0.4.0" },
+    { name = "hip-cargo", extras = ["s3"], marker = "extra == 'full'" },
     { name = "katbeam", marker = "extra == 'full'" },
     { name = "matplotlib", marker = "extra == 'full'" },
     { name = "numcodecs", marker = "extra == 'full'" },
@@ -2343,22 +2293,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/7d/0d/549bd94f1a0a402dc8cf64563a117c0f3765662e2e668477624baeec44d5/pytest-9.0.3.tar.gz", hash = "sha256:b86ada508af81d19edeb213c681b1d48246c1a91d304c6c81a427674c17eb91c", size = 1572165, upload-time = "2026-04-07T17:16:18.027Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d4/24/a372aaf5c9b7208e7112038812994107bc65a84cd00e0354a88c2c77a617/pytest-9.0.3-py3-none-any.whl", hash = "sha256:2c5efc453d45394fdd706ade797c0a81091eccd1d6e4bccfcd476e2b8e0ab5d9", size = 375249, upload-time = "2026-04-07T17:16:16.13Z" },
-]
-
-[[package]]
-name = "python-casacore"
-version = "3.7.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/24/93/2ccc937c1609d1ab051b6ca86b51983b94d79f9f097558ba11c9023d74e3/python_casacore-3.7.1.tar.gz", hash = "sha256:6c4e060cba73c0ab9d944eb4b6aa97f20c12b761e671587f313bfc59e3a775c3", size = 288525, upload-time = "2025-04-25T10:31:15.824Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/99/53/6d16c1e7a92da0ead89c2d789b63d4bb69aeb37a4a0a3ef2feed54a8ecf1/python_casacore-3.7.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1e5101fc6240b9283d4b7027c92125e6f267d507d77350101451fd7200e0645f", size = 46734093, upload-time = "2025-04-09T15:32:18.298Z" },
-    { url = "https://files.pythonhosted.org/packages/e5/60/1b6b300b8c67418962654fd56282a4e09e2141b4384ce5af0b27eda80c0e/python_casacore-3.7.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:5734c96278022600fe43d6b7488f045762ffb305bcca6779c8caf6f1a40b0555", size = 46733801, upload-time = "2025-04-09T15:32:22.556Z" },
-    { url = "https://files.pythonhosted.org/packages/e1/1d/39f81cba931f4d32d22fae231c776bbf28f4ca7ae61a12cd6836dd31b793/python_casacore-3.7.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2805353e3f12d6c03c20267cfa6539b256c43f382ccb0f84436d99f36bd83520", size = 46739724, upload-time = "2025-04-09T15:32:26.599Z" },
-    { url = "https://files.pythonhosted.org/packages/25/d8/600714b9232740ee9d6607d52493278db19442df01d5aa7ffed2a67941bb/python_casacore-3.7.1-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9f356b7f0e9a9dfb4a2d9e710586bada676a2f6c5fcf476e1f5fb6a86a01961a", size = 46739792, upload-time = "2025-04-29T18:04:19.019Z" },
 ]
 
 [[package]]
