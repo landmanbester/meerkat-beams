@@ -795,6 +795,81 @@ def test_rotation_averaged_beam_mismatched_2d_raises(bw, times):
         )
 
 
+def _grid_average(bw, times, **kwargs):
+    """A non-square, off-centre grid with more pixels than threads, so chunking matters."""
+    args = dict(
+        l=np.linspace(-3 * DELTA, 2 * DELTA, 9),
+        m=np.linspace(-2 * DELTA, 3 * DELTA, 7),
+        times=times,
+        freq=FREQS,
+        time_stepping=1,
+        pixel_stepping=1,
+        verbose=0,
+    )
+    args.update(kwargs)
+    return bw.get_rotation_averaged_beam(**args)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("nthreads", [2, 4, 100])
+def test_rotation_averaged_beam_threads_are_bitwise_identical(bw, times, nthreads):
+    """Each pixel's sum over angles is independent of the chunking, so threading
+    must not change a single bit -- including more threads than pixels."""
+    mean1, var1 = _grid_average(bw, times)
+    mean, var = _grid_average(bw, times, nthreads=nthreads)
+    assert np.array_equal(mean, mean1)
+    assert np.array_equal(var, var1)
+
+
+@pytest.mark.unit
+def test_rotation_averaged_beam_threads_respect_chunk_size(bw, times):
+    """A chunk_size smaller than pixels/nthreads is still honoured."""
+    mean1, _ = _grid_average(bw, times)
+    mean, _ = _grid_average(bw, times, nthreads=2, chunk_size=5)
+    assert np.array_equal(mean, mean1)
+
+
+@pytest.mark.unit
+def test_pa_tolerance_weights_merged_angles_by_count(bw, times):
+    """Repeated times collapse into one merged angle with weight equal to the
+    repeat count, so the merged average equals the unmerged one."""
+    repeated = Time([times[0]] * 3 + [times[-1]])
+    mean1, var1 = _grid_average(bw, repeated)
+    mean, var = _grid_average(bw, repeated, pa_tolerance=1e-6)
+    np.testing.assert_allclose(mean, mean1, rtol=0, atol=1e-12)
+    np.testing.assert_allclose(var, var1, rtol=0, atol=1e-12)
+
+
+@pytest.mark.unit
+def test_pa_tolerance_merges_to_the_mean_angle(bw, times):
+    """A tolerance wider than the whole range evaluates once, at the mean angle:
+    close to the unmerged average (the first-order error cancels), not equal."""
+    mean1, _ = _grid_average(bw, times)
+    mean, _ = _grid_average(bw, times, pa_tolerance=360.0)
+    assert not np.array_equal(mean, mean1)
+    np.testing.assert_allclose(mean, mean1, rtol=0, atol=1e-3)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("kwargs", [{"nthreads": 0}, {"pa_tolerance": -0.1}])
+def test_rotation_averaged_beam_rejects_bad_speed_options(bw, times, kwargs):
+    with pytest.raises(ValueError):
+        _grid_average(bw, times, **kwargs)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("order", [0, 1])
+def test_low_orders_skip_the_spline_prefilter(bw, times, order):
+    """spline_filter accepts orders 2-5 only; nearest and linear interpolation
+    read the samples directly and must not raise."""
+    vals = bw.interpolate_beam(np.array([[bw.bds.attrs["x0"]], [bw.bds.attrs["y0"]]]), FREQS, order=order)
+    np.testing.assert_allclose(vals, 1.0, atol=1e-5)
+    mean, _ = _grid_average(bw, times, order=order)
+    mean3, _ = _grid_average(bw, times)
+    assert mean.shape == mean3.shape
+    assert not np.array_equal(mean, mean3)
+
+
 @pytest.mark.unit
 def test_interpolate_beam_jones_var_and_offdiagonal_stokes(bw):
     """Confirm i/j label-to-index lookup works for jones (0,1) and stokes (Q,I)."""
