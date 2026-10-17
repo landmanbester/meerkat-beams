@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-15T12:53:13Z
+timestamp: 2026-10-17T19:30:00Z
 ---
 
 # Wiki changelog
@@ -279,3 +279,18 @@ azimuthal averaging.
   the lines the fix shifted.
 - `CLAUDE.md` (not a wiki page): the "Zarr compression" rule mentions
   `require_readable_zarr` and the load-bearing `xarray>=2025.6` floor.
+
+## 2026-10-17 — faster rotation averaging (verified at `b434976`)
+
+Issue #39. `get_rotation_averaged_beam` gained `nthreads`, `pa_tolerance` and
+`order`, forwarded by `partition_mueller`, and `_get_prefilter` caches the raw
+cube for orders 0 and 1.
+
+- `beamwizard.md`: new "Speed: `nthreads`, `pa_tolerance`, `order`" subsection
+  with the measured timings and errors; "Spline order" records the order 0/1
+  path. Re-stamped at `b434976`.
+- `utils.py` citations in `beamwizard.md`, `beam-orientation.md`,
+  `design-decisions.md` and `data-model.md` were re-pointed for the lines the
+  change shifted, mapped from a line diff and spot-checked against their
+  targets. Only `beamwizard.md` was re-verified and re-stamped; the other three
+  keep their stamps.

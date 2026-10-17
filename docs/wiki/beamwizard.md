@@ -1,10 +1,10 @@
 ---
 type: reference
 title: BeamWizard interpolation and rendering internals
-description: beam_model (mdv/katbeam), group (MM/MPM/MPMP) and average (pa/azimuth) selectors, interpolate_beam prefilter/off-cube/spline-order/freq-guard semantics, get_source_coordinates transforms, optional-image paths, get_time_freq_beam canonical dim_names, enrich_bds_xradio, and partition_mueller with the centre= override.
+description: beam_model (mdv/katbeam), group (MM/MPM/MPMP) and average (pa/azimuth) selectors, interpolate_beam prefilter/off-cube/spline-order/freq-guard semantics, get_source_coordinates transforms, optional-image paths, get_time_freq_beam canonical dim_names, enrich_bds_xradio, partition_mueller with the centre= override, and the nthreads/pa_tolerance/order speed options of get_rotation_averaged_beam.
 tags: [beamwizard, interpolation, scipy, zarr, xradio, utils, katbeam, baseline-groups, meerkat+, partition-mueller, mueller]
-timestamp: 2026-10-15T12:53:13Z
-last_verified_commit: aa82f0a
+timestamp: 2026-10-17T19:30:00Z
+last_verified_commit: b434976
 ---
 
 # BeamWizard interpolation and rendering internals
@@ -20,7 +20,7 @@ caller who changes a default without reading the inline comments.
 
 ## `interpolate_beam` — the prefilter contract
 
-`_get_prefilter` (`src/meerkat_beams/utils.py:611-642`) runs
+`_get_prefilter` (`src/meerkat_beams/utils.py:612-648`) runs
 `scipy.ndimage.spline_filter` once per `(var, i, j, order)` key and caches
 the result in `self._prefilters`. The cache's output dtype is **chosen by
 variable kind, not unconditionally `float32`**:
@@ -29,7 +29,7 @@ variable kind, not unconditionally `float32`**:
 out_dtype = np.complex64 if np.iscomplexobj(da) else np.float32
 ```
 
-(`utils.py:636-640`). Complex variables (`jones`, `njones`, `mueller`,
+(`utils.py:637-641`). Complex variables (`jones`, `njones`, `mueller`,
 `nmueller`) cache as `complex64`; real variables (`stokes`, `nstokes`)
 cache as `float32`. Passing a real output dtype for complex input would
 make scipy implicitly promote it (a version-dependent `UserWarning`), so
@@ -39,9 +39,9 @@ unconditionally `float32` — that was true before the Mueller-term work
 landed (commit `0f2a4f4`, "test: add tests for complex Mueller term") and
 is no longer accurate; treat the dtype-aware rule above as current.
 
-`interpolate_beam` (`utils.py:680-714`) calls `map_coordinates` against this
+`interpolate_beam` (`utils.py:686-720`) calls `map_coordinates` against this
 cached, already-filtered array with **`prefilter=False`**
-(`utils.py:711`) — an inline comment at `utils.py:705` spells out why:
+(`utils.py:717`) — an inline comment at `utils.py:711` spells out why:
 `_get_prefilter` already applied `spline_filter`, so flipping
 `prefilter` back to `True` would double-filter the data. Do not do this.
 
@@ -63,16 +63,22 @@ all keep values complex when the source variable is complex. Pinned by
 ### Off-cube policy
 
 `map_coordinates` passes `mode="constant", cval=0.0` explicitly
-(`utils.py:712-713`) — coordinates outside the X/Y cube return `0`, not a
+(`utils.py:718-719`) — coordinates outside the X/Y cube return `0`, not a
 nearest-edge value or a NaN. Pinned by `test_out_of_range_xy_returns_zero`.
 
 ### Spline order
 
 `_get_prefilter(order=3)` includes `order` in its cache key (`key = var,
-i, j, order`, `utils.py:614`), since `spline_filter` coefficients depend
+i, j, order`, `utils.py:615`), since `spline_filter` coefficients depend
 on the requested order and callers requesting different orders must not
 collide in the cache. `interpolate_beam` forwards its own `order`
 parameter to both `_get_prefilter` and the `map_coordinates` call.
+
+`spline_filter` accepts orders 2-5 only. For orders 0 and 1 `_get_prefilter`
+caches the raw cube at the same dtype instead (nearest and linear
+interpolation read the samples themselves), so `interpolate_beam(order=1)`
+works; before #39 it raised "spline order not supported". Pinned by
+`test_low_orders_skip_the_spline_prefilter`.
 
 ### Frequency guard
 
@@ -87,7 +93,7 @@ Pinned by `test_out_of_range_freq_raises`.
 def get_source_coordinates(self, srcpos, times=None, loc=None, signs=(1, 1), swap=False):
 ```
 
-(`utils.py:644-650`). For each requested time, transforms `srcpos` and the
+(`utils.py:650-656`). For each requested time, transforms `srcpos` and the
 field centre to `AltAz`, then computes the source's separation and
 position angle relative to the centre. Those are converted to beam-pixel
 offsets via the BDS's `dx`/`dy`/`x0`/`y0` attrs:
@@ -101,7 +107,7 @@ xp = x / self.bds.attrs["dx"] + self.bds.attrs["x0"]
 yp = y / self.bds.attrs["dy"] + self.bds.attrs["y0"]
 ```
 
-(`utils.py:672-677`). The `signs`/`swap` keyword arguments are not dead
+(`utils.py:678-683`). The `signs`/`swap` keyword arguments are not dead
 parameters — they are the exact lever the beam-orientation validation
 tooling's `flip_x`/`flip_y`/`swap_xy` perturbations twiddle (see
 `beam-orientation.md`); mirroring or transposing the sky→pixel map this
@@ -125,12 +131,12 @@ BDS-only: `interpolate_beam` still works (it only needs the BDS), but the
 and `times` returns `None` rather than raising. Two methods populate
 image-derived state after the fact:
 
-- `attach_image(image_name)` (`utils.py:552`) — attaches a FITS or xradio
+- `attach_image(image_name)` (`utils.py:553`) — attaches a FITS or xradio
   zarr image after construction (or swaps the image on an existing
   wizard), populating the field centre, WCS, default l/m grid, and time
   axis (the latter only for xradio-zarr images; FITS images still leave
   `times` as `None`).
-- `set_field_centre(centre, times=None)` (`utils.py:596`) — supplies just
+- `set_field_centre(centre, times=None)` (`utils.py:597`) — supplies just
   a pointing centre (and optionally a time axis) without attaching an
   image at all. This is the image-free path used by
   `scripts/test_beam_orientation.py`; the WCS and default l/m grid remain
@@ -148,7 +154,7 @@ Pinned by `test_construct_without_image`, `test_no_image_attrs_raise`,
 
 ## `get_time_freq_beam` — canonical `dim_names` only
 
-`get_time_freq_beam` (`utils.py:1239`) writes the full `(ij, time, freq,
+`get_time_freq_beam` (`utils.py:1299`) writes the full `(ij, time, freq,
 x, y)` beam cube to a zarr store, computing each time/ij plane by rotating
 the l/m grid by the parallactic angle and calling `interpolate_beam`.
 
@@ -163,14 +169,14 @@ if tuple(dim_names) != _CANONICAL_DIM_NAMES:
     raise ValueError(...)
 ```
 
-(`utils.py:1304-1311`). Real permutation of the data layout is not
+(`utils.py:1364-1371`). Real permutation of the data layout is not
 implemented — passing a differently-ordered tuple would relabel the dims
 without reordering the underlying array (silent corruption), so any
 non-canonical tuple raises `ValueError` instead. Pinned by
 `test_time_freq_beam_rejects_non_canonical_dim_names`.
 
 Both the beam-variable dataset and the coordinate datasets are created
-with `fill_value=None` (`utils.py:1454` and `:1462`) rather than zarr's
+with `fill_value=None` (`utils.py:1514` and `:1462`) rather than zarr's
 default `fill_value=0`. With the default, `xarray.open_zarr`'s
 `mask_and_scale=True` treats stored `0.0` as "unwritten" and masks it to
 `NaN` on read — which corrupts genuine zero coordinates (e.g. `l=0.0`) or
@@ -193,7 +199,7 @@ cache does: `complex64` for complex beams, `float32` for real ones — see
 ## `enrich_bds_xradio`
 
 `enrich_bds_xradio(zarr_path, bw, output_var, polarizations)`
-(`utils.py:1509`) post-processes a zarr store already written by
+(`utils.py:1569`) post-processes a zarr store already written by
 `get_time_freq_beam` into xradio schema:
 
 - converts the `l`/`m` coordinate arrays from degrees to radians in place;
@@ -273,6 +279,39 @@ image-space mosaicing. The two agree when the supplied times give PA coverage
 spanning a full turn (`test_azimuthal_matches_pa_average_given_full_pa_coverage`),
 and the azimuthal map is invariant under both axis flips and transposition
 (`test_azimuthal_average_is_circularly_symmetric`).
+
+### Speed: `nthreads`, `pa_tolerance`, `order` (#39)
+
+The cost is one `map_coordinates` over the whole grid per angle. For
+pfb-imaging's call (1024² grid, one frequency, a 37-integration piece) that
+made this method 90% of `pfb imager` pass-1 task time, on one core. Three
+arguments trade it down. The defaults (`1`, `0.0`, `3`) reproduce the old
+result exactly, and `partition_mueller` forwards all three.
+
+| argument | what it does | effect on the result |
+|---|---|---|
+| `nthreads` | splits the pixels into at least `nthreads` chunks (still capped by `chunk_size`) and runs the per-chunk angle loop on a thread pool; `map_coordinates` releases the GIL | none: each pixel's sum is untouched, so the result is **bitwise identical** (`test_rotation_averaged_beam_threads_are_bitwise_identical`) |
+| `pa_tolerance` | merges angles that round to the same multiple of the tolerance (degrees), evaluates each group once at its **mean** angle and weights it by its size | second order in a group's spread: evaluating at the mean cancels the first-order term |
+| `order` | spline order, as on `interpolate_beam` | order 1 is 0.5% of the peak off cubic, order 2 is 5e-5 |
+
+Measured on the MdV-2026 L band, 1024² over the cube, 37 × 8 s integrations:
+
+| | MPM (complex) | MM |
+|---|---|---|
+| defaults | 12.7 s | 6.5 s |
+| `nthreads=4` | 3.8 s (8: 2.3 s, 16: 1.7 s) | |
+| `nthreads=4, pa_tolerance=0.1` | 1.07 s | 0.47 s |
+
+Merging at tolerances up to 1° changes the map by ~1e-7 of the peak within 1°
+of the centre, at every hour angle tried, which is the float32 floor. The
+larger differences (up to ~2e-3) occur only at the cube corners, where the
+`cval=0` off-cube policy leaves a hard edge that a rotation crosses. Angles
+either side of the 0/2π wrap land in different groups; that costs one extra
+evaluation and no accuracy. With merging, the variance is computed from the
+representative angles, so it is approximate in the same way.
+
+`order=1` is 3-8× faster than cubic (more single-threaded) but is the one option whose error
+shows inside the field, so cubic stays the default.
 
 ## `group` — baseline-group beams
 
@@ -374,18 +413,18 @@ it is not what `partition_mueller` does.
 
 ## Sources
 
-- `src/meerkat_beams/utils.py:611-642` (`_get_prefilter`)
-- `src/meerkat_beams/utils.py:644-678` (`get_source_coordinates`)
-- `src/meerkat_beams/utils.py:680-714` (`interpolate_beam`)
-- `src/meerkat_beams/utils.py:552-594` (`attach_image`)
+- `src/meerkat_beams/utils.py:612-648` (`_get_prefilter`)
+- `src/meerkat_beams/utils.py:650-684` (`get_source_coordinates`)
+- `src/meerkat_beams/utils.py:686-720` (`interpolate_beam`)
+- `src/meerkat_beams/utils.py:553-595` (`attach_image`)
 - `src/meerkat_beams/utils.py` (`GROUP_TELESCOPES`, `_build_group_bds`,
   `_align_group_freqs`, `_check_group_grids`, the `group` branch of `__init__`)
 - `src/meerkat_beams/cache.py` (`ensure_group_bds`, `GROUP_PRODUCTS`)
 - `tests/test_beam_wizard_group.py`, `tests/test_group_bds.py`
-- `src/meerkat_beams/utils.py:596-609` (`set_field_centre`)
-- `src/meerkat_beams/utils.py:1239-1501` (`get_time_freq_beam`)
-- `src/meerkat_beams/utils.py:1304-1311` (`_CANONICAL_DIM_NAMES` guard)
-- `src/meerkat_beams/utils.py:1509-1580` (`enrich_bds_xradio`)
+- `src/meerkat_beams/utils.py:597-610` (`set_field_centre`)
+- `src/meerkat_beams/utils.py:1299-1561` (`get_time_freq_beam`)
+- `src/meerkat_beams/utils.py:1364-1371` (`_CANONICAL_DIM_NAMES` guard)
+- `src/meerkat_beams/utils.py:1569-1640` (`enrich_bds_xradio`)
 - commit `0f2a4f4` ("test: add tests for complex Mueller term" — landed the
   dtype-aware prefilter cache)
 - `tests/test_beam_wizard.py`: `test_prefilter_is_cached`,
