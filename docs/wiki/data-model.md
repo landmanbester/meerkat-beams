@@ -110,7 +110,7 @@ Blosc zstd/clevel=5 (`mdv_beams_to_bds.py:128-131`) — note the filter is
 Every store the package writes — BDS and both xradio paths — is **zarr
 format 2**, whichever zarr-python is installed: `to_zarr(...,
 zarr_format=ZARR_FORMAT)` for the xarray writers, and
-`zarr_open_group`/`zarr_create_array` (`utils.py:67-120`) for
+`zarr_open_group`/`zarr_create_array` (`utils.py:68-121`) for
 `get_time_freq_beam`/`enrich_bds_xradio`'s raw writes. zarr is unpinned
 (design-decisions D18), so output stays readable by consumers still on
 zarr-python 2, which cannot read v3. Inputs are the other way round: a
