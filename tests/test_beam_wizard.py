@@ -842,7 +842,6 @@ def test_pa_tolerance_weights_merged_angles_by_count(bw, times):
     np.testing.assert_allclose(var, var1, rtol=0, atol=1e-7)
 
 
-@pytest.mark.unit
 def _count_evaluations(bw, monkeypatch):
     """Count interpolate_beam calls: one per (merged) angle per chunk."""
     calls = []
@@ -856,6 +855,7 @@ def _count_evaluations(bw, monkeypatch):
     return calls
 
 
+@pytest.mark.unit
 def test_pa_tolerance_merges_to_the_mean_angle(bw, times, monkeypatch):
     """The widest tolerance merges the track into at most two groups (bins centred on
     0, 180 and 360 deg), each evaluated at its mean angle: close to the unmerged
