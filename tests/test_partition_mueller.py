@@ -104,7 +104,7 @@ def test_speed_options_reach_get_rotation_averaged_beam(bw):
     kw = dict(field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M, stokes_out="I")
     block = bw.partition_mueller(**kw)
     assert np.array_equal(bw.partition_mueller(**kw, nthreads=3), block)
-    for opt in ({"pa_tolerance": 360.0}, {"order": 1}):
+    for opt in ({"pa_tolerance": 180.0}, {"order": 1}):
         expected, _ = _avg(bw, i="I", j="I", centre=FIELD_CENTRE, **opt)
         assert np.array_equal(bw.partition_mueller(**kw, **opt)[0, 0], expected.astype(np.float32))
 

@@ -837,21 +837,70 @@ def test_pa_tolerance_weights_merged_angles_by_count(bw, times):
     mean1, var1 = _grid_average(bw, repeated)
     mean, var = _grid_average(bw, repeated, pa_tolerance=1e-6)
     np.testing.assert_allclose(mean, mean1, rtol=0, atol=1e-12)
-    np.testing.assert_allclose(var, var1, rtol=0, atol=1e-12)
+    # the unmerged path squares in the beam's float32 (kept bitwise as before),
+    # a merged group in float64, so the variance agrees to float32 precision
+    np.testing.assert_allclose(var, var1, rtol=0, atol=1e-7)
 
 
 @pytest.mark.unit
-def test_pa_tolerance_merges_to_the_mean_angle(bw, times):
-    """A tolerance wider than the whole range evaluates once, at the mean angle:
-    close to the unmerged average (the first-order error cancels), not equal."""
+def _count_evaluations(bw, monkeypatch):
+    """Count interpolate_beam calls: one per (merged) angle per chunk."""
+    calls = []
+    real = bw.interpolate_beam
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(bw, "interpolate_beam", counting)
+    return calls
+
+
+def test_pa_tolerance_merges_to_the_mean_angle(bw, times, monkeypatch):
+    """The widest tolerance merges the track into at most two groups (bins centred on
+    0, 180 and 360 deg), each evaluated at its mean angle: close to the unmerged
+    average (the first-order error cancels), not equal."""
     mean1, _ = _grid_average(bw, times)
-    mean, _ = _grid_average(bw, times, pa_tolerance=360.0)
+    calls = _count_evaluations(bw, monkeypatch)
+    mean, _ = _grid_average(bw, times, pa_tolerance=180.0)
+    assert 1 <= len(calls) <= 2 < len(times), "the angles were not merged"
     assert not np.array_equal(mean, mean1)
     np.testing.assert_allclose(mean, mean1, rtol=0, atol=1e-3)
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("kwargs", [{"nthreads": 0}, {"pa_tolerance": -0.1}])
+def test_pa_tolerance_evaluates_each_group_once(bw, times, monkeypatch):
+    repeated = Time([times[0]] * 3 + [times[-1]])
+    calls = _count_evaluations(bw, monkeypatch)
+    _grid_average(bw, repeated, pa_tolerance=1e-6)
+    assert len(calls) == 2  # one chunk, two distinct angles
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("nthreads", [2, 4])
+def test_threads_really_use_a_pool(bw, times, monkeypatch, nthreads):
+    """Equality alone would pass with threading silently disabled."""
+    import meerkat_beams.utils as mbu
+
+    seen = []
+
+    class Recording(mbu.ThreadPoolExecutor):
+        def __init__(self, max_workers=None, **kw):
+            seen.append(max_workers)
+            super().__init__(max_workers=max_workers, **kw)
+
+    monkeypatch.setattr(mbu, "ThreadPoolExecutor", Recording)
+    calls = _count_evaluations(bw, monkeypatch)
+    _grid_average(bw, times, nthreads=nthreads)
+    assert seen == [nthreads]
+    assert len(calls) >= nthreads * len(times)  # at least nthreads chunks, every angle
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"nthreads": 0}, {"pa_tolerance": -0.1}, {"pa_tolerance": 180.5}, {"pa_tolerance": 1e-310}, {"order": 6}],
+)
 def test_rotation_averaged_beam_rejects_bad_speed_options(bw, times, kwargs):
     with pytest.raises(ValueError):
         _grid_average(bw, times, **kwargs)
@@ -1126,3 +1175,27 @@ def test_katbeam_wizard_renders_a_time_freq_zarr(tmp_path):
     assert rendered.BEAM.shape == (3, 2, 1, 8, 8)
     assert np.all(np.isfinite(rendered.BEAM.values))
     assert np.abs(rendered.BEAM.values).max() <= 1.001
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("order", [-1, 6, 2.5])
+def test_bad_order_is_refused_before_anything_is_cached(bw, order):
+    before = len(bw._prefilters)
+    with pytest.raises(ValueError, match="spline order"):
+        bw._get_prefilter("nstokes", "I", "I", order=order)
+    assert len(bw._prefilters) == before
+
+
+@pytest.mark.unit
+def test_chunk_size_bounds_the_pixels_in_flight_across_threads(bw, times, monkeypatch):
+    """chunk_size is the working set across all threads, not per thread."""
+    sizes = []
+    real = bw.interpolate_beam
+
+    def recording(xpyp, *args, **kwargs):
+        sizes.append(xpyp.shape[1])
+        return real(xpyp, *args, **kwargs)
+
+    monkeypatch.setattr(bw, "interpolate_beam", recording)
+    _grid_average(bw, times, nthreads=4, chunk_size=20)  # 63 pixels
+    assert max(sizes) == 5
