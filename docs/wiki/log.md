@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-18T21:30:00Z
+timestamp: 2026-10-18T22:00:00Z
 ---
 
 # Wiki changelog
@@ -312,3 +312,14 @@ all threads; a merged group's weighted sum is computed in float64.
   `data-model.md` are all re-stamped at `6b8a46d`. The 2026-10-17 entry kept
   the last three's stamps although their citations changed, which the
   maintenance rule does not allow.
+
+## 2026-10-18 — #40 pre-merge review (verified at `9f91975`)
+
+- `tests/test_beam_wizard.py`: the `unit` marker sat on the
+  `_count_evaluations` helper instead of
+  `test_pa_tolerance_merges_to_the_mean_angle`, so `pytest -m unit` skipped
+  that test. It is moved onto the test (`9f91975`).
+- `index.md`: the `beamwizard.md` row now lists the speed options, matching
+  that page's description.
+- `beamwizard.md`, `beam-orientation.md`, `design-decisions.md`,
+  `data-model.md` and `index.md` are re-stamped at `9f91975`.
