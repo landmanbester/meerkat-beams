@@ -5,6 +5,49 @@ All notable changes to meerkat-beams are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-10-18
+
+### CI
+
+- Run the test suite against zarr-python 2
+
+### Changed
+
+- Thread and merge angles in get_rotation_averaged_beam
+
+### Dependencies
+
+- Unpin zarr, writing zarr v2 under zarr-python 2 or 3
+- Drop dask-ms from the [full] extra
+
+### Documentation
+
+- List the speed options in the wiki index and re-stamp at 9f91975
+- Record the hardened speed options, fix stale citations, re-stamp
+- Record the rotation-averaging speed options and re-stamp the wiki
+- Record the zarr unpin review fixes and re-stamp the wiki
+- Record the zarr unpin and re-stamp the wiki
+- Re-stamp beam-orientation at the ms_io TaQL fix
+- Stamp wiki at the dask-ms removal
+- Re-point stale wiki line citations and fix stamps after review
+- Stamp design-decisions at the Dockerfile change and settle D8-D10
+- Record #13/#21 closures and correct D8's stale #16 status
+
+### Fixed
+
+- Harden the rotation-averaging speed options (#40 review)
+- Address review of the zarr unpin
+- Select MS rows in NumPy instead of TaQL in ms_io
+
+### Other
+
+- Drop the Dockerfile git layer left over from the hip-cargo git pin
+
+### Testing
+
+- Mark the merge-to-mean-angle test unit, not its helper
+
+
 ## [0.1.0] - 2026-10-06
 
 ### Added
@@ -104,6 +147,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add parametrized BDS regression tests for mdv_beams_to_bds
 
 
+[0.2.0]: https://github.com/landmanbester/meerkat-beams/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/landmanbester/meerkat-beams/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/landmanbester/meerkat-beams/releases/tag/v0.0.1
 
