@@ -3,8 +3,8 @@ type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr
 description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, and the xradio primary-beam schema.
 tags: [mdv, bds, xradio, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
-timestamp: 2026-10-15T12:53:13Z
-last_verified_commit: aa82f0a
+timestamp: 2026-10-18T21:30:00Z
+last_verified_commit: 6b8a46d
 ---
 
 # Data model — MdV npz, BDS zarr, xradio zarr

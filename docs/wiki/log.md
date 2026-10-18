@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-17T19:30:00Z
+timestamp: 2026-10-18T21:30:00Z
 ---
 
 # Wiki changelog
@@ -294,3 +294,21 @@ cube for orders 0 and 1.
   change shifted, mapped from a line diff and spot-checked against their
   targets. Only `beamwizard.md` was re-verified and re-stamped; the other three
   keep their stamps.
+
+## 2026-10-18 — rotation-averaging options hardened (verified at `6b8a46d`)
+
+Review of PR #40. `pa_tolerance` is capped at 180° (a wider bin can straddle
+the 0/2π wrap) and refused when the binning overflows; `order` is checked
+before anything is cached; `chunk_size` bounds the pixels in flight across
+all threads; a merged group's weighted sum is computed in float64.
+
+- `beamwizard.md`: the Speed subsection records all four, the precise
+  binning semantics and the new tests. The bare `:1462` citation that the
+  previous remap missed now points at the coordinate write.
+- `utils.py` citations in every page re-derived from `main`'s through a line
+  diff to `6b8a46d`, which also fixes the compound ranges in
+  `design-decisions.md` that the 2026-10-17 remap left stale.
+- `beamwizard.md`, `beam-orientation.md`, `design-decisions.md` and
+  `data-model.md` are all re-stamped at `6b8a46d`. The 2026-10-17 entry kept
+  the last three's stamps although their citations changed, which the
+  maintenance rule does not allow.
