@@ -3,8 +3,8 @@ type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr
 description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, and the xradio primary-beam schema.
 tags: [mdv, bds, xradio, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
-timestamp: 2026-10-15T12:53:13Z
-last_verified_commit: aa82f0a
+timestamp: 2026-10-18T22:00:00Z
+last_verified_commit: 9f91975
 ---
 
 # Data model — MdV npz, BDS zarr, xradio zarr
@@ -110,7 +110,7 @@ Blosc zstd/clevel=5 (`mdv_beams_to_bds.py:128-131`) — note the filter is
 Every store the package writes — BDS and both xradio paths — is **zarr
 format 2**, whichever zarr-python is installed: `to_zarr(...,
 zarr_format=ZARR_FORMAT)` for the xarray writers, and
-`zarr_open_group`/`zarr_create_array` (`utils.py:67-120`) for
+`zarr_open_group`/`zarr_create_array` (`utils.py:68-121`) for
 `get_time_freq_beam`/`enrich_bds_xradio`'s raw writes. zarr is unpinned
 (design-decisions D18), so output stays readable by consumers still on
 zarr-python 2, which cannot read v3. Inputs are the other way round: a

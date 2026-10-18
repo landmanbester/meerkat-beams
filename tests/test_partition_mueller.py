@@ -99,6 +99,17 @@ def test_centre_is_ignored_for_azimuth_averaging(bw):
 
 
 @pytest.mark.unit
+def test_speed_options_reach_get_rotation_averaged_beam(bw):
+    """nthreads, pa_tolerance and order are forwarded, not swallowed."""
+    kw = dict(field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M, stokes_out="I")
+    block = bw.partition_mueller(**kw)
+    assert np.array_equal(bw.partition_mueller(**kw, nthreads=3), block)
+    for opt in ({"pa_tolerance": 180.0}, {"order": 1}):
+        expected, _ = _avg(bw, i="I", j="I", centre=FIELD_CENTRE, **opt)
+        assert np.array_equal(bw.partition_mueller(**kw, **opt)[0, 0], expected.astype(np.float32))
+
+
+@pytest.mark.unit
 def test_default_block_shape(bw):
     """stokes_out='IQUV', stokes_in='I' is the apparent-I-from-intrinsic-I column."""
     M_blk = bw.partition_mueller(field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M)

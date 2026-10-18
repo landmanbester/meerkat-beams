@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+]
-timestamp: 2026-10-15T12:53:13Z
-last_verified_commit: aa82f0a
+timestamp: 2026-10-18T22:00:00Z
+last_verified_commit: 9f91975
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -22,13 +22,13 @@ elsewhere.
 (once per source/time), so filtering on every call would be wasteful, and
 double-filtering would silently corrupt the interpolated values.
 
-**Decision:** `_get_prefilter` (`src/meerkat_beams/utils.py:611-642`) runs
+**Decision:** `_get_prefilter` (`src/meerkat_beams/utils.py:618-655`) runs
 `scipy.ndimage.spline_filter` once per `(var, i, j, order)` key and caches
-the result; `interpolate_beam` (`utils.py:680-714`) then calls
+the result; `interpolate_beam` (`utils.py:693-727`) then calls
 `map_coordinates` against that cached array with `prefilter=False`
-(`utils.py:707-714`). The cache's output dtype is **not** unconditionally
+(`utils.py:720-727`). The cache's output dtype is **not** unconditionally
 `float32` — it is chosen per variable kind: `np.complex64 if
-np.iscomplexobj(da) else np.float32` (`utils.py:636-640`). Complex
+np.iscomplexobj(da) else np.float32` (`utils.py:644-648`). Complex
 variables (`jones`, `njones`, `mueller`, `nmueller`) cache as `complex64`;
 real variables (`stokes`, `nstokes`) cache as `float32`. Passing a real
 dtype for complex input would make scipy implicitly promote it (a
@@ -48,7 +48,7 @@ their imaginary part without raising. See `beamwizard.md` for the full
 prefilter contract, including how the dtype rule propagates through
 `get_time_freq_beam`'s zarr writes.
 
-**Source:** `utils.py:611-642,707-714`; `test_subpixel_matches_direct_scipy`,
+**Source:** `utils.py:618-655,720-727`; `test_subpixel_matches_direct_scipy`,
 `test_prefilter_complex_var_is_complex64_without_warning`
 (`tests/test_beam_wizard.py`); commit `0f2a4f4` ("test: add tests for
 complex Mueller term" — landed the dtype-aware cache).
@@ -62,14 +62,14 @@ leaving it implicit means a future scipy version or a copy-pasted call
 site could silently change behavior (e.g. to nearest-edge extrapolation).
 
 **Decision:** `interpolate_beam` passes `mode="constant", cval=0.0`
-explicitly (`utils.py:712-713`) rather than relying on the scipy default.
+explicitly (`utils.py:725-726`) rather than relying on the scipy default.
 Out-of-cube coordinates return `0`, not a nearest-edge value or `NaN`.
 
 **Consequences:** Callers requesting positions well outside the beam
 support get zero gain, not an error or an extrapolated guess — relevant
 for sources near the edge of a wide field.
 
-**Source:** `utils.py:712-713`; `test_out_of_range_xy_returns_zero`
+**Source:** `utils.py:725-726`; `test_out_of_range_xy_returns_zero`
 (`tests/test_beam_wizard.py`).
 
 ## D3 — `get_time_freq_beam` accepts only canonical `dim_names`
@@ -81,7 +81,7 @@ array to match an arbitrary `dim_names` ordering is not implemented.
 
 **Decision:** Only the canonical xradio order
 `("time", "frequency", "polarization", "l", "m")` is accepted; any other
-tuple raises `ValueError` (`utils.py:1306-1311`).
+tuple raises `ValueError` (`utils.py:1390-1395`).
 
 **Rationale:** A non-canonical tuple would relabel the dims without
 reordering the underlying array — silent data corruption, not a
@@ -92,7 +92,7 @@ without implementing real permutation of the array first; a caller
 wanting a different axis order must transpose the opened dataset
 themselves after the fact.
 
-**Source:** `utils.py:1306-1311`; `test_time_freq_beam_rejects_non_canonical_dim_names`
+**Source:** `utils.py:1390-1395`; `test_time_freq_beam_rejects_non_canonical_dim_names`
 (`tests/test_beam_wizard.py`).
 
 ## D4 — Rotation-averaged maps are `(Y, X)` (FITS) order
@@ -106,7 +106,7 @@ hidden elsewhere because the MeerKAT rotation-averaged beam is nearly
 circularly symmetric, so a transpose barely changes it.
 
 **Decision:** `np.meshgrid(l, m)` (default `"xy"` indexing, not `"ij"`,
-`utils.py:923`) now returns `(NY, NX)`-shaped maps natively, matching
+`utils.py:965`) now returns `(NY, NX)`-shaped maps natively, matching
 FITS convention (axis 0 = m/north, axis 1 = l/east). Settled at commit
 `616906b`.
 
@@ -120,7 +120,7 @@ between this settled index-order question and the still-provisional
 physical orientation convention (D9-adjacent, not in this ledger's
 numbered list — see `beam-orientation.md`).
 
-**Source:** `utils.py:915-923`; `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
+**Source:** `utils.py:957-965`; `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
 `test_rotation_averaged_beam_map_indexes_as_y_x` (`tests/test_beam_wizard.py`);
 `beam-orientation.md`.
 
@@ -586,10 +586,10 @@ you touch the fixtures.
 
 ## Sources
 
-- `src/meerkat_beams/utils.py:611-642,680-714` (`_get_prefilter`,
+- `src/meerkat_beams/utils.py:618-655,693-727` (`_get_prefilter`,
   `interpolate_beam`)
-- `src/meerkat_beams/utils.py:805-1071` (`get_rotation_averaged_beam`)
-- `src/meerkat_beams/utils.py:1239-1311` (`get_time_freq_beam`,
+- `src/meerkat_beams/utils.py:818-1146` (`get_rotation_averaged_beam`)
+- `src/meerkat_beams/utils.py:1323-1395` (`get_time_freq_beam`,
   `_CANONICAL_DIM_NAMES` guard)
 - `src/meerkat_beams/cache.py` (cache layout, `BAND_GDRIVE_IDS`,
   `ensure_band_bds`, `.partial` atomicity)
@@ -725,6 +725,6 @@ valid v2 codecs under both majors, so they did not change.
   version (Blosc zstd encodes the same buffer differently twice). Compare
   stores by decoded values and `.zarray` metadata, never by `diff -r`.
 
-**Source:** `utils.py:56-120`; `core/mdv_beams_to_bds.py:128-131`;
+**Source:** `utils.py:57-121`; `core/mdv_beams_to_bds.py:128-131`;
 `core/mdv_to_xradio.py`; `tests/test_zarr_format.py`; `.github/workflows/ci.yml`
 (`zarr2` job); `pyproject.toml` `[full]`.

@@ -11,6 +11,7 @@ Contains:
 
 import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
@@ -149,6 +150,12 @@ class PowerBeam(object):
 # tests/test_katbeam_bds.py fails.
 STOKES_TO_COHERENCY = np.array([[1, 1, 0, 0], [0, 0, 1, 1j], [0, 0, 1, -1j], [1, -1, 0, 0]])
 COHERENCY_TO_STOKES = numpy.linalg.inv(STOKES_TO_COHERENCY)
+
+
+def _check_order(order: int) -> None:
+    """Refuse a spline order map_coordinates cannot use, before anything is cached."""
+    if order not in range(6):
+        raise ValueError(f"spline order must be an integer from 0 to 5, got {order!r}")
 
 
 def jones_to_mueller_cross(j1: np.ndarray, j2: np.ndarray) -> np.ndarray:
@@ -612,6 +619,7 @@ class BeamWizard(object):
         # order is included in the cache key: spline_filter coefficients depend on
         # the spline order, so callers requesting different orders must not collide.
         key = var, i, j, order
+        _check_order(order)
         if var not in self.bds:
             available = sorted(self.bds.data_vars)
             if self.beam_model == "katbeam" and var in ("jones", "stokes", "mueller"):
@@ -638,7 +646,12 @@ class BeamWizard(object):
             # real output dtype for complex input makes scipy implicitly promote it
             # (UserWarning, version-dependent), so pick the dtype explicitly here.
             out_dtype = np.complex64 if np.iscomplexobj(da) else np.float32
-            self._prefilters[key] = spline_filter(da.sel(**sel), order=order, output=out_dtype)
+            if order <= 1:
+                # nearest and linear interpolation take the samples themselves;
+                # spline_filter only accepts orders 2-5
+                self._prefilters[key] = np.asarray(da.sel(**sel).values, dtype=out_dtype)
+            else:
+                self._prefilters[key] = spline_filter(da.sel(**sel), order=order, output=out_dtype)
         return self._prefilters[key]
 
     def get_source_coordinates(
@@ -821,6 +834,9 @@ class BeamWizard(object):
         num_angles: int = 64,
         verbose: int = 1,
         centre: Optional[SkyCoord] = None,
+        nthreads: int = 1,
+        pa_tolerance: float = 0.0,
+        order: int = 3,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute the rotation-averaged beam at specified l/m coordinates.
@@ -845,8 +861,9 @@ class BeamWizard(object):
             pixel_stepping: Compute on every Nth pixel in l and m (default 4), then
                             interpolate back to the full grid. Reduces computation for
                             large images; use 1 to disable.
-            chunk_size: Number of spatial pixels to process at once (default 1024^2).
-                        Controls memory usage for large grids.
+            chunk_size: Number of spatial pixels in flight at once, across all
+                        threads (default 1024^2). Controls memory usage for large
+                        grids: each thread works on chunk_size // nthreads pixels.
             var: Beam variable to interpolate ('nstokes', 'stokes', 'njones', 'jones')
             i, j: Stokes or Jones indices (e.g., "I", "Q", 0, 1)
             average: "pa" (default) averages over the parallactic angles derived
@@ -863,6 +880,22 @@ class BeamWizard(object):
                     call only and is not stored, so one wizard can serve many
                     pointings. Ignored when average="azimuth", which has no
                     centre dependence.
+            nthreads: Threads to spread the pixels over (default 1). The pixels
+                      are split into at least nthreads chunks, each accumulated
+                      over every angle on its own thread; scipy's map_coordinates
+                      releases the GIL, and since each pixel's sum is unchanged
+                      the result is bitwise identical to nthreads=1.
+            pa_tolerance: Bin width in degrees for merging angles (default 0.0, no
+                          merging; at most 180). Angles are binned on
+                          round(angle / pa_tolerance), so a group spans less than
+                          pa_tolerance, though two angles closer than that can still
+                          fall in neighbouring bins. Each group is evaluated once, at
+                          its mean angle, and weighted by its size, so the cost
+                          follows the range of angles covered rather than the number
+                          of times. Taking the mean cancels the first-order error;
+                          what remains is second order in the group's spread.
+            order: Spline interpolation order, 0 to 5 (default 3). 1 is several
+                   times faster; see the wiki for how far it departs from 3.
 
         Returns:
             Tuple of (mean_beam, variance_beam) as np.ndarray in (Y, X) index
@@ -876,10 +909,19 @@ class BeamWizard(object):
         Raises:
             RuntimeError: If average="pa" and times are not available and not provided.
             ValueError: If both freq and num_freq are specified, if average is
-                        not "pa" or "azimuth", or if num_angles < 2.
+                        not "pa" or "azimuth", if num_angles < 2, if nthreads < 1,
+                        if pa_tolerance is outside [0, 180] or so small that the
+                        binning overflows, or if order is outside [0, 5].
         """
         if average not in ("pa", "azimuth"):
             raise ValueError(f"average must be 'pa' or 'azimuth', got {average!r}")
+        if nthreads < 1:
+            raise ValueError(f"nthreads must be at least 1, got {nthreads}")
+        if not 0 <= pa_tolerance <= 180:
+            # above 180 deg a bin can hold angles from both sides of the 0/360 wrap,
+            # whose mean is the opposite direction
+            raise ValueError(f"pa_tolerance must be in [0, 180] degrees, got {pa_tolerance}")
+        _check_order(order)
 
         if average == "azimuth":
             # A uniform sweep over a full turn: no time dependence, so times,
@@ -964,19 +1006,37 @@ class BeamWizard(object):
             angles = altaz_centre.position_angle(altaz_ncp).rad
 
         n_times = len(angles)
+        if pa_tolerance > 0:
+            # evaluate each group of nearby angles once, at its mean angle, weighted
+            # by its size; with bins of at most 180 deg, angles either side of the
+            # 0/2pi wrap land in different groups, which costs one extra evaluation
+            # and nothing in accuracy
+            bins = np.round(angles / np.radians(pa_tolerance))
+            if not np.isfinite(bins).all():
+                raise ValueError(f"pa_tolerance={pa_tolerance} is too small to bin the angles")
+            _, group, counts = np.unique(bins, return_inverse=True, return_counts=True)
+            angles = np.bincount(group, weights=angles) / counts
+            weights = counts.astype(float)
+        else:
+            weights = np.ones(n_times)
         n_pixels = len(ll_flat)
+        # at least one chunk per thread, and chunk_size pixels in flight across all
+        # threads, so the working set does not grow with nthreads; each pixel's sum
+        # over angles is independent of the chunking, so the result is unchanged
+        chunk_size = max(1, min(chunk_size // nthreads, -(-n_pixels // nthreads)))
         n_chunks = (n_pixels + chunk_size - 1) // chunk_size
         stepping_info = f", pixel_stepping={pixel_stepping}" if pixel_stepping > 1 else ""
         if verbose > 0:
             self.log.info(
-                f"computing {average}-averaged beam over {n_times} angles, "
+                f"computing {average}-averaged beam over {n_times} angles"
+                f"{f' ({len(angles)} after merging)' if pa_tolerance > 0 else ''}, "
                 f"range {np.degrees(angles.min()):.1f} to {np.degrees(angles.max()):.1f} deg, "
                 f"{len(freq)} frequency planes, {n_pixels} pixels in {n_chunks} chunks"
                 f"{stepping_info}"
             )
 
-        # Precompute the spline filter to ensure it's cached
-        self._get_prefilter(var, i, j)
+        # Precompute the spline filter so the threads below only read the cache
+        self._get_prefilter(var, i, j, order=order)
 
         # Allocate output arrays. For complex beams the running sum is complex
         # so the mean stays complex; the sum of squares accumulates |b|^2 so the
@@ -987,8 +1047,9 @@ class BeamWizard(object):
         beam_sum = np.zeros(out_shape, dtype=complex if is_complex else float)
         beam_sum_sq = np.zeros(out_shape)  # |b|^2 is always real
 
-        # Process in spatial chunks to limit memory
-        for chunk_idx in range(n_chunks):
+        # Process in spatial chunks to limit memory; each chunk writes its own
+        # disjoint slice of the outputs, so the chunks can run on separate threads
+        def accumulate_chunk(chunk_idx):
             chunk_start = chunk_idx * chunk_size
             chunk_end = min(chunk_start + chunk_size, n_pixels)
             if verbose > 0:
@@ -1003,8 +1064,7 @@ class BeamWizard(object):
             )
             chunk_sum_sq = np.zeros_like(chunk_sum, dtype=float)
 
-            for t_idx in range(n_times):
-                pa_t = angles[t_idx]
+            for pa_t, w in zip(angles, weights):
                 l_rot = mm_chunk * np.sin(pa_t) - ll_chunk * np.cos(pa_t)
                 m_rot = ll_chunk * np.sin(pa_t) + mm_chunk * np.cos(pa_t)
 
@@ -1014,14 +1074,21 @@ class BeamWizard(object):
 
                 # Interpolate beam at these coordinates
                 xpyp = np.array([xp, yp])
-                beam_vals = self.interpolate_beam(xpyp, freq, var=var, i=i, j=j)
+                beam_vals = self.interpolate_beam(xpyp, freq, var=var, i=i, j=j, order=order)
 
                 # Average over frequency if spectral index is given
                 if spi is not None:
                     beam_vals = (beam_vals * norm_weights[:, np.newaxis]).sum(axis=0)
 
-                chunk_sum += beam_vals
-                chunk_sum_sq += np.abs(beam_vals) ** 2
+                if w == 1.0:
+                    chunk_sum += beam_vals
+                    chunk_sum_sq += np.abs(beam_vals) ** 2
+                else:
+                    # widen first: under numpy < 2's value-based casting a float64
+                    # scalar times a float32 array stays float32
+                    wide = beam_vals.astype(chunk_sum.dtype)
+                    chunk_sum += w * wide
+                    chunk_sum_sq += w * np.abs(wide) ** 2
 
             # Store chunk results
             if spi is not None:
@@ -1030,6 +1097,14 @@ class BeamWizard(object):
             else:
                 beam_sum[:, chunk_start:chunk_end] = chunk_sum
                 beam_sum_sq[:, chunk_start:chunk_end] = chunk_sum_sq
+
+        if nthreads > 1 and n_chunks > 1:
+            with ThreadPoolExecutor(max_workers=nthreads) as pool:
+                # list() re-raises the first exception from any chunk
+                list(pool.map(accumulate_chunk, range(n_chunks)))
+        else:
+            for chunk_idx in range(n_chunks):
+                accumulate_chunk(chunk_idx)
 
         # Compute mean and variance over time. Variance uses |E[b]|^2 so it is
         # real and non-negative for complex beams (and identical to mean**2 for
@@ -1085,6 +1160,9 @@ class BeamWizard(object):
         pixel_stepping: int = 1,
         normalised: bool = True,
         weights: Optional[np.ndarray] = None,
+        nthreads: int = 1,
+        pa_tolerance: float = 0.0,
+        order: int = 3,
     ) -> np.ndarray:
         """Rotation-averaged Stokes-basis Mueller block for one data partition.
 
@@ -1131,6 +1209,9 @@ class BeamWizard(object):
                         absolute voltage gain into the prediction, which is
                         degenerate with the flux scale that calibration has already set.
             weights: Reserved; must be None. See the NotImplementedError text.
+            nthreads, pa_tolerance, order: Passed to get_rotation_averaged_beam,
+                          which documents them. The defaults reproduce the
+                          single-threaded, unmerged, cubic average exactly.
 
         Returns:
             ``(len(stokes_out), len(stokes_in), NY, NX)`` in **(Y, X)** index order
@@ -1226,6 +1307,9 @@ class BeamWizard(object):
                     average="pa",
                     centre=field_centre,
                     verbose=0,
+                    nthreads=nthreads,
+                    pa_tolerance=pa_tolerance,
+                    order=order,
                 )
                 if block is None:
                     # get_rotation_averaged_beam accumulates in float64/complex128;

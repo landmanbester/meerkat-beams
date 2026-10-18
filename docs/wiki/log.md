@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-15T12:53:13Z
+timestamp: 2026-10-18T22:00:00Z
 ---
 
 # Wiki changelog
@@ -279,3 +279,47 @@ azimuthal averaging.
   the lines the fix shifted.
 - `CLAUDE.md` (not a wiki page): the "Zarr compression" rule mentions
   `require_readable_zarr` and the load-bearing `xarray>=2025.6` floor.
+
+## 2026-10-17 — faster rotation averaging (verified at `b434976`)
+
+Issue #39. `get_rotation_averaged_beam` gained `nthreads`, `pa_tolerance` and
+`order`, forwarded by `partition_mueller`, and `_get_prefilter` caches the raw
+cube for orders 0 and 1.
+
+- `beamwizard.md`: new "Speed: `nthreads`, `pa_tolerance`, `order`" subsection
+  with the measured timings and errors; "Spline order" records the order 0/1
+  path. Re-stamped at `b434976`.
+- `utils.py` citations in `beamwizard.md`, `beam-orientation.md`,
+  `design-decisions.md` and `data-model.md` were re-pointed for the lines the
+  change shifted, mapped from a line diff and spot-checked against their
+  targets. Only `beamwizard.md` was re-verified and re-stamped; the other three
+  keep their stamps.
+
+## 2026-10-18 — rotation-averaging options hardened (verified at `6b8a46d`)
+
+Review of PR #40. `pa_tolerance` is capped at 180° (a wider bin can straddle
+the 0/2π wrap) and refused when the binning overflows; `order` is checked
+before anything is cached; `chunk_size` bounds the pixels in flight across
+all threads; a merged group's weighted sum is computed in float64.
+
+- `beamwizard.md`: the Speed subsection records all four, the precise
+  binning semantics and the new tests. The bare `:1462` citation that the
+  previous remap missed now points at the coordinate write.
+- `utils.py` citations in every page re-derived from `main`'s through a line
+  diff to `6b8a46d`, which also fixes the compound ranges in
+  `design-decisions.md` that the 2026-10-17 remap left stale.
+- `beamwizard.md`, `beam-orientation.md`, `design-decisions.md` and
+  `data-model.md` are all re-stamped at `6b8a46d`. The 2026-10-17 entry kept
+  the last three's stamps although their citations changed, which the
+  maintenance rule does not allow.
+
+## 2026-10-18 — #40 pre-merge review (verified at `9f91975`)
+
+- `tests/test_beam_wizard.py`: the `unit` marker sat on the
+  `_count_evaluations` helper instead of
+  `test_pa_tolerance_merges_to_the_mean_angle`, so `pytest -m unit` skipped
+  that test. It is moved onto the test (`9f91975`).
+- `index.md`: the `beamwizard.md` row now lists the speed options, matching
+  that page's description.
+- `beamwizard.md`, `beam-orientation.md`, `design-decisions.md`,
+  `data-model.md` and `index.md` are re-stamped at `9f91975`.
