@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+]
-timestamp: 2026-10-21T12:00:00Z
-last_verified_commit: c11614a
+timestamp: 2026-10-21T14:00:00Z
+last_verified_commit: b2795d1
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -24,9 +24,9 @@ double-filtering would silently corrupt the interpolated values.
 
 **Decision:** `_get_prefilter` (`src/meerkat_beams/utils.py:646-683`) runs
 `scipy.ndimage.spline_filter` once per `(var, i, j, order)` key and caches
-the result; `interpolate_beam` (`utils.py:750-797`) then calls
+the result; `interpolate_beam` (`utils.py:753-800`) then calls
 `map_coordinates` against that cached array with `prefilter=False`
-(`utils.py:790-797`). The cache's output dtype is **not** unconditionally
+(`utils.py:793-800`). The cache's output dtype is **not** unconditionally
 `float32` — it is chosen per variable kind: `np.complex64 if
 np.iscomplexobj(da) else np.float32` (`utils.py:672-676`). Complex
 variables (`jones`, `njones`, `mueller`, `nmueller`) cache as `complex64`;
@@ -62,14 +62,14 @@ leaving it implicit means a future scipy version or a copy-pasted call
 site could silently change behavior (e.g. to nearest-edge extrapolation).
 
 **Decision:** `interpolate_beam` passes `mode="constant", cval=0.0`
-explicitly (`utils.py:795-796`) rather than relying on the scipy default.
+explicitly (`utils.py:798-799`) rather than relying on the scipy default.
 Out-of-cube coordinates return `0`, not a nearest-edge value or `NaN`.
 
 **Consequences:** Callers requesting positions well outside the beam
 support get zero gain, not an error or an extrapolated guess — relevant
 for sources near the edge of a wide field.
 
-**Source:** `utils.py:795-796`; `test_out_of_range_xy_returns_zero`
+**Source:** `utils.py:798-799`; `test_out_of_range_xy_returns_zero`
 (`tests/test_beam_wizard.py`).
 
 ## D3 — `get_time_freq_beam` accepts only canonical `dim_names`
@@ -81,7 +81,7 @@ array to match an arbitrary `dim_names` ordering is not implemented.
 
 **Decision:** Only the canonical xradio order
 `("time", "frequency", "polarization", "l", "m")` is accepted; any other
-tuple raises `ValueError` (`utils.py:1460-1465`).
+tuple raises `ValueError` (`utils.py:1463-1468`).
 
 **Rationale:** A non-canonical tuple would relabel the dims without
 reordering the underlying array — silent data corruption, not a
@@ -92,7 +92,7 @@ without implementing real permutation of the array first; a caller
 wanting a different axis order must transpose the opened dataset
 themselves after the fact.
 
-**Source:** `utils.py:1460-1465`; `test_time_freq_beam_rejects_non_canonical_dim_names`
+**Source:** `utils.py:1463-1468`; `test_time_freq_beam_rejects_non_canonical_dim_names`
 (`tests/test_beam_wizard.py`).
 
 ## D4 — Rotation-averaged maps are `(Y, X)` (FITS) order
@@ -106,7 +106,7 @@ hidden elsewhere because the MeerKAT rotation-averaged beam is nearly
 circularly symmetric, so a transpose barely changes it.
 
 **Decision:** `np.meshgrid(l, m)` (default `"xy"` indexing, not `"ij"`,
-`utils.py:1035`) now returns `(NY, NX)`-shaped maps natively, matching
+`utils.py:1038`) now returns `(NY, NX)`-shaped maps natively, matching
 FITS convention (axis 0 = m/north, axis 1 = l/east). Settled at commit
 `616906b`.
 
@@ -120,7 +120,7 @@ between this settled index-order question and the still-provisional
 physical orientation convention (D9-adjacent, not in this ledger's
 numbered list — see `beam-orientation.md`).
 
-**Source:** `utils.py:1027-1035`; `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
+**Source:** `utils.py:1030-1038`; `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
 `test_rotation_averaged_beam_map_indexes_as_y_x` (`tests/test_beam_wizard.py`);
 `beam-orientation.md`.
 
@@ -588,8 +588,8 @@ you touch the fixtures.
 
 - `src/meerkat_beams/utils.py:646-683,693-727` (`_get_prefilter`,
   `interpolate_beam`)
-- `src/meerkat_beams/utils.py:888-1216` (`get_rotation_averaged_beam`)
-- `src/meerkat_beams/utils.py:1393-1465` (`get_time_freq_beam`,
+- `src/meerkat_beams/utils.py:891-1219` (`get_rotation_averaged_beam`)
+- `src/meerkat_beams/utils.py:1396-1468` (`get_time_freq_beam`,
   `_CANONICAL_DIM_NAMES` guard)
 - `src/meerkat_beams/cache.py` (cache layout, `BAND_GDRIVE_IDS`,
   `ensure_band_bds`, `.partial` atomicity)
@@ -804,13 +804,16 @@ plane in the chunk from its centre `ν₀`:*
 
 | product | chunk | flat `M(ν₀)` | chord | λ/D slope |
 |---|---|---|---|---|
-| MdV-2026 MeerKAT L | 53.5 MHz | 9.3e-3 | 1.3e-3 | 2.3e-3 |
-| MdV-2026 MKE L | 53.5 MHz | 8.6e-3 | 1.0e-3 | 1.9e-3 |
-| legacy L | 53.5 MHz | 9.4e-3 | 1.5e-3 | 2.7e-3 |
-| legacy L | 13.375 MHz | 2.3e-3 | 7.0e-4 | 1.0e-3 |
+| MdV-2026 MeerKAT L | 53.5 MHz | 9.3e-3 (2.5e-2) | 1.3e-3 (2.2e-2) | 2.3e-3 (2.5e-2) |
+| MdV-2026 MKE L | 53.5 MHz | 8.6e-3 (1.2e-2) | 1.0e-3 (2.5e-3) | 1.9e-3 (4.1e-3) |
+| legacy L | 53.5 MHz | 9.4e-3 (2.5e-2) | 1.5e-3 (2.2e-2) | 2.7e-3 (2.4e-2) |
+| legacy L | 13.375 MHz | 2.3e-3 (1.2e-2) | 7.0e-4 (8.2e-3) | 1.0e-3 (1.2e-2) |
 
 The chord is `(M(ν_hi) − M(ν_lo))/(ν_hi − ν_lo)` over the chunk's extreme
-planes. The λ/D slope is `dM/dν ≈ (l·∂M/∂l + m·∂M/∂m)/ν₀`, offsets about the
+planes, which are themselves among the scored planes (zero error there). On
+the 2026 grids a 53.5 MHz chunk holds only 4 planes, 2 of them endpoints, which
+flatters the chord by about √2; the legacy 53.5 MHz rows (~64 planes per chunk)
+are the unbiased comparison, and the chord still wins there. The λ/D slope is `dM/dν ≈ (l·∂M/∂l + m·∂M/∂m)/ν₀`, offsets about the
 pointing centre, with gradients taken on the BDS pixel grid; the operator is
 radial, so it commutes with parallactic rotation and rotation-averaging. On the
 leakage terms the chord still helps (about 1.5×) and the λ/D slope does not.
@@ -818,8 +821,11 @@ leakage terms the chord still helps (about 1.5×) and the λ/D slope does not.
 **Consequences.**
 - Holding the beam flat across a 53.5 MHz chunk costs about 0.9% RMS on `I→I`
   within 1°. A linear term (pfb-model-spec#39's `dmueller`) removes most of it.
-  The chord does better than the λ/D slope on every product and also captures
-  the leakage evolution, so it is the recommended slope. The λ/D slope is the
+  The chord does better than the λ/D slope on every product, including the
+  unbiased legacy rows (1.5e-3 against 2.7e-3), and also captures the leakage
+  evolution, so it is the recommended slope.
+  `test_chunk_slope_error_bound` asserts chord < λ/D < flat for `I→I` on
+  every product, so this recommendation is reproducible from committed code. The λ/D slope is the
   fallback when only one plane can be evaluated. This repo ships no slope
   helper: pfb is the only consumer.
 - The chord needs the beam at the chunk's extreme channels, so a band-edge
@@ -829,10 +835,14 @@ leakage terms the chord still helps (about 1.5×) and the λ/D slope does not.
   matter inside the field of view.
 - In-range results are bit-identical under both policies: only out-of-range
   rows of the coordinate array are rewritten.
+- `check_freqs` rejects non-finite frequencies. A NaN makes the range
+  comparisons False, and with the clip that `"scale"` needs it would otherwise
+  let a far out-of-range value through on either policy
+  (`test_non_finite_frequency_raises`).
 - D2 is the spatial counterpart: off-cube in X/Y returns 0, off-cube in
   frequency raises, or scales within the margin when asked.
 
 **Source:** `utils.py:444-455` (constructor validation), `utils.py:515-518`
-(default margin), `utils.py:721-748` (`freq_range`, `check_freqs`),
-`utils.py:762-784` (scaling); `tests/test_freq_extrapolation.py`,
+(default margin), `utils.py:721-751` (`freq_range`, `check_freqs`),
+`utils.py:765-787` (scaling); `tests/test_freq_extrapolation.py`,
 `tests/test_freq_extrapolation_integration.py`; issue #41.

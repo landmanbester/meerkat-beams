@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Beam orientation and (Y, X) map-order conventions
 description: The settled (Y, X) rotation-averaged map order, parallactic-angle rotation averaging, the still-provisional beam-orientation convention with its open M1 validation, and the katbeam comparison probe that corroborates the BDS transpose but not the sign flips.
 tags: [beam, orientation, conventions, rotation, parallactic, yx-order, katbeam]
-timestamp: 2026-10-21T12:00:00Z
-last_verified_commit: c11614a
+timestamp: 2026-10-21T14:00:00Z
+last_verified_commit: b2795d1
 ---
 
 # Beam orientation and (Y, X) map-order conventions
@@ -29,13 +29,13 @@ which is about the sky→pixel transform, not the array layout.
 
 ## Settled: `(Y, X)` map order
 
-`get_rotation_averaged_beam` (`src/meerkat_beams/utils.py:888`) returns
+`get_rotation_averaged_beam` (`src/meerkat_beams/utils.py:891`) returns
 `(mean, variance)` maps in `(Y, X)` index order — FITS convention, axis 0 =
 m/north, axis 1 = l/east:
 
 ```python
 if l.ndim == 1 and m.ndim == 1:
-    ll, mm = np.meshgrid(l, m)          # utils.py:1035, default indexing="xy"
+    ll, mm = np.meshgrid(l, m)          # utils.py:1038, default indexing="xy"
 elif l.ndim == 2 and m.ndim == 2:
     ...
     ll, mm = l, m                        # 2D inputs passed through as-is
@@ -46,7 +46,7 @@ For 1D `l`/`m` inputs the default `np.meshgrid(l, m)` (`"xy"` indexing, not
 needed. With `spi` given (or a single frequency) the returned shape is
 `(NY, NX)`; otherwise `(NFREQ, NY, NX)`. 2D `l`/`m` inputs must already be
 `(Y, X)`-shaped grids and are passed through in that orientation
-(`utils.py:975-977` docstring).
+(`utils.py:978-980` docstring).
 
 The pfb-imaging `hci` command consumes these maps as `(Y, X)` with **no
 on-receipt transpose** (confirmed by pfb-imaging's own
@@ -86,7 +86,7 @@ Two `BeamWizard` methods rotate through parallactic angle:
   the beam as parallactic angle rotates over the supplied `times`. With
   `spi` given, returns a frequency-averaged gain weighted by
   `(f/f0)**spi`.
-- `get_rotation_averaged_beam` (`utils.py:888`, described above) — mean +
+- `get_rotation_averaged_beam` (`utils.py:891`, described above) — mean +
   variance over the same parallactic-angle rotations, but for a full l/m
   grid (degrees) instead of a single source track. `time_stepping`
   subsamples the time axis; `pixel_stepping > 1` computes on a coarser
@@ -356,7 +356,7 @@ with the command above), `pyproject.toml` (katbeam git-main pin in the `dev`
 and `test` groups), `src/meerkat_beams/core/mdv_beams_to_bds.py:83,115-120` (the
 `Y,X` assumption this probe tests),
 `src/meerkat_beams/utils.py:685-719` (`get_source_coordinates`),
-`src/meerkat_beams/utils.py:888-1216` (`get_rotation_averaged_beam`),
+`src/meerkat_beams/utils.py:891-1219` (`get_rotation_averaged_beam`),
 `tests/test_beam_wizard.py` (tests listed above),
 `scripts/test_beam_orientation.py:1-55`,
 `scripts/beam_orientation/mueller.py:91-131` (`assemble_mueller`),

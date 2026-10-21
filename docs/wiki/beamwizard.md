@@ -3,8 +3,8 @@ type: reference
 title: BeamWizard interpolation and rendering internals
 description: beam_model (mdv/katbeam), group (MM/MPM/MPMP) and average (pa/azimuth) selectors, interpolate_beam prefilter/off-cube/spline-order/freq-guard semantics and the freq_extrapolation policy, get_source_coordinates transforms, optional-image paths, get_time_freq_beam canonical dim_names, enrich_bds_xradio, partition_mueller with the centre= override, and the nthreads/pa_tolerance/order speed options of get_rotation_averaged_beam.
 tags: [beamwizard, interpolation, scipy, zarr, xradio, utils, katbeam, baseline-groups, meerkat+, partition-mueller, mueller]
-timestamp: 2026-10-21T12:00:00Z
-last_verified_commit: c11614a
+timestamp: 2026-10-21T14:00:00Z
+last_verified_commit: b2795d1
 ---
 
 # BeamWizard interpolation and rendering internals
@@ -39,9 +39,9 @@ unconditionally `float32` — that was true before the Mueller-term work
 landed (commit `0f2a4f4`, "test: add tests for complex Mueller term") and
 is no longer accurate; treat the dtype-aware rule above as current.
 
-`interpolate_beam` (`utils.py:750-797`) calls `map_coordinates` against this
+`interpolate_beam` (`utils.py:753-800`) calls `map_coordinates` against this
 cached, already-filtered array with **`prefilter=False`**
-(`utils.py:794`) — an inline comment at `utils.py:788` spells out why:
+(`utils.py:797`) — an inline comment at `utils.py:791` spells out why:
 `_get_prefilter` already applied `spline_filter`, so flipping
 `prefilter` back to `True` would double-filter the data. Do not do this.
 
@@ -63,7 +63,7 @@ all keep values complex when the source variable is complex. Pinned by
 ### Off-cube policy
 
 `map_coordinates` passes `mode="constant", cval=0.0` explicitly
-(`utils.py:795-796`) — coordinates outside the X/Y cube return `0`, not a
+(`utils.py:798-799`) — coordinates outside the X/Y cube return `0`, not a
 nearest-edge value or a NaN. Pinned by `test_out_of_range_xy_returns_zero`.
 
 ### Spline order
@@ -82,9 +82,9 @@ works; before #39 it raised "spline order not supported". Pinned by
 
 ### Frequency guard and the extrapolation policy
 
-`interpolate_beam` first calls `check_freqs` (`utils.py:730-748`), which
-raises `ValueError` — reporting both the requested and available ranges in
-MHz — for any frequency outside `freq_range` (`utils.py:721-728`). Both are
+`interpolate_beam` first calls `check_freqs` (`utils.py:730-751`), which
+raises `ValueError` for any non-finite frequency, and — reporting both the
+requested and available ranges in MHz — for any frequency outside `freq_range` (`utils.py:721-728`). Both are
 public so callers can validate up front (pfb-imaging checks every chunk on its
 driver before starting workers). What `freq_range` is depends on the wizard's
 policy, set once in the constructor:
@@ -97,7 +97,7 @@ policy, set once in the constructor:
   BDS), with 1 kHz (`FREQ_MATCH_ATOL_HZ`) of slack on the widened bounds
   because the 2026 bottom edge lands exactly on the margin. A frequency `nu`
   beyond the edge plane `nu_e` is evaluated on that plane with the pixel
-  offsets from `(x0, y0)` scaled by `nu / nu_e` (`utils.py:762-784`), and one
+  offsets from `(x0, y0)` scaled by `nu / nu_e` (`utils.py:765-787`), and one
   `log.warning` per wizard names the requested range, the BDS range and the
   margin. The error message beyond the margin gains
   `(extrapolation margin ±X MHz)`.
@@ -183,7 +183,7 @@ Pinned by `test_construct_without_image`, `test_no_image_attrs_raise`,
 
 ## `get_time_freq_beam` — canonical `dim_names` only
 
-`get_time_freq_beam` (`utils.py:1393`) writes the full `(ij, time, freq,
+`get_time_freq_beam` (`utils.py:1396`) writes the full `(ij, time, freq,
 x, y)` beam cube to a zarr store, computing each time/ij plane by rotating
 the l/m grid by the parallactic angle and calling `interpolate_beam`.
 
@@ -198,14 +198,14 @@ if tuple(dim_names) != _CANONICAL_DIM_NAMES:
     raise ValueError(...)
 ```
 
-(`utils.py:1458-1465`). Real permutation of the data layout is not
+(`utils.py:1461-1468`). Real permutation of the data layout is not
 implemented — passing a differently-ordered tuple would relabel the dims
 without reordering the underlying array (silent corruption), so any
 non-canonical tuple raises `ValueError` instead. Pinned by
 `test_time_freq_beam_rejects_non_canonical_dim_names`.
 
 Both the beam-variable dataset and the coordinate datasets are created
-with `fill_value=None` (`utils.py:1608` and `:1546`) rather than zarr's
+with `fill_value=None` (`utils.py:1611` and `:1546`) rather than zarr's
 default `fill_value=0`. With the default, `xarray.open_zarr`'s
 `mask_and_scale=True` treats stored `0.0` as "unwritten" and masks it to
 `NaN` on read — which corrupts genuine zero coordinates (e.g. `l=0.0`) or
@@ -228,7 +228,7 @@ cache does: `complex64` for complex beams, `float32` for real ones — see
 ## `enrich_bds_xradio`
 
 `enrich_bds_xradio(zarr_path, bw, output_var, polarizations)`
-(`utils.py:1663`) post-processes a zarr store already written by
+(`utils.py:1666`) post-processes a zarr store already written by
 `get_time_freq_beam` into xradio schema:
 
 - converts the `l`/`m` coordinate arrays from degrees to radians in place;
@@ -450,17 +450,17 @@ it is not what `partition_mueller` does.
 
 - `src/meerkat_beams/utils.py:646-683` (`_get_prefilter`)
 - `src/meerkat_beams/utils.py:685-719` (`get_source_coordinates`)
-- `src/meerkat_beams/utils.py:750-797` (`interpolate_beam`)
-- `src/meerkat_beams/utils.py:721-748` (`freq_range`, `check_freqs`)
+- `src/meerkat_beams/utils.py:753-800` (`interpolate_beam`)
+- `src/meerkat_beams/utils.py:721-751` (`freq_range`, `check_freqs`)
 - `src/meerkat_beams/utils.py:587-629` (`attach_image`)
 - `src/meerkat_beams/utils.py` (`GROUP_TELESCOPES`, `_build_group_bds`,
   `_align_group_freqs`, `_check_group_grids`, the `group` branch of `__init__`)
 - `src/meerkat_beams/cache.py` (`ensure_group_bds`, `GROUP_PRODUCTS`)
 - `tests/test_beam_wizard_group.py`, `tests/test_group_bds.py`
 - `src/meerkat_beams/utils.py:631-644` (`set_field_centre`)
-- `src/meerkat_beams/utils.py:1393-1655` (`get_time_freq_beam`)
-- `src/meerkat_beams/utils.py:1458-1465` (`_CANONICAL_DIM_NAMES` guard)
-- `src/meerkat_beams/utils.py:1663-1734` (`enrich_bds_xradio`)
+- `src/meerkat_beams/utils.py:1396-1658` (`get_time_freq_beam`)
+- `src/meerkat_beams/utils.py:1461-1468` (`_CANONICAL_DIM_NAMES` guard)
+- `src/meerkat_beams/utils.py:1666-1737` (`enrich_bds_xradio`)
 - commit `0f2a4f4` ("test: add tests for complex Mueller term" — landed the
   dtype-aware prefilter cache)
 - `tests/test_beam_wizard.py`: `test_prefilter_is_cached`,

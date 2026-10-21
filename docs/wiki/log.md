@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-21T12:00:00Z
+timestamp: 2026-10-21T14:00:00Z
 ---
 
 # Wiki changelog
@@ -339,3 +339,16 @@ all threads; a merged group's weighted sum is computed in float64.
   `beam-orientation.md` was remapped line by line from the diff against
   `608c054`. Those three pages and `index.md` are re-stamped at `c11614a`.
   `data-model.md` cites nothing that moved and keeps its stamp.
+
+## 2026-10-21 — #41 pre-PR review (verified at `b2795d1`)
+
+- `check_freqs` now rejects non-finite frequencies (`b2795d1`).
+  `beamwizard.md` and D19 say so.
+- D19 table B gains the max values its caption promised. The text now notes
+  that the chord is flattered on the 2026 grids (its endpoints are scored
+  planes) and cites the legacy rows as the unbiased comparison. The chord
+  comparison is now asserted by `test_chunk_slope_error_bound`.
+- The 3-line insertion in `check_freqs` shifted later code, so the
+  `utils.py:NNN` citations in `beamwizard.md`, `design-decisions.md` and
+  `beam-orientation.md` were remapped from the diff again. Those three pages
+  and `index.md` are re-stamped at `b2795d1`.
