@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-18T22:00:00Z
+timestamp: 2026-10-21T12:00:00Z
 ---
 
 # Wiki changelog
@@ -323,3 +323,19 @@ all threads; a merged group's weighted sum is computed in float64.
   that page's description.
 - `beamwizard.md`, `beam-orientation.md`, `design-decisions.md`,
   `data-model.md` and `index.md` are re-stamped at `9f91975`.
+
+## 2026-10-21 — #41 frequency extrapolation policy (verified at `c11614a`)
+
+- `design-decisions.md`: new D19 (opt-in λ/D frequency extrapolation within
+  one BDS channel), with the product range table, the scale-vs-clamp and
+  flat/chord/λ/D measurements, and the ripple note. The intro's "D1–D9" now
+  reads "D1–D19".
+- `beamwizard.md`: "Frequency guard" becomes "Frequency guard and the
+  extrapolation policy" (`check_freqs`, `freq_range`, `"raise"`/`"scale"`,
+  warn-once, bit-identical in-range results).
+- `index.md`: the `beamwizard.md` row mentions the `freq_extrapolation` policy.
+- `utils.py` grew by ~70 lines above most cited code, so every
+  `utils.py:NNN` citation in `beamwizard.md`, `design-decisions.md` and
+  `beam-orientation.md` was remapped line by line from the diff against
+  `608c054`. Those three pages and `index.md` are re-stamped at `c11614a`.
+  `data-model.md` cites nothing that moved and keeps its stamp.
