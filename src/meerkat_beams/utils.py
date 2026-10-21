@@ -403,6 +403,16 @@ class BeamWizard(object):
     ``times`` is ``None``. Call ``attach_image(image_name)`` to populate all
     image-derived state from a FITS/xradio image, or ``set_field_centre(centre)``
     to supply just a pointing centre (e.g. for beam gain at a fixed source).
+
+    ``freq_extrapolation`` sets what happens to a requested frequency outside
+    the BDS ``FREQ`` range. ``"raise"`` (default) refuses it. ``"scale"``
+    evaluates it on the nearest edge plane ``nu_e`` with the pixel offsets from
+    ``(x0, y0)`` scaled by ``nu / nu_e`` (the beam scales as lambda/D), logging
+    one warning per wizard, as long as it lies within ``max_freq_extrapolation``
+    Hz of the edge (default: one BDS channel spacing, which reaches the receiver
+    band edges of every MdV product); further out it still raises. ``"scale"``
+    is refused for ``beam_model="katbeam"``. ``freq_range`` and ``check_freqs``
+    expose the evaluable range so callers can validate up front.
     """
 
     Eband: np.ndarray  # per-band power beam
@@ -426,9 +436,23 @@ class BeamWizard(object):
         npix: Optional[int] = None,
         fov_deg: Optional[float] = None,
         num_freq: Optional[int] = None,
+        freq_extrapolation: str = "raise",
+        max_freq_extrapolation: Optional[float] = None,
     ):
         if beam_model not in ("mdv", "katbeam"):
             raise ValueError(f"beam_model must be 'mdv' or 'katbeam', got {beam_model!r}")
+        if freq_extrapolation not in ("raise", "scale"):
+            raise ValueError(f"freq_extrapolation must be 'raise' or 'scale', got {freq_extrapolation!r}")
+        if freq_extrapolation == "scale" and beam_model == "katbeam":
+            raise ValueError(
+                "freq_extrapolation='scale' is not available for beam_model='katbeam': katbeam "
+                "refuses frequencies outside its own table by design, so there is no edge plane "
+                "to extrapolate from. Use freq_extrapolation='raise' (the default) with katbeam."
+            )
+        if max_freq_extrapolation is not None and max_freq_extrapolation < 0:
+            raise ValueError(f"max_freq_extrapolation must be >= 0 Hz, got {max_freq_extrapolation!r}")
+        self.freq_extrapolation = freq_extrapolation
+        self._freq_extrapolation_warned = False
         if group is not None:
             if group not in GROUP_TELESCOPES:
                 raise ValueError(f"group must be one of {tuple(GROUP_TELESCOPES)}, got {group!r}")
@@ -488,6 +512,10 @@ class BeamWizard(object):
             self.bds = xarray.open_zarr(bds_name)
         freqs = self.bds.coords["FREQ"].values
         log.info(f"frequency range is {freqs[0] * 1e-6:.0f} to {freqs[-1] * 1e-6:.0f} MHz")
+        if max_freq_extrapolation is None:
+            # one channel reaches the receiver band edge on every MdV product (D19)
+            max_freq_extrapolation = float(np.diff(freqs).max()) if len(freqs) > 1 else 0.0
+        self.max_freq_extrapolation = float(max_freq_extrapolation)
         self.index_to_freq = scipy.interpolate.interp1d(np.arange(len(freqs)), freqs)
         self.freq_to_index = scipy.interpolate.interp1d(freqs, np.arange(len(freqs)))
 
@@ -690,6 +718,35 @@ class BeamWizard(object):
         yp = y / self.bds.attrs["dy"] + self.bds.attrs["y0"]
         return np.array([xp, yp]), seps, angles
 
+    @property
+    def freq_range(self) -> Tuple[float, float]:
+        """Range of frequencies (Hz) this wizard evaluates: the BDS range, widened by the margin under 'scale'."""
+        bds_freqs = self.bds.coords["FREQ"].values
+        fmin, fmax = float(bds_freqs.min()), float(bds_freqs.max())
+        if self.freq_extrapolation == "scale":
+            return fmin - self.max_freq_extrapolation, fmax + self.max_freq_extrapolation
+        return fmin, fmax
+
+    def check_freqs(self, freq) -> np.ndarray:
+        """Return ``freq`` as a float array, raising ValueError if any value is outside ``freq_range``."""
+        freq = np.asarray(freq, dtype=float)
+        bds_freqs = self.bds.coords["FREQ"].values
+        fmin, fmax = float(bds_freqs.min()), float(bds_freqs.max())
+        lo, hi = self.freq_range
+        # the widened bounds tolerate round-off: the 2026 bottom edge lands exactly on the margin
+        slack = FREQ_MATCH_ATOL_HZ if self.freq_extrapolation == "scale" else 0.0
+        if freq.size and (freq.min() < lo - slack or freq.max() > hi + slack):
+            margin = (
+                f" (extrapolation margin ±{self.max_freq_extrapolation * 1e-6:.3f} MHz)"
+                if self.freq_extrapolation == "scale"
+                else ""
+            )
+            raise ValueError(
+                f"requested frequencies [{freq.min() * 1e-6:.3f}, {freq.max() * 1e-6:.3f}] MHz "
+                f"fall outside the BDS frequency range [{fmin * 1e-6:.3f}, {fmax * 1e-6:.3f}] MHz{margin}"
+            )
+        return freq
+
     def interpolate_beam(
         self,
         xpyp: np.ndarray,
@@ -700,14 +757,7 @@ class BeamWizard(object):
         order: int = 3,
     ):
         # beam is I,J,FREQ,Y,X
-        freq = np.asarray(freq, dtype=float)
-        bds_freqs = self.bds.coords["FREQ"].values
-        fmin, fmax = float(bds_freqs.min()), float(bds_freqs.max())
-        if freq.size and (freq.min() < fmin or freq.max() > fmax):
-            raise ValueError(
-                f"requested frequencies [{freq.min() * 1e-6:.3f}, {freq.max() * 1e-6:.3f}] MHz "
-                f"fall outside the BDS frequency range [{fmin * 1e-6:.3f}, {fmax * 1e-6:.3f}] MHz"
-            )
+        freq = self.check_freqs(freq)
         freq = self.freq_to_index(freq)
         nfreq = len(freq)
         n_xy = xpyp.shape[1]
