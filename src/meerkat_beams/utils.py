@@ -758,12 +758,32 @@ class BeamWizard(object):
     ):
         # beam is I,J,FREQ,Y,X
         freq = self.check_freqs(freq)
-        freq = self.freq_to_index(freq)
+        bds_freqs = self.bds.coords["FREQ"].values
+        f_eval = np.clip(freq, bds_freqs.min(), bds_freqs.max())
+        scale = freq / f_eval if freq.size else freq  # exactly 1.0 in range
+        out = scale != 1.0
         nfreq = len(freq)
         n_xy = xpyp.shape[1]
-        freq_grid = np.broadcast_to(freq[:, None], (nfreq, n_xy))
         x_grid = np.broadcast_to(xpyp[0], (nfreq, n_xy))
         y_grid = np.broadcast_to(xpyp[1], (nfreq, n_xy))
+        if out.any():
+            # lambda/D: the beam at nu is the edge plane nu_e with offsets scaled by nu/nu_e.
+            # Only out-of-range rows are rewritten, so in-range results stay bit-identical.
+            if not self._freq_extrapolation_warned:
+                self.log.warning(
+                    f"requested frequencies [{freq.min() * 1e-6:.3f}, {freq.max() * 1e-6:.3f}] MHz extend "
+                    f"beyond the BDS frequency range [{bds_freqs.min() * 1e-6:.3f}, {bds_freqs.max() * 1e-6:.3f}] "
+                    f"MHz; extrapolating with freq_extrapolation='scale' (lambda/D scaling of the edge plane, "
+                    f"margin ±{self.max_freq_extrapolation * 1e-6:.3f} MHz). Logged once per BeamWizard."
+                )
+                self._freq_extrapolation_warned = True
+            x0, y0 = self.bds.attrs["x0"], self.bds.attrs["y0"]
+            x_grid = x_grid.copy()
+            y_grid = y_grid.copy()
+            x_grid[out] = x0 + (xpyp[0] - x0) * scale[out, None]
+            y_grid[out] = y0 + (xpyp[1] - y0) * scale[out, None]
+        freq = self.freq_to_index(f_eval)
+        freq_grid = np.broadcast_to(freq[:, None], (nfreq, n_xy))
         coords = np.array([freq_grid, y_grid, x_grid])
         # prefilter=False because _get_prefilter already applied spline_filter;
         # mode="constant", cval=0.0 makes the off-cube extrapolation policy explicit.

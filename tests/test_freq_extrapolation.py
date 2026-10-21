@@ -6,12 +6,14 @@ Hermetic: builds a synthetic BDS in tmp_path (FREQS = 1.0-1.3 GHz, one channel
 frequency dependence in a "scale" result comes from the lambda/D scaling alone.
 """
 
+import logging
+
 import numpy as np
 import pytest
 import xarray
 
 from meerkat_beams.utils import BeamWizard
-from tests._synthetic import FREQS, build_synthetic_bds
+from tests._synthetic import FREQS, I0, build_synthetic_bds
 
 CHANNEL = 1.0e8  # FREQS spacing, Hz
 
@@ -140,3 +142,79 @@ def test_single_channel_bds_default_margin_is_zero(bds_path, tmp_path):
     assert bw.max_freq_extrapolation == 0.0
     with pytest.raises(ValueError, match="fall outside the BDS frequency range"):
         bw.check_freqs([1.0e9 + 1.0e6])
+
+
+# ---------------------------------------------------------------------------
+# "scale" evaluation
+# ---------------------------------------------------------------------------
+
+XPYP = np.array([[I0, I0 + 4.0, I0 - 3.0], [I0, I0 + 2.0, I0 + 5.0]])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("nu, edge", [(0.95e9, 1.0e9), (1.35e9, 1.3e9)])
+def test_scale_matches_scaled_offsets_at_edge_plane(bds_path, nu, edge):
+    s = nu / edge
+    expected = _wizard(bds_path).interpolate_beam(I0 + (XPYP - I0) * s, [edge])
+    got = _wizard(bds_path, freq_extrapolation="scale").interpolate_beam(XPYP, [nu])
+    np.testing.assert_allclose(got, expected, rtol=1e-6)
+
+
+@pytest.mark.unit
+def test_scale_on_axis_equals_edge_plane(bds_path):
+    on_axis = np.array([[float(I0)], [float(I0)]])
+    expected = _wizard(bds_path).interpolate_beam(on_axis, [1.0e9])
+    got = _wizard(bds_path, freq_extrapolation="scale").interpolate_beam(on_axis, [0.95e9])
+    np.testing.assert_array_equal(got, expected)
+
+
+@pytest.mark.unit
+def test_scale_narrows_beam_above_band(bds_path):
+    """The synthetic Gaussian is the same in every plane, so only the scaling can change it."""
+    bw = _wizard(bds_path, freq_extrapolation="scale")
+    xpyp = np.array([[I0 + 6.0], [float(I0)]])
+    assert bw.interpolate_beam(xpyp, [1.35e9])[0, 0] < bw.interpolate_beam(xpyp, [1.3e9])[0, 0]
+    assert bw.interpolate_beam(xpyp, [0.95e9])[0, 0] > bw.interpolate_beam(xpyp, [1.0e9])[0, 0]
+
+
+@pytest.mark.unit
+def test_scale_mixed_frequencies_in_range_rows_bit_identical(bds_path):
+    scale_bw = _wizard(bds_path, freq_extrapolation="scale")
+    got = scale_bw.interpolate_beam(XPYP, [0.95e9, 1.05e9, 1.3e9, 1.35e9])
+    np.testing.assert_array_equal(got[1:3], _wizard(bds_path).interpolate_beam(XPYP, [1.05e9, 1.3e9]))
+    np.testing.assert_array_equal(got[0], scale_bw.interpolate_beam(XPYP, [0.95e9])[0])
+    np.testing.assert_array_equal(got[3], scale_bw.interpolate_beam(XPYP, [1.35e9])[0])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("var, i, j", [("nstokes", "I", "I"), ("nmueller", "U", "V")])
+@pytest.mark.parametrize("freqs", [FREQS, [1.17e9]])
+def test_in_range_is_bit_identical_across_policies(bds_path, var, i, j, freqs):
+    a = _wizard(bds_path).interpolate_beam(XPYP, freqs, var=var, i=i, j=j)
+    b = _wizard(bds_path, freq_extrapolation="scale").interpolate_beam(XPYP, freqs, var=var, i=i, j=j)
+    np.testing.assert_array_equal(a, b)
+
+
+@pytest.mark.unit
+def test_scale_complex_var_preserves_dtype(bds_path):
+    got = _wizard(bds_path, freq_extrapolation="scale").interpolate_beam(XPYP, [1.35e9], var="nmueller", i="U", j="V")
+    assert got.dtype == np.complex64
+    assert np.any(got.imag != 0)
+
+
+@pytest.mark.unit
+def test_scale_warns_once_per_wizard(bds_path, caplog):
+    bw = _wizard(bds_path, freq_extrapolation="scale")
+    with caplog.at_level(logging.WARNING, logger="meerkat_beams"):
+        bw.interpolate_beam(XPYP, [0.95e9])
+        bw.interpolate_beam(XPYP, [1.35e9])
+    hits = [r for r in caplog.records if "extrapolat" in r.message and "scale" in r.message]
+    assert len(hits) == 1
+
+
+@pytest.mark.unit
+def test_scale_in_range_does_not_warn(bds_path, caplog):
+    bw = _wizard(bds_path, freq_extrapolation="scale")
+    with caplog.at_level(logging.WARNING, logger="meerkat_beams"):
+        bw.interpolate_beam(XPYP, FREQS)
+    assert not [r for r in caplog.records if "extrapolat" in r.message]
