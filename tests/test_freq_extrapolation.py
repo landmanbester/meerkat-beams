@@ -8,12 +8,15 @@ frequency dependence in a "scale" result comes from the lambda/D scaling alone.
 
 import logging
 
+import astropy.units as u
 import numpy as np
 import pytest
 import xarray
+from astropy.coordinates import SkyCoord
+from astropy.time import Time
 
 from meerkat_beams.utils import BeamWizard
-from tests._synthetic import FREQS, I0, build_synthetic_bds
+from tests._synthetic import DEC0, FREQS, I0, RA0, build_synthetic_bds, build_synthetic_image
 
 CHANNEL = 1.0e8  # FREQS spacing, Hz
 
@@ -218,3 +221,76 @@ def test_scale_in_range_does_not_warn(bds_path, caplog):
     with caplog.at_level(logging.WARNING, logger="meerkat_beams"):
         bw.interpolate_beam(XPYP, FREQS)
     assert not [r for r in caplog.records if "extrapolat" in r.message]
+
+
+# ---------------------------------------------------------------------------
+# public entry points honour the wizard's policy
+# ---------------------------------------------------------------------------
+
+TIMES = Time("2024-01-01T00:00:00") + np.linspace(0, 1, 5) * u.hour
+FIELD_CENTRE = SkyCoord(ra=RA0, dec=DEC0, unit="deg")
+
+
+@pytest.fixture(scope="module")
+def image_path(tmp_path_factory):
+    return str(build_synthetic_image(tmp_path_factory.mktemp("freqextrapimg") / "image.fits"))
+
+
+@pytest.mark.unit
+def test_partition_mueller_scale_evaluates_band_edge(bds_path):
+    kw = dict(
+        field_centre=FIELD_CENTRE, times=TIMES, freq=0.95e9, l=np.linspace(-0.3, 0.3, 5), m=np.linspace(-0.3, 0.3, 5)
+    )
+    block = _wizard(bds_path, freq_extrapolation="scale").partition_mueller(**kw)
+    assert block.shape == (4, 1, 5, 5)
+    assert np.isfinite(block).all()
+    with pytest.raises(ValueError, match="fall outside the BDS frequency range"):
+        _wizard(bds_path).partition_mueller(**kw)
+
+
+@pytest.mark.unit
+def test_rotation_averaged_scale_matches_edge_plane_on_axis(bds_path, image_path):
+    kw = dict(l=np.array([0.0]), m=np.array([0.0]), times=TIMES, var="nstokes", verbose=0)
+    scaled, _ = BeamWizard(bds_path, image_path, freq_extrapolation="scale").get_rotation_averaged_beam(
+        freq=np.array([1.35e9]), **kw
+    )
+    edge, _ = BeamWizard(bds_path, image_path).get_rotation_averaged_beam(freq=np.array([1.3e9]), **kw)
+    np.testing.assert_allclose(scaled, edge, rtol=1e-6)
+
+
+@pytest.mark.unit
+def test_time_freq_beam_scale_renders_band_edge(bds_path, image_path, tmp_path):
+    kw = dict(
+        var_name="BEAM",
+        dim_names=("time", "frequency", "polarization", "l", "m"),
+        l=np.array([-0.05, 0.0, 0.05]),
+        m=np.array([-0.05, 0.0, 0.05]),
+        times=TIMES,
+        freq=np.array([0.95e9, 1.0e9]),
+        pixel_stepping=1,
+        time_stepping=1,
+        ij_list=[("I", "I")],
+        var="nstokes",
+        verbose=0,
+    )
+    out = tmp_path / "scaled.zarr"
+    BeamWizard(bds_path, image_path, freq_extrapolation="scale").get_time_freq_beam(filename=str(out), **kw)
+    ds = xarray.open_zarr(str(out))
+    np.testing.assert_allclose(ds.coords["frequency"].values, [0.95e9, 1.0e9])
+    assert np.isfinite(ds["BEAM"].values).all()
+    with pytest.raises(ValueError, match="fall outside the BDS frequency range"):
+        BeamWizard(bds_path, image_path).get_time_freq_beam(filename=str(tmp_path / "raised.zarr"), **kw)
+
+
+@pytest.mark.unit
+def test_get_time_variable_beamgain_scale(bds_path, image_path):
+    scale_bw = BeamWizard(bds_path, image_path, freq_extrapolation="scale")
+    raise_bw = BeamWizard(bds_path, image_path)
+    on_axis = scale_bw.get_time_variable_beamgain(scale_bw.centre, freq=np.array([1.35e9]), times=TIMES)
+    np.testing.assert_allclose(
+        on_axis, raise_bw.get_time_variable_beamgain(raise_bw.centre, freq=np.array([1.3e9]), times=TIMES)
+    )
+    off = SkyCoord(ra=RA0 + 0.3, dec=DEC0, unit="deg")
+    above = scale_bw.get_time_variable_beamgain(off, freq=np.array([1.35e9]), times=TIMES)
+    edge = raise_bw.get_time_variable_beamgain(off, freq=np.array([1.3e9]), times=TIMES)
+    assert (above < edge).all()  # narrower beam above the band
