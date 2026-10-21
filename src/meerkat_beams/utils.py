@@ -730,6 +730,9 @@ class BeamWizard(object):
     def check_freqs(self, freq) -> np.ndarray:
         """Return ``freq`` as a float array, raising ValueError if any value is outside ``freq_range``."""
         freq = np.asarray(freq, dtype=float)
+        if not np.isfinite(freq).all():
+            # NaN would make the range comparisons below False and slip through
+            raise ValueError(f"requested frequencies must be finite, got {freq}")
         bds_freqs = self.bds.coords["FREQ"].values
         fmin, fmax = float(bds_freqs.min()), float(bds_freqs.max())
         lo, hi = self.freq_range

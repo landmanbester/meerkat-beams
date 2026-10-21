@@ -294,3 +294,11 @@ def test_get_time_variable_beamgain_scale(bds_path, image_path):
     above = scale_bw.get_time_variable_beamgain(off, freq=np.array([1.35e9]), times=TIMES)
     edge = raise_bw.get_time_variable_beamgain(off, freq=np.array([1.3e9]), times=TIMES)
     assert (above < edge).all()  # narrower beam above the band
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("policy", ["raise", "scale"])
+def test_non_finite_frequency_raises(bds_path, policy):
+    """NaN makes min()/max() comparisons False; it must not smuggle 5 GHz past the guard."""
+    with pytest.raises(ValueError, match="finite"):
+        _wizard(bds_path, freq_extrapolation=policy).interpolate_beam(XPYP, [np.nan, 5e9])

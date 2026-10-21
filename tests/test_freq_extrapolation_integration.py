@@ -88,12 +88,15 @@ def _margin_errors(bw, d, var, i, j):
 
 
 def _chunk_errors(bw, width, var, i, j):
-    """Median RMS of (flat, lambda/D) predictions of the BDS planes inside each chunk."""
+    """Median RMS of (flat, chord, lambda/D) predictions of the BDS planes inside each chunk.
+
+    The chord runs through the chunk's extreme planes, which are themselves scored (zero error there),
+    so on chunks with few planes (4 on the 2026 grids) it is flattered; legacy L (~64 planes) is unbiased."""
     xx, yy, inside, c = _grid(bw)
     xpyp = np.array([xx.ravel(), yy.ravel()])
     f = bw.bds.coords["FREQ"].values
     lo, hi = bw.freq_range
-    flat, lamd = [], []
+    flat, chord, lamd = [], [], []
     for a in np.arange(BAND_START, f.max() + 1, width):
         nu0 = a + width / 2
         planes = f[(f >= a) & (f < a + width)]
@@ -104,9 +107,11 @@ def _chunk_errors(bw, width, var, i, j):
         slope = ((xx - c[0]) * dm_dx + (yy - c[1]) * dm_dy) / nu0
         truth = bw.interpolate_beam(xpyp, planes, var=var, i=i, j=j).reshape((len(planes),) + xx.shape)
         dnu = (planes - nu0)[:, None, None]
+        secant = (truth[-1] - truth[0]) / (planes[-1] - planes[0])
+        chord.append(_rms((m0 + dnu * secant - truth)[:, inside]))
         flat.append(_rms((m0 - truth)[:, inside]))
         lamd.append(_rms((m0 + dnu * slope - truth)[:, inside]))
-    return np.median(flat), np.median(lamd)
+    return np.median(flat), np.median(chord), np.median(lamd)
 
 
 @pytest.mark.parametrize("element", range(len(ELEMENTS)), ids=[f"{v}[{i},{j}]" for v, i, j in ELEMENTS])
@@ -123,7 +128,8 @@ def test_scale_error_bound(product, d, element):
 @pytest.mark.parametrize("product, width", list(LAMD_BOUND), ids=[f"{p}-W{w}" for p, w in LAMD_BOUND])
 def test_chunk_slope_error_bound(product, width, element):
     var, i, j = ELEMENTS[element]
-    flat, lamd = _chunk_errors(_wizard(product), width * 1e6, var, i, j)
+    flat, chord, lamd = _chunk_errors(_wizard(product), width * 1e6, var, i, j)
     assert lamd <= LAMD_BOUND[(product, width)][element]
     if (var, i, j) == ("nstokes", "I", "I"):
         assert lamd < flat
+        assert chord < lamd  # D19 recommends the chord to pfb-model-spec#39
