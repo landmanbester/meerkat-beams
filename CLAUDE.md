@@ -93,6 +93,11 @@ is reused across partitions, takes the pointing centre per call via
 `get_rotation_averaged_beam`'s new `centre=` without mutating the wizard, returns
 the bare beam with no `1/n`, and is refused for `beam_model="katbeam"` by scope
 (see `docs/wiki/design-decisions.md` D16, D17).
+`freq_extrapolation="raise"|"scale"` (constructor; default `"raise"`) lets a
+wizard evaluate frequencies up to one BDS channel (`max_freq_extrapolation`, Hz)
+beyond the BDS range by λ/D-scaling the edge plane, which is what reaches the
+receiver band edges (no MdV product does); `freq_range`/`check_freqs` let
+callers validate up front (issue #41, `docs/wiki/design-decisions.md` D19).
 Its method-by-method contract
 (prefilter caching and dtype, off-cube policy, spline order, the optional-
 image construction paths, canonical `dim_names`) is documented in
