@@ -3,7 +3,7 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+]
-timestamp: 2026-10-21T14:00:00Z
+timestamp: 2026-10-24T12:00:00Z
 last_verified_commit: b2795d1
 ---
 
@@ -820,7 +820,10 @@ leakage terms the chord still helps (about 1.5×) and the λ/D slope does not.
 
 **Consequences.**
 - Holding the beam flat across a 53.5 MHz chunk costs about 0.9% RMS on `I→I`
-  within 1°. A linear term (pfb-model-spec#39's `dmueller`) removes most of it.
+  within 1°. A linear term removes most of it. pfb-imaging applies one itself
+  (`degrid --spectral linear`, ratt-ru/pfb-imaging#385): it predicts the apparent
+  visibilities at a chunk's two end channels and interpolates between them, which
+  is the chord applied to beam × model together.
   The chord does better than the λ/D slope on every product, including the
   unbiased legacy rows (1.5e-3 against 2.7e-3), and also captures the leakage
   evolution, so it is the recommended slope.

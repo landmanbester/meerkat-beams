@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-21T14:00:00Z
+timestamp: 2026-10-24T12:00:00Z
 ---
 
 # Wiki changelog
@@ -352,3 +352,10 @@ all threads; a merged group's weighted sum is computed in float64.
   `utils.py:NNN` citations in `beamwizard.md`, `design-decisions.md` and
   `beam-orientation.md` were remapped from the diff again. Those three pages
   and `index.md` are re-stamped at `b2795d1`.
+
+## 2026-10-24 — #41 cross-repo contract review (verified at `b2795d1`)
+
+- D19 Consequences no longer attributes the linear term to pfb-model-spec#39's
+  `dmueller`, which was dropped. It now points at pfb-imaging's
+  `degrid --spectral linear` (ratt-ru/pfb-imaging#385), which applies the chord
+  to beam × model together. No code changed; the stamp stays at `b2795d1`.
