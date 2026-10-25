@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+, fits, eidos]
-timestamp: 2026-10-25T17:33:43Z
-last_verified_commit: b78c372
+timestamp: 2026-10-25T17:38:52Z
+last_verified_commit: 147ea36
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -309,6 +309,12 @@ the `[[file]]` entry fought it. hip-cargo has the hook and no such entry.
 - **`publish-container.yml` had to move from `type=semver` to `type=pep440`.**
   `v0.1.0rc1` is not valid semver, so a pre-release tag would have produced no
   container tags at all — silent until the first rc.
+- **`publish-container.yml` builds but does not push for fork PRs.** A fork's
+  `pull_request` run gets a read-only `GITHUB_TOKEN` whatever `permissions:`
+  says, so the ghcr push failed with "installation not allowed to Write
+  organization package" (PR #46). Same-repo PRs, `main` and tags still push.
+  Do not switch to `pull_request_target` to get the image back: it would
+  build the fork's Dockerfile with a write token.
 - **Do not restore the `[[file]]` entry for `_container_image.py`,** and do not
   "fix" that file to a version number on `main`. Both re-break `tbump`.
 - **`CHANGELOG.md` is generated and hand edits do not survive.** `git-cliff -o`

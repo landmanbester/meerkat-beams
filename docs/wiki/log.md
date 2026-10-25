@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-25T17:33:43Z
+timestamp: 2026-10-25T17:38:52Z
 ---
 
 # Wiki changelog
@@ -505,3 +505,9 @@ Adversarial review of PR #45.
   already guarded by `require_zarr_xarray_compat` (the `bds_name` entry point
   in `test_every_xarray_zarr_entry_point_is_guarded`), and writes FITS, not
   zarr. All five stamped pages re-stamped at the merge commit `b78c372`.
+
+## 2026-10-25 — container build only for fork PRs (verified at `147ea36`)
+
+- `publish-container.yml` no longer pushes for fork PRs, whose `GITHUB_TOKEN`
+  is read-only; recorded as a D10 consequence in `design-decisions.md`,
+  re-stamped at `147ea36`.
