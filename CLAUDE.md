@@ -173,10 +173,13 @@ Located in `tests/`. Markers: `unit`, `integration`, `slow`.
 - `test_install.py`, `test_cli.py` — always run; import + `--help` smoke tests.
 - `test_roundtrip.py` — `unit`; pins `cli → cab → cli` idempotency via `hip_cargo.core.generate_cabs` + `hip_cargo.core.generate_function`. Any drift between `cli/*.py` and what hip-cargo would emit from `cabs/*.yml` fails this test. Modelled on `pfb-imaging/tests/test_roundtrip.py`. **If this fails, do not hand-fix `cli/*.py`** — edit the cab and run `scripts/genfuncs.sh`.
 - `test_cache.py`, `test_beam_wizard.py` — `unit`; hermetic. `test_beam_wizard.py` builds a synthetic BDS + FITS in `tmp_path` and pins the `BeamWizard` API surface.
-- `test_mdv_beams_to_bds.py` — `integration`; parametrised over bands `U`/`L`/`S0`–`S4`. Compares a freshly-converted BDS against a reference BDS. Needs `MBEAMS_REFERENCE_BDS_<BAND>` env var to point at a reference, **and** input zarr `tests/data/MeerKAT_<BAND>.zarr` to exist (auto-downloaded once by `conftest.py` from a Google Drive tarball for the L band).
-- `test_beam_consistency.py`, `test_rendered_beam.py` — `integration + slow`; need `MBEAMS_BDS_PATH` and `MBEAMS_IMAGE_PATH` env vars. Cross-checks `get_time_variable_beamgain`, `get_rotation_averaged_beam`, and rendered-zarr values against each other.
+- `test_mdv_beams_to_bds.py` — `integration`; parametrised over bands `U`/`L`/`S0`–`S4`. Compares a freshly-converted BDS against a reference BDS. Needs `MBEAMS_REFERENCE_BDS_<BAND>` to point at a reference **and** the input zarr already in the cache (`cache.input_zarr_path(band)`; L arrives via the warm-up, U via `cache.ensure_band_bds("U")`). Only U and L have references; S1–S3 have no inputs. ~27 GB peak RAM and ~5.4 GB of `tempfile` scratch per band; point `TMPDIR` at a disk with room.
+- `test_beam_consistency.py`, `test_rendered_beam.py` — `integration + slow`; need `MBEAMS_BDS_PATH` and `MBEAMS_IMAGE_PATH` env vars; the image must be a zarr with a `TIME` coord and `fits_header` attr (e.g. a pfb-imaging `hci` cube) — a FITS image has no time axis. Cross-checks `get_time_variable_beamgain`, `get_rotation_averaged_beam`, and rendered-zarr values against each other.
+- `test_freq_extrapolation_integration.py`, `test_group_integration.py` — `integration`; need `MBEAMS_MK2026_BDS_PATH` and `MBEAMS_MKE_BDS_PATH` (the first also `MBEAMS_BDS_PATH`), BDSs built from the staged MdV-2026 zarrs.
 
-Set `MBEAMS_OFFLINE=1` to skip the L-band cache warm-up in `conftest.pytest_sessionstart` (used in air-gapped CI). `uv run pytest -m unit` is the strict-hermetic subset.
+The README's Development section has the full manual-test table (data, cost, how to build the 2026 BDSs).
+
+Set `MBEAMS_OFFLINE=1` to skip the L-band cache warm-up in `conftest.pytest_sessionstart` (used in air-gapped CI); it also sets astropy's `iers.conf.auto_download = False`, because a failed IERS download is retried by every parallactic-angle test (30–75 s each) and an IERS outage otherwise stretches CI to hours. Online runs keep live IERS tables. `uv run pytest -m unit` is the strict-hermetic subset.
 
 Tests silently skip when env vars / data are unavailable — if you expect a test to run, check the skip reason first.
 

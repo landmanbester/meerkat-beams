@@ -3,8 +3,8 @@ type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr
 description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, and the xradio primary-beam schema.
 tags: [mdv, bds, xradio, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
-timestamp: 2026-10-18T22:00:00Z
-last_verified_commit: 9f91975
+timestamp: 2026-10-25T12:00:00Z
+last_verified_commit: 590327f
 ---
 
 # Data model — MdV npz, BDS zarr, xradio zarr
@@ -408,12 +408,15 @@ of truth and accepts `mueller`/`nmueller` too.
 
 `tests/test_mdv_beams_to_bds.py` (marker `integration`,
 `ALL_BANDS = ["U", "L", "S0", "S1", "S2", "S3", "S4"]`) converts input
-data fresh and compares against a reference BDS produced by the original
-suricat-beams. It needs `MBEAMS_REFERENCE_BDS_<BAND>` env vars and the
-matching input zarr under `tests/data/MeerKAT_<BAND>.zarr` (auto-
-downloaded once for L by `tests/conftest.py`; only `MeerKAT_L.zarr` and
-`MeerKAT_UHF.zarr` are present locally, consistent with S1/S2/S3 having no
-published gdrive ID in `cache.py`).
+data fresh and compares against a reference BDS. It needs
+`MBEAMS_REFERENCE_BDS_<BAND>` env vars and the matching input zarr already
+in the cache at `cache.input_zarr_path(band)` (not `tests/data/`): the
+`tests/conftest.py` warm-up fetches L, and `cache.ensure_band_bds("U")`
+fetches U. Only U and L have reference BDSs; S0/S4 have published inputs
+but no reference, and S1/S2/S3 are not in `cache.SUPPORTED_BANDS`, so those
+five bands always skip. Verified on 2026-10-25: U and L pass (34 tests,
+~80 s, ~27 GB peak RAM, ~5.4 GB of `tempfile` scratch per band, so `TMPDIR`
+must point at a disk with room).
 
 This regression test's variable-parametrised checks
 (`tests/test_mdv_beams_to_bds.py:184`, `:191`) cover only

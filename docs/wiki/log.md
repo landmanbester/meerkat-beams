@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-24T12:00:00Z
+timestamp: 2026-10-25T12:00:00Z
 ---
 
 # Wiki changelog
@@ -359,3 +359,16 @@ all threads; a merged group's weighted sum is computed in float64.
   `dmueller`, which was dropped. It now points at pfb-imaging's
   `degrid --spectral linear` (ratt-ru/pfb-imaging#385), which applies the chord
   to beam × model together. No code changed; the stamp stays at `b2795d1`.
+
+## 2026-10-25 — offline IERS guard and manual-test survey (verified at `590327f`)
+
+- `tests/conftest.py` sets astropy's `iers.conf.auto_download = False` under
+  `MBEAMS_OFFLINE=1`. With the IERS servers returning errors, every
+  parallactic-angle test retried the download (30–75 s each) and CI took
+  2 h 48 min instead of about a minute. Online runs keep live tables.
+- Every data-gated test was run against real data. The legacy U/L conversion
+  regression passes but needs ~27 GB RAM; the image tests need a zarr image
+  with a `TIME` coordinate. `data-model.md`'s regression section no longer
+  says the inputs live in `tests/data/`. It and `beam-orientation.md`
+  (whose `conftest.py:18-36` citation is unchanged) are re-stamped at
+  `590327f`. The README's Development section now lists the manual tests.
