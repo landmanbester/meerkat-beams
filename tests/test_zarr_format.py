@@ -24,6 +24,7 @@ from meerkat_beams.utils import (
     enrich_bds_xradio,
     is_zarr_group,
     require_readable_zarr,
+    require_zarr_xarray_compat,
     zarr_create_array,
     zarr_open_group,
 )
@@ -154,6 +155,32 @@ def test_v3_input_under_zarr2_raises_clearly(tmp_path):
         require_readable_zarr(path)
     with pytest.raises(ValueError, match="needs zarr-python>=3"):
         mdv_beams_to_bds(mdv_beams=str(path), bds=str(tmp_path / "out.bds.zarr"))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "zarr_major, xarray_version, ok",
+    [(2, "2026.7.0", True), (2, "2026.9.0", False), (2, "2027.1.0", False), (3, "2026.9.0", True)],
+)
+def test_zarr_xarray_compat(monkeypatch, zarr_major, xarray_version, ok):
+    """xarray>=2026.9 removed its zarr-python 2 support; that pair must fail with a pin hint (#44)."""
+    monkeypatch.setattr("meerkat_beams.utils._zarr_major", lambda: zarr_major)
+    monkeypatch.setattr(xarray, "__version__", xarray_version)
+    if ok:
+        require_zarr_xarray_compat()
+    else:
+        with pytest.raises(RuntimeError, match=r"xarray<2026\.9"):
+            require_zarr_xarray_compat()
+
+
+@pytest.mark.unit
+def test_bds_open_checks_zarr_xarray_compat(tmp_path, monkeypatch):
+    """BeamWizard reads a BDS through xarray.open_zarr, so it hits the guard before xarray's TypeError."""
+    bds_path = build_synthetic_bds(tmp_path / "in.bds.zarr")
+    monkeypatch.setattr("meerkat_beams.utils._zarr_major", lambda: 2)
+    monkeypatch.setattr(xarray, "__version__", "2026.9.0")
+    with pytest.raises(RuntimeError, match=r"xarray<2026\.9"):
+        BeamWizard(bds_name=str(bds_path))
 
 
 @pytest.mark.unit

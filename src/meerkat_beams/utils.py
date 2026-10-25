@@ -81,12 +81,34 @@ def _zarr_major() -> int:
     return int(zarr.__version__.split(".")[0])
 
 
+# xarray dropped zarr-python 2: 2026.4 raised its zarr floor to 3.0 and 2026.9
+# removed the compatibility code, so every open_zarr/to_zarr raises a TypeError.
+XARRAY_ZARR2_CAP = "2026.9"
+
+
+def require_zarr_xarray_compat():
+    """Raise a clear error when zarr-python 2 is paired with an xarray that cannot drive it.
+
+    zarr is unpinned so downstream applications can stay on zarr-python 2 (D18),
+    but no dependency spec can cap xarray only for them; call this before any
+    zarr I/O instead of letting xarray fail deep in its backend.
+    """
+    from packaging.version import Version
+
+    if _zarr_major() < 3 and Version(xarray.__version__) >= Version(XARRAY_ZARR2_CAP):
+        raise RuntimeError(
+            f"xarray {xarray.__version__} cannot read or write zarr under zarr-python 2; "
+            f"pin 'xarray<{XARRAY_ZARR2_CAP}' or upgrade to 'zarr>=3'"
+        )
+
+
 def require_readable_zarr(path):
     """Raise a clear error for a zarr v3 input when only zarr-python 2 is installed.
 
     Inputs may be either format (zarr 3 writes v3 by default), but zarr-python 2
     cannot read v3, and its own error does not say why.
     """
+    require_zarr_xarray_compat()
     p = Path(path)
     if (p / "zarr.json").exists() and not (p / ".zgroup").exists() and _zarr_major() < 3:
         raise ValueError(f"{path} is a zarr format 3 store; reading it needs zarr-python>=3")
@@ -99,6 +121,7 @@ def zarr_open_group(path, mode: str):
     """
     import zarr
 
+    require_zarr_xarray_compat()
     if _zarr_major() >= 3 and mode in ("w", "w-"):
         return zarr.open_group(path, mode=mode, zarr_format=ZARR_FORMAT)
     return zarr.open_group(path, mode=mode)
@@ -121,6 +144,15 @@ def zarr_create_array(group, name: str, compressor=_ZARR_DEFAULT_COMPRESSOR, fil
     if zarr3:
         return group.create_array(name, filters=filters, **kwargs)
     return group.create_dataset(name, filters=filters, **kwargs)
+
+
+def zarr_compressor_encoding(compressor) -> dict:
+    """xarray ``to_zarr`` encoding entry selecting ``compressor`` under zarr 2 or 3.
+
+    zarr 3 spells the key ``compressors``; xarray>=2026.9 accepts only that
+    spelling, while xarray under zarr-python 2 needs ``compressor`` (#44).
+    """
+    return {"compressors" if _zarr_major() >= 3 else "compressor": compressor}
 
 
 # ---------------------------------------------------------------------------
@@ -495,6 +527,7 @@ class BeamWizard(object):
             from meerkat_beams import cache
 
             path_p, path_q = cache.ensure_group_bds(band, group)
+            require_zarr_xarray_compat()
             log.info(f"opening group {group} beam datasets: p={path_p}, q={path_q}")
             ds_p = xarray.open_zarr(path_p)
             ds_q = ds_p if path_q == path_p else xarray.open_zarr(path_q)
@@ -511,6 +544,7 @@ class BeamWizard(object):
 
                 bds_name = cache.ensure_band_bds(band)
             log.info(f"opening BDS {bds_name}")
+            require_zarr_xarray_compat()
             self.bds = xarray.open_zarr(bds_name)
         freqs = self.bds.coords["FREQ"].values
         log.info(f"frequency range is {freqs[0] * 1e-6:.0f} to {freqs[-1] * 1e-6:.0f} MHz")
