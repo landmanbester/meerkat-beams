@@ -3,8 +3,8 @@ type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr, eidos FITS
 description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, the xradio primary-beam schema, and the eidos-compatible FITS output.
 tags: [mdv, bds, xradio, fits, eidos, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
-timestamp: 2026-10-26T01:15:00Z
-last_verified_commit: 551f623
+timestamp: 2026-10-26T02:35:00Z
+last_verified_commit: 708fd52
 ---
 
 # Data model — MdV npz, BDS zarr, xradio zarr, eidos FITS
@@ -430,10 +430,10 @@ checkout), so a consumer that reads an eidos beam cube — DDFacet / killMS with
 - **Which elements.** A Jones hypercube takes the full 2x2 — `--elements`
   defaults to `XX,XY,YX,YY` and anything less raises (pointing at
   `--output-eight`), because eidos's hypercube is always the full matrix. A
-  Stokes/Mueller hypercube takes exactly one element (default `II`, matching
-  eidos's default Stokes output; `--elements UV` selects the `UV` leakage
-  plane). `--output-eight` accepts any Jones subset and refuses non-Jones
-  `--beam-type`, exactly as eidos refuses `-o8` with `--Stokes`.
+  Stokes/Mueller hypercube takes exactly one element (default `II`, as
+  eidos's `-S` selects one Stokes element; `--elements UV` selects the `UV`
+  leakage plane). `--output-eight` accepts any Jones subset and refuses
+  non-Jones `--beam-type`, exactly as eidos refuses `-o8` with `--Stokes`.
 - **`_im` follows `--beam-type`, not the stored dtype**: it is written for
   `jones`/`njones`/`mueller`/`nmueller` and omitted for the real
   `stokes`/`nstokes`, so the file set does not depend on what a particular
@@ -458,9 +458,10 @@ Hypercube (5 axes; numpy order reversed), from `bds_to_fits.cube_header`:
 `--output-eight` files carry the same axes 1-2 plus `FREQ` on axis 3
 (`CRPIX3 = 1`, `CRVAL3 = freqs[0]`, `CDELT3 = df`, `CUNIT3 = Hz`).
 `CUNIT1/2` are `deg` on both layouts. Extra non-WCS cards on every file:
-`TELESCOP = MeerKAT`, `DATE` (ISO-8601 UTC), `ORIGIN = meerkat-beams`,
-`BEAMTYPE` (the `--beam-type`), `ELEMNT` (comma list, or the one element for
-an `-o8` file) and `PART` (`RE`/`IM`).
+`TELESCOP` (the BDS `telescope` attr, so `MeerKAT Extension` on the 2026 MKE
+store and `MeerKAT` when the attr is absent), `DATE` (ISO-8601 UTC),
+`ORIGIN = meerkat-beams`, `BEAMTYPE` (the `--beam-type`), `ELEMNT` (comma
+list, or the one element for an `-o8` file) and `PART` (`RE`/`IM`).
 
 `df` follows eidos: `freqs[1] - freqs[0]`, i.e. the axis spacing for a uniform
 selection. A **gapped** `--freqs` selection has no single linear
@@ -497,8 +498,13 @@ and much faster (`_exact_channel_indices`). Frequencies come from
 `BeamWizard._resolve_freqs` (`--freqs` and `--num-freq` are mutually
 exclusive) and are validated by `check_freqs`, so `--freq-extrapolation scale`
 extends the range by one BDS channel (D19). Target pixels outside the beam
-model are filled with 0 and reported once with the model's `l`/`m` extent —
-never on the native grid.
+model are filled with 0 and reported once, with the model's `l`/`m` extent and
+a count summed over the requested planes. The mask is evaluated per distinct
+`nu/nu_e` scale, not just on the nominal grid: on the native grid the nominal
+footprint is always inside the cube, but an out-of-band `scale` plane is
+evaluated on the edge plane with its offsets scaled (narrower above the band,
+wider below), so it can leave the cube even though the nominal grid does not.
+The warning names the scaled extent when any such plane is present.
 
 ### Deliberate deviations from eidos
 
@@ -514,10 +520,11 @@ coordinates unchanged:
    is identical; only the labels change. (The `-o8` writer has the same
    `CDELT` swap, corrected the same way.)
 2. **Polarization `CTYPE`s.** eidos writes `H`/`V` only when the channel
-   count happens to be 2 and leaves them blank otherwise, with `CUNIT = ''`.
-   We always label Jones axes `H`/`V` (row→axis 4, column→axis 3, eidos's
-   assignment) and Stokes/Mueller axes `STOKES` with the IAU Stokes code of
-   the element they carry; `CUNIT` is omitted rather than blank.
+   count happens to be 2 (and `Mx`/`My` when it is 4), leaving them blank
+   otherwise, with `CUNIT = ''`. We always label Jones axes `H`/`V`
+   (row→axis 4, column→axis 3, eidos's assignment) and Stokes/Mueller axes
+   `STOKES` with the IAU Stokes code of the element they carry; `CUNIT` is
+   omitted rather than blank.
 3. **`DATE`** is ISO-8601 UTC rather than `time.ctime()` (local time) —
    FITS wants ISO-8601 and astropy can parse it back.
 4. **`BITPIX`** is `-32`: data are written at BDS precision (float32 /
@@ -532,7 +539,10 @@ coordinates unchanged:
 `tests/test_bds_to_fits.py` (unit, synthetic BDS) pins the header table, the
 centre rule via a sub-pixel peak-vs-`CRPIX` check (the assertion eidos's own
 `tests/test_fits_centre.py` makes), both layouts, the validation errors, the
-native copy path and the off-FOV warning.
+native copy path, the per-scale off-FOV warning (including a scaled
+native-grid plane), the near-edge `scale` path with no `interp1d` slack, a
+point-beam X/Y-orientation check, the empty-`elements` default and the
+`TELESCOP` provenance attr.
 `tests/test_bds_to_fits_integration.py` (`integration`, needs
 `MBEAMS_BDS_PATH`) renders the real L BDS onto a grid whose pixels land on
 stored samples (64 px over 8 deg = twice the native spacing) and compares the

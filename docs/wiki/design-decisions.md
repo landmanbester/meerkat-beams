@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+, fits, eidos]
-timestamp: 2026-10-26T01:15:00Z
-last_verified_commit: 551f623
+timestamp: 2026-10-26T02:35:00Z
+last_verified_commit: 708fd52
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -48,7 +48,7 @@ their imaginary part without raising. See `beamwizard.md` for the full
 prefilter contract, including how the dtype rule propagates through
 `get_time_freq_beam`'s zarr writes.
 
-**Source:** `utils.py:709-746,720-727`; `test_subpixel_matches_direct_scipy`,
+**Source:** `utils.py:709-746,816-863`; `test_subpixel_matches_direct_scipy`,
 `test_prefilter_complex_var_is_complex64_without_warning`
 (`tests/test_beam_wizard.py`); commit `0f2a4f4` ("test: add tests for
 complex Mueller term" — landed the dtype-aware cache).
@@ -586,7 +586,7 @@ you touch the fixtures.
 
 ## Sources
 
-- `src/meerkat_beams/utils.py:709-746,693-727` (`_get_prefilter`,
+- `src/meerkat_beams/utils.py:709-746,816-863` (`_get_prefilter`,
   `interpolate_beam`)
 - `src/meerkat_beams/utils.py:954-1282` (`get_rotation_averaged_beam`)
 - `src/meerkat_beams/utils.py:1459-1531` (`get_time_freq_beam`,
@@ -867,14 +867,18 @@ format to this package therefore had to be compatible in everything a
 consumer computes, without quietly forking the format.
 
 **Decision:** `bds-to-fits` (`core/bds_to_fits.py`) reproduces both eidos
-layouts and every geometry keyword, and corrects exactly four things —
+layouts and every geometry keyword, makes four header corrections —
 `CTYPE1`/`CTYPE2` (eidos swaps the X/Y labels relative to its own `CRPIX`
 on the 5-axis hypercube), the polarization `CTYPE`s (blank unless the
-channel count happens to be 2), `DATE` (ISO-8601 UTC instead of local
-`ctime`), and `BITPIX` (float32, the BDS's precision, instead of float64) —
-plus four non-WCS provenance cards (`ORIGIN`, `BEAMTYPE`, `ELEMNT`,
-`PART`). The full header table, and the diff measured against eidos 1.1.2
-at identical geometry, are in `data-model.md`.
+channel count happens to be 2 for `H`/`V` or 4 for `Mx`/`My`), `DATE`
+(ISO-8601 UTC instead of local `ctime`), and `BITPIX` (float32, the BDS's
+precision, instead of float64) — and takes `TELESCOP` from the BDS
+`telescope` attr (falling back to `MeerKAT`) rather than hard-coding it, so
+the 2026 MKE store is not mislabelled. It also adds four non-WCS provenance
+cards (`ORIGIN`, `BEAMTYPE`, `ELEMNT`, `PART`). The complex-Mueller `_im`
+and the gapped-`--freqs` mean-`CDELT` rule are separate deliberate
+deviations, covered below. The full header table, and the diff measured
+against eidos 1.1.2 at identical geometry, are in `data-model.md`.
 
 **Rationale:**
 
@@ -893,6 +897,9 @@ at identical geometry, are in `data-model.md`.
   second interpolator. The exception is the common case — native grid with
   frequencies that are exact BDS channels — which copies the stored planes
   bit-identically instead of interpolating them back onto their own grid.
+  The off-FOV warning evaluates the mask at each distinct `nu/nu_e` scale, so
+  an out-of-band `scale` plane that leaves the cube is reported even when the
+  nominal native grid is entirely inside it.
 - eidos is **not** a test dependency. Parity is pinned by our own header
   and peak-vs-`CRPIX` tests (mirroring eidos's `test_fits_centre.py`), so
   the suite stays hermetic and no GPL-3.0 package enters the test group;

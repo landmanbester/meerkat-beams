@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-26T01:15:00Z
+timestamp: 2026-10-26T02:35:00Z
 ---
 
 # Wiki changelog
@@ -418,3 +418,39 @@ all threads; a merged group's weighted sum is computed in float64.
 - Parity was checked against eidos 1.1.2 at 64 px / 2 deg / 1300 MHz in both
   layouts: every geometry keyword identical except the corrections above, and
   identical pixel-to-world coordinates.
+
+## 2026-10-26 — bds-to-fits review fixes (verified at `708fd52`)
+
+- `_exact_channel_indices` now uses strict BDS bounds: `freq_to_index` is a
+  plain `interp1d` and raised for any out-of-range value, so a frequency a few
+  hundred Hz outside the band under `freq_extrapolation="scale"` on the native
+  grid crashed instead of taking the lambda/D path. Pinned by
+  `test_near_edge_freq_within_match_tolerance_scales`.
+- The off-FOV mask is evaluated for each distinct `nu/nu_e` scale, not only on
+  the nominal grid, and the warning counts across the requested planes and
+  names the scaled extent. A scaled out-of-band plane on the native grid can
+  therefore no longer be zero-filled silently. Pinned by
+  `test_native_scaled_frequency_reports_off_model_pixels`; `data-model.md`'s
+  sampling paragraph was corrected (the old "never on the native grid" claim
+  only held for in-band planes).
+- `TELESCOP` now follows the BDS `telescope` attr (falling back to `MeerKAT`),
+  and an explicit empty `elements` list behaves like the omitted default
+  instead of silently writing no files with `--output-eight`. Pinned by
+  `test_telescope_card_follows_the_bds_attr` and
+  `test_empty_elements_is_treated_as_the_default`.
+- Added a point-beam X/Y-orientation test (`test_fits_plane_orientation_is_y_x`;
+  the Gaussian fixture is symmetric and could not catch a transpose or flip).
+- Docstring/doc cleanup: the module docstring no longer claims a full 4x4
+  Mueller hypercube or says the Mueller `_im` "matches eidos"; the eidos
+  polarization-CTYPE note now covers `Mx`/`My` for four channels; D20 enumerates
+  the four header corrections plus the TELESCOP provenance rule and points at
+  the two separate deviations (complex-Mueller `_im`, gapped-`--freqs`
+  mean-`CDELT`); `README.md`/`CLAUDE.md` counts were corrected.
+- Stale line citations fixed: `beamwizard.md` `:1549` → `:1682` (the coordinate
+  dataset's `fill_value=None`), and `design-decisions.md`'s
+  `utils.py:709-746,720-727` / `709-746,693-727` → `709-746,816-863` (the
+  second range was pointing into `get_source_coordinates`, not
+  `interpolate_beam`).
+- The code fix landed in `708fd52`, so `data-model.md` and
+  `design-decisions.md` are stamped at it. `beamwizard.md` keeps `551f623`:
+  the fix did not change `utils.py`, the code that page covers.
