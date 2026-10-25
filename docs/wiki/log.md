@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-25T17:18:22Z
+timestamp: 2026-10-25T17:38:52Z
 ---
 
 # Wiki changelog
@@ -424,3 +424,90 @@ Adversarial review of PR #45.
 - `utils.py` shifted again; citations remapped from the diff hunks, matching
   `utils.py` exactly; `ci.yml` citations moved with the longer install steps.
   All five stamped pages re-stamped at `9d470a4`.
+
+## 2026-10-26 — eidos-compatible FITS output (bds-to-fits) (verified at `551f623`)
+
+- New command `mbeams bds-to-fits` (`core/bds_to_fits.py`,
+  `cabs/bds_to_fits.yml`, generated `cli/bds_to_fits.py`) writes FITS beam cubes
+  in the layout `../eidos` writes: the `<prefix>_re/_im` hypercube (full Jones
+  by default, or one Stokes/Mueller element) and, with `--output-eight`, the
+  eight `<prefix>_{ij}_{re,im}.fits` files. `--pixels`/`--diameter` resample the
+  grid through the existing spline path, and on the native grid with exact BDS
+  channels the stored planes are copied instead. `--freqs` (Hz) / `--num-freq`
+  select channels; `--freq-extrapolation` carries the D19 policy through.
+- `data-model.md` gained the **FITS output (eidos-compatible)** section: both
+  layouts, the header contract table, the `centre0`/`CRPIX` invariant, the `df`
+  rule (mean spacing plus a warning for a gapped `--freqs`), the sampling path,
+  and the five deliberate deviations from eidos (swapped `CTYPE1/2`, blank
+  polarization `CTYPE`s, `ctime` `DATE`, `BITPIX`, the complex `mueller` `_im`).
+  `design-decisions.md` gained **D20** (why parity is geometry-only, and why
+  eidos stays out of the test group); `index.md` routes to the new section.
+- `_resolve_elements` moved to `utils.resolve_elements` for its second caller
+  (`bds-to-fits`), so `utils.py` grew 60 lines above `class BeamWizard`: every
+  `utils.py:NNN` citation in `beamwizard.md`, `beam-orientation.md` and
+  `design-decisions.md` was renumbered by +60 (the two citations below the
+  insertion, `utils.py:57-123` and `utils.py:70-123`, are unchanged) and all
+  five stamped pages were re-verified against the new line numbers and
+  re-stamped at `551f623`. The stale four-`beam_type` list in the
+  `bds_to_xradio` docstring now matches `resolve_elements`.
+- `README.md` (CLI examples, manual-test row) and `CLAUDE.md` (command row,
+  test bullet) were updated inside the feature commit `551f623`.
+- Parity was checked against eidos 1.1.2 at 64 px / 2 deg / 1300 MHz in both
+  layouts: every geometry keyword identical except the corrections above, and
+  identical pixel-to-world coordinates.
+
+## 2026-10-26 — bds-to-fits review fixes (verified at `708fd52`)
+
+- `_exact_channel_indices` now uses strict BDS bounds: `freq_to_index` is a
+  plain `interp1d` and raised for any out-of-range value, so a frequency a few
+  hundred Hz outside the band under `freq_extrapolation="scale"` on the native
+  grid crashed instead of taking the lambda/D path. Pinned by
+  `test_near_edge_freq_within_match_tolerance_scales`.
+- The off-FOV mask is evaluated for each distinct `nu/nu_e` scale, not only on
+  the nominal grid, and the warning counts across the requested planes and
+  names the scaled extent. A scaled out-of-band plane on the native grid can
+  therefore no longer be zero-filled silently. Pinned by
+  `test_native_scaled_frequency_reports_off_model_pixels`; `data-model.md`'s
+  sampling paragraph was corrected (the old "never on the native grid" claim
+  only held for in-band planes).
+- `TELESCOP` now follows the BDS `telescope` attr (falling back to `MeerKAT`),
+  and an explicit empty `elements` list behaves like the omitted default
+  instead of silently writing no files with `--output-eight`. Pinned by
+  `test_telescope_card_follows_the_bds_attr` and
+  `test_empty_elements_is_treated_as_the_default`.
+- Added a point-beam X/Y-orientation test (`test_fits_plane_orientation_is_y_x`;
+  the Gaussian fixture is symmetric and could not catch a transpose or flip).
+- Docstring/doc cleanup: the module docstring no longer claims a full 4x4
+  Mueller hypercube or says the Mueller `_im` "matches eidos"; the eidos
+  polarization-CTYPE note now covers `Mx`/`My` for four channels; D20 enumerates
+  the four header corrections plus the TELESCOP provenance rule and points at
+  the two separate deviations (complex-Mueller `_im`, gapped-`--freqs`
+  mean-`CDELT`); `README.md`/`CLAUDE.md` counts were corrected.
+- Stale line citations fixed: `beamwizard.md` `:1549` → `:1682` (the coordinate
+  dataset's `fill_value=None`), and `design-decisions.md`'s
+  `utils.py:709-746,720-727` / `709-746,693-727` → `709-746,816-863` (the
+  second range was pointing into `get_source_coordinates`, not
+  `interpolate_beam`).
+- The code fix landed in `708fd52`, so `data-model.md` and
+  `design-decisions.md` are stamped at it. `beamwizard.md` keeps `551f623`:
+  the fix did not change `utils.py`, the code that page covers.
+
+## 2026-10-25 — merge main (#45) into bds-to-fits (verified at `b78c372`)
+
+- Both branches shifted `utils.py` (#45 by +47 lines, `resolve_elements` by
+  +60), so every `utils.py:NNN` citation in `beamwizard.md`,
+  `beam-orientation.md`, `design-decisions.md` and `data-model.md` was
+  remapped onto the merged file from the version its line came from, and each
+  definition anchor was checked against the merged `utils.py`.
+- Where both branches had fixed the same stale D1 `Source:` citation, main's
+  is kept (`_get_prefilter` plus the `map_coordinates` call).
+- No code change: `bds-to-fits` reads only through `BeamWizard(bds_path)`,
+  already guarded by `require_zarr_xarray_compat` (the `bds_name` entry point
+  in `test_every_xarray_zarr_entry_point_is_guarded`), and writes FITS, not
+  zarr. All five stamped pages re-stamped at the merge commit `b78c372`.
+
+## 2026-10-25 — container build only for fork PRs (verified at `147ea36`)
+
+- `publish-container.yml` no longer pushes for fork PRs, whose `GITHUB_TOKEN`
+  is read-only; recorded as a D10 consequence in `design-decisions.md`,
+  re-stamped at `147ea36`.

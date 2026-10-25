@@ -1,21 +1,23 @@
 ---
 type: reference
-title: Data model — MdV npz, BDS zarr, xradio zarr
-description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, and the xradio primary-beam schema.
-tags: [mdv, bds, xradio, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
-timestamp: 2026-10-25T17:18:22Z
-last_verified_commit: 9d470a4
+title: Data model — MdV npz, BDS zarr, xradio zarr, eidos FITS
+description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, the xradio primary-beam schema, and the eidos-compatible FITS output.
+tags: [mdv, bds, xradio, fits, eidos, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
+timestamp: 2026-10-25T17:33:43Z
+last_verified_commit: b78c372
 ---
 
-# Data model — MdV npz, BDS zarr, xradio zarr
+# Data model — MdV npz, BDS zarr, xradio zarr, eidos FITS
 
-Three formats, three conversions: MdV `.npz` (raw archive data) →
+Four formats, four conversions: MdV `.npz` (raw archive data) →
 `mdv-beams-to-bds` → BDS zarr (the package's working format) →
-`bds-to-xradio` → xradio zarr (schema-compatible primary-beam image).
+`bds-to-xradio` → xradio zarr (schema-compatible primary-beam image), or →
+`bds-to-fits` → eidos-compatible FITS beam cubes.
 `mdv-to-xradio` (deprecated, like `download-mdv-beams`: the package now
 works from mean-beam zarrs, not the ~35 GB raw `.npz`) shortcuts directly
 from `.npz` to xradio, skipping the BDS and the time axis. This page pins the field/variable names, dtypes, dims,
-and one input-handling asymmetry that is easy to get backwards.
+one input-handling asymmetry that is easy to get backwards, and the FITS
+header contract `bds-to-fits` writes.
 
 ## MdV `.npz`
 
@@ -385,8 +387,9 @@ centre). Rendering internals (interpolation, dim-name canonicalisation,
 `enrich_bds_xradio`) live in `beamwizard.md`.
 
 `bds_to_xradio`'s `beam_type` parameter selects the source BDS variable,
-resolved through `_resolve_elements`
-(`src/meerkat_beams/core/bds_to_xradio.py:11-58`). It accepts **all six**
+resolved through `resolve_elements` (`src/meerkat_beams/utils.py` — it moved
+there from `core/bds_to_xradio.py` when `bds-to-fits` became its second
+caller, per the shared-code rule). It accepts **all six**
 BDS variable names:
 
 ```python
@@ -402,16 +405,152 @@ else:
     )
 ```
 
-(`bds_to_xradio.py:31-52`). `stokes`/`nstokes` and `mueller`/`nmueller`
+(`utils.py::resolve_elements`). `stokes`/`nstokes` and `mueller`/`nmueller`
 share the same IQUV element-pair validation (`elements` like `"II"`,
 `"QQ"`), but differ in output polarization labelling: `stokes`/`nstokes`
 label by the output Stokes only (`e[1]`, for backward compatibility),
 while `mueller`/`nmueller` label by the full 2-character element (e.g.
 `"IQ"`) so a 16-term Mueller cube gets unique polarization labels
-(`bds_to_xradio.py:31-39`). Note the `bds_to_xradio` docstring
-(`bds_to_xradio.py:94`) still lists only `'nstokes', 'stokes', 'njones',
-'jones'` — that's stale; the code path (`_resolve_elements`) is the source
-of truth and accepts `mueller`/`nmueller` too.
+(`utils.py::resolve_elements`). The `bds_to_xradio` docstring used to list
+only four of the six `beam_type`s — it now matches `resolve_elements` — but
+the code path remains the source of truth for which names are accepted.
+
+## FITS output (eidos-compatible)
+
+Produced by `bds-to-fits` (`src/meerkat_beams/core/bds_to_fits.py`) from a BDS
+alone — no image, no time axis, no parallactic-angle rotation: it is the
+*intrinsic* beam, written in the two layouts `eidos` writes
+(`eidos/util.py::write_fits` / `write_fits_cube` in the sibling `../eidos`
+checkout), so a consumer that reads an eidos beam cube — DDFacet / killMS with
+`Beam.Model: FITS` — reads ours the same way.
+
+### Layouts and file names
+
+| mode | files | numpy shape | FITS axes |
+|---|---|---|---|
+| hypercube (default) | `<prefix>_re.fits`, `<prefix>_im.fits` | `(FREQ, p0, p1, Y, X)` | 5 |
+| `--output-eight` (eidos `-o8`) | `<prefix>_{xx,xy,yx,yy}_{re,im}.fits` | `(FREQ, Y, X)` | 3 |
+
+- **Which elements.** A Jones hypercube takes the full 2x2 — `--elements`
+  defaults to `XX,XY,YX,YY` and anything less raises (pointing at
+  `--output-eight`), because eidos's hypercube is always the full matrix. A
+  Stokes/Mueller hypercube takes exactly one element (default `II`, as
+  eidos's `-S` selects one Stokes element; `--elements UV` selects the `UV`
+  leakage plane). `--output-eight` accepts any Jones subset and refuses
+  non-Jones `--beam-type`, exactly as eidos refuses `-o8` with `--Stokes`.
+- **`_im` follows `--beam-type`, not the stored dtype**: it is written for
+  `jones`/`njones`/`mueller`/`nmueller` and omitted for the real
+  `stokes`/`nstokes`, so the file set does not depend on what a particular
+  store happens to hold (a real-valued Jones store still yields an all-zero
+  `_im`). eidos writes both parts for Jones and only the real part for its
+  Stokes/Mueller output.
+- Files are overwritten silently, as eidos does. The `prefix` may be a
+  remote URI; the handle goes through `UPath`.
+
+### Header contract
+
+Hypercube (5 axes; numpy order reversed), from `bds_to_fits.cube_header`:
+
+| axis | CTYPE | CRPIX | CRVAL | CDELT | CUNIT |
+|---|---|---|---|---|---|
+| 1 = X | `px` | `centre0_x + 1` | `0` | `cdelt_x` | `deg` |
+| 2 = Y | `py` | `centre0_y + 1` | `0` | `cdelt_y` | `deg` |
+| 3 = p1 | `V` (Jones) / `STOKES` | `1` | `0` / Stokes code of the **column** element | `1` | (absent) |
+| 4 = p0 | `H` (Jones) / `STOKES` | `1` | `0` / Stokes code of the **row** element | `1` | (absent) |
+| 5 = FREQ | `FREQ` | `1` | `freqs[0]` (Hz) | `df` | `Hz` |
+
+`--output-eight` files carry the same axes 1-2 plus `FREQ` on axis 3
+(`CRPIX3 = 1`, `CRVAL3 = freqs[0]`, `CDELT3 = df`, `CUNIT3 = Hz`).
+`CUNIT1/2` are `deg` on both layouts. Extra non-WCS cards on every file:
+`TELESCOP` (the BDS `telescope` attr, so `MeerKAT Extension` on the 2026 MKE
+store and `MeerKAT` when the attr is absent), `DATE` (ISO-8601 UTC),
+`ORIGIN = meerkat-beams`, `BEAMTYPE` (the `--beam-type`), `ELEMNT` (comma
+list, or the one element for an `-o8` file) and `PART` (`RE`/`IM`).
+
+`df` follows eidos: `freqs[1] - freqs[0]`, i.e. the axis spacing for a uniform
+selection. A **gapped** `--freqs` selection has no single linear
+`CDELT` (one value misplaces every plane after the gap), so the mean spacing
+`(freqs[-1] - freqs[0]) / (N - 1)` is written **and a warning logged**; a
+single channel gets eidos's 1 MHz fallback.
+
+### Centre rule and geometry
+
+One `centre0` value drives both the sampled grid and `CRPIX`, so header and
+data cannot disagree:
+
+- **native** (no `--pixels`, no `--diameter`): the target axis is
+  `(p - x0) * dx`, which reproduces the BDS `X` coordinate exactly, and
+  `CRPIX = x0 + 1` — the same value the BDS's own `fits_header` carries.
+- **`--pixels` and/or `--diameter`**: `n = --pixels` (or the native size),
+  `cdelt = diameter / n` (or the native `dx`), and `centre0 = n / 2` — the
+  rule `eidos.util._crpix` uses (fixed in ratt-ru/eidos#1), which puts an odd
+  pixel count's centre *between* two pixels and `CRPIX` on `x.5`.
+
+`--diameter` is in degrees (eidos's `-d`), `--freqs` in **Hz** (eidos's `-f`
+is MHz — this package's convention everywhere else).
+
+### Sampling
+
+One interpolation path, `BeamWizard.interpolate_beam` (spline order 3,
+off-cube `mode="constant", cval=0`), in frequency blocks sized by
+`_BLOCK_ELEMENTS` so the interpolation coordinates stay within the budget —
+a grid so large that one channel's own coordinates exceed the budget runs one
+channel at a time. The exception is the
+common case: **native grid with frequencies that are exact BDS channels**
+copies the stored planes instead of resampling them, which is bit-identical
+and much faster (`_exact_channel_indices`). Frequencies come from
+`BeamWizard._resolve_freqs` (`--freqs` and `--num-freq` are mutually
+exclusive) and are validated by `check_freqs`, so `--freq-extrapolation scale`
+extends the range by one BDS channel (D19). Target pixels outside the beam
+model are filled with 0 and reported once, with the model's `l`/`m` extent and
+a count summed over the requested planes. The mask is evaluated per distinct
+`nu/nu_e` scale, not just on the nominal grid: on the native grid the nominal
+footprint is always inside the cube, but an out-of-band `scale` plane is
+evaluated on the edge plane with its offsets scaled (narrower above the band,
+wider below), so it can leave the cube even though the nominal grid does not.
+The warning names the scaled extent when any such plane is present.
+
+### Deliberate deviations from eidos
+
+Checked against eidos 1.1.2 at 64 px / 2 deg / 1300 MHz, both layouts: every
+keyword above is byte-identical except these, all of which leave the world
+coordinates unchanged:
+
+1. **`CDELT1`/`CDELT2` and `CRPIX` pairing.** eidos builds
+   `CTYPE = (py, px)` and `CDELT = (diam/shape[-2], diam/shape[-1])` on the
+   5-axis hypercube — the X/Y labels are swapped relative to its own `CRPIX`,
+   which is `crpixx` on axis 1. We write `px`/`py` with `CDELT1 = cdelt_x`.
+   On the square grids these files use both values are equal, so pixel→world
+   is identical; only the labels change. (The `-o8` writer has the same
+   `CDELT` swap, corrected the same way.)
+2. **Polarization `CTYPE`s.** eidos writes `H`/`V` only when the channel
+   count happens to be 2 (and `Mx`/`My` when it is 4), leaving them blank
+   otherwise, with `CUNIT = ''`. We always label Jones axes `H`/`V`
+   (row→axis 4, column→axis 3, eidos's assignment) and Stokes/Mueller axes
+   `STOKES` with the IAU Stokes code of the element they carry; `CUNIT` is
+   omitted rather than blank.
+3. **`DATE`** is ISO-8601 UTC rather than `time.ctime()` (local time) —
+   FITS wants ISO-8601 and astropy can parse it back.
+4. **`BITPIX`** is `-32`: data are written at BDS precision (float32 /
+   complex64 split into re/im), where eidos writes float64 (`-64`).
+5. **The complex `mueller`/`nmueller` hypercube gets an `_im` file**, which
+   eidos never writes for `-S` (its auto-correlation Mueller is real). Ours
+   is a coherency-basis Mueller and genuinely complex — dropping the
+   imaginary part would drop a real part of the response.
+
+### Tests
+
+`tests/test_bds_to_fits.py` (unit, synthetic BDS) pins the header table, the
+centre rule via a sub-pixel peak-vs-`CRPIX` check (the assertion eidos's own
+`tests/test_fits_centre.py` makes), both layouts, the validation errors, the
+native copy path, the per-scale off-FOV warning (including a scaled
+native-grid plane), the near-edge `scale` path with no `interp1d` slack, a
+point-beam X/Y-orientation check, the empty-`elements` default and the
+`TELESCOP` provenance attr.
+`tests/test_bds_to_fits_integration.py` (`integration`, needs
+`MBEAMS_BDS_PATH`) renders the real L BDS onto a grid whose pixels land on
+stored samples (64 px over 8 deg = twice the native spacing) and compares the
+planes back against the store.
 
 ## BDS regression testing — coverage nuance
 
@@ -432,9 +571,10 @@ This regression test's variable-parametrised checks
 `["jones", "njones", "stokes", "nstokes"]` — `mueller`/`nmueller` (added
 later, commit `2d6d0dc`) are **not** in this cross-reference suite.
 Mueller coverage instead comes from unit tests: `test_bds_to_xradio.py`
-(`_resolve_elements`/`beam_type` behaviour for `mueller`/`nmueller`),
+(`resolve_elements`/`beam_type` behaviour for `mueller`/`nmueller`),
 `test_beam_wizard.py` (prefilter dtype, interpolation, rotation-averaging,
-and rendering of the complex `nmueller` variable), and
+and rendering of the complex `nmueller` variable),
+`test_bds_to_fits.py` (rendering one `nmueller` element to FITS), and
 `test_beam_orientation_mueller.py` (unit tests for
 `scripts/beam_orientation/mueller.py`, the standalone Mueller-solve
 script — not the BDS `mueller` variable itself).
@@ -443,18 +583,27 @@ script — not the BDS `mueller` variable itself).
 
 - `src/meerkat_beams/core/mdv_beams_to_bds.py:26-134` (`mdv_beams_to_bds`;
   antenna-branch asymmetry at `:34-51`, six-variable write at `:113-122`)
-- `src/meerkat_beams/core/bds_to_xradio.py:11-130` (`bds_to_xradio`,
-  `_resolve_elements`)
+- `src/meerkat_beams/core/bds_to_xradio.py` (`bds_to_xradio`; its element
+  grammar lives in `src/meerkat_beams/utils.py::resolve_elements`, shared with
+  `bds-to-fits`)
+- `src/meerkat_beams/core/bds_to_fits.py` (both FITS layouts, header builders,
+  `centre0`/`CRPIX` rule, `_freq_cdelta`, the native copy path and the
+  off-FOV warning) with `src/meerkat_beams/cabs/bds_to_fits.yml`
+- `../eidos/eidos/util.py` (`write_fits`, `write_fits_cube`, `_crpix`) — the
+  layout we match — and `../eidos/tests/test_fits_centre.py` (the peak-vs-CRPIX
+  assertion our unit test mirrors)
 - commit `2d6d0dc` ("feat(bds): add mueller term to bds")
 - commit `a4c8df7` ("fix: skip antenna selection for zarr input in
   mdv_beams_to_bds")
 - `tests/test_mdv_beams_to_bds.py` (`ALL_BANDS`, `MBEAMS_REFERENCE_BDS_*`,
   jones/stokes-only parametrisation at `:184`, `:191`)
 - `tests/test_bds_to_xradio.py`, `tests/test_beam_wizard.py`,
-  `tests/test_beam_orientation_mueller.py` (mueller/nmueller coverage)
+  `tests/test_bds_to_fits.py`, `tests/test_bds_to_fits_integration.py`,
+  `tests/test_beam_orientation_mueller.py` (mueller/nmueller coverage, FITS
+  output)
 - `tests/conftest.py` (L-band cache warm-up, `MBEAMS_OFFLINE`)
-- `src/meerkat_beams/utils.py` (`jones_to_mueller_cross`, `GROUP_TELESCOPES`,
-  `FREQ_MATCH_ATOL_HZ`, `_build_group_bds`)
+- `src/meerkat_beams/utils.py` (`jones_to_mueller_cross`, `resolve_elements`,
+  `GROUP_TELESCOPES`, `FREQ_MATCH_ATOL_HZ`, `_build_group_bds`)
 - `tests/test_group_bds.py`, `tests/test_jones_mueller.py`,
   `tests/test_mdv_beams_to_bds_attrs.py`, `tests/test_group_integration.py`
 - issue #30 (MeerKAT+ Mueller blocks per baseline group)

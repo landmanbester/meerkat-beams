@@ -2,15 +2,15 @@
 type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
-tags: [design, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+]
-timestamp: 2026-10-25T17:18:22Z
-last_verified_commit: 9d470a4
+tags: [design, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+, fits, eidos]
+timestamp: 2026-10-25T17:38:52Z
+last_verified_commit: 147ea36
 ---
 
 # Design decisions, conventions, and recurring gotchas
 
 Context/Decision/Rationale/Consequences ledger for load-bearing choices in
-`meerkat-beams`. Entries are numbered D1–D19 and are not chronological;
+`meerkat-beams`. Entries are numbered D1–D20 and are not chronological;
 cite the entry ID plus its Source when referring to one of these decisions
 elsewhere.
 
@@ -22,13 +22,13 @@ elsewhere.
 (once per source/time), so filtering on every call would be wasteful, and
 double-filtering would silently corrupt the interpolated values.
 
-**Decision:** `_get_prefilter` (`src/meerkat_beams/utils.py:696-733`) runs
+**Decision:** `_get_prefilter` (`src/meerkat_beams/utils.py:756-793`) runs
 `scipy.ndimage.spline_filter` once per `(var, i, j, order)` key and caches
-the result; `interpolate_beam` (`utils.py:803-850`) then calls
+the result; `interpolate_beam` (`utils.py:863-910`) then calls
 `map_coordinates` against that cached array with `prefilter=False`
-(`utils.py:843-850`). The cache's output dtype is **not** unconditionally
+(`utils.py:903-910`). The cache's output dtype is **not** unconditionally
 `float32` — it is chosen per variable kind: `np.complex64 if
-np.iscomplexobj(da) else np.float32` (`utils.py:722-726`). Complex
+np.iscomplexobj(da) else np.float32` (`utils.py:782-786`). Complex
 variables (`jones`, `njones`, `mueller`, `nmueller`) cache as `complex64`;
 real variables (`stokes`, `nstokes`) cache as `float32`. Passing a real
 dtype for complex input would make scipy implicitly promote it (a
@@ -48,7 +48,7 @@ their imaginary part without raising. See `beamwizard.md` for the full
 prefilter contract, including how the dtype rule propagates through
 `get_time_freq_beam`'s zarr writes.
 
-**Source:** `utils.py:696-733,843-850`; `test_subpixel_matches_direct_scipy`,
+**Source:** `utils.py:756-793,903-910`; `test_subpixel_matches_direct_scipy`,
 `test_prefilter_complex_var_is_complex64_without_warning`
 (`tests/test_beam_wizard.py`); commit `0f2a4f4` ("test: add tests for
 complex Mueller term" — landed the dtype-aware cache).
@@ -62,14 +62,14 @@ leaving it implicit means a future scipy version or a copy-pasted call
 site could silently change behavior (e.g. to nearest-edge extrapolation).
 
 **Decision:** `interpolate_beam` passes `mode="constant", cval=0.0`
-explicitly (`utils.py:848-849`) rather than relying on the scipy default.
+explicitly (`utils.py:908-909`) rather than relying on the scipy default.
 Out-of-cube coordinates return `0`, not a nearest-edge value or `NaN`.
 
 **Consequences:** Callers requesting positions well outside the beam
 support get zero gain, not an error or an extrapolated guess — relevant
 for sources near the edge of a wide field.
 
-**Source:** `utils.py:848-849`; `test_out_of_range_xy_returns_zero`
+**Source:** `utils.py:908-909`; `test_out_of_range_xy_returns_zero`
 (`tests/test_beam_wizard.py`).
 
 ## D3 — `get_time_freq_beam` accepts only canonical `dim_names`
@@ -81,7 +81,7 @@ array to match an arbitrary `dim_names` ordering is not implemented.
 
 **Decision:** Only the canonical xradio order
 `("time", "frequency", "polarization", "l", "m")` is accepted; any other
-tuple raises `ValueError` (`utils.py:1513-1518`).
+tuple raises `ValueError` (`utils.py:1573-1578`).
 
 **Rationale:** A non-canonical tuple would relabel the dims without
 reordering the underlying array — silent data corruption, not a
@@ -92,7 +92,7 @@ without implementing real permutation of the array first; a caller
 wanting a different axis order must transpose the opened dataset
 themselves after the fact.
 
-**Source:** `utils.py:1513-1518`; `test_time_freq_beam_rejects_non_canonical_dim_names`
+**Source:** `utils.py:1573-1578`; `test_time_freq_beam_rejects_non_canonical_dim_names`
 (`tests/test_beam_wizard.py`).
 
 ## D4 — Rotation-averaged maps are `(Y, X)` (FITS) order
@@ -106,7 +106,7 @@ hidden elsewhere because the MeerKAT rotation-averaged beam is nearly
 circularly symmetric, so a transpose barely changes it.
 
 **Decision:** `np.meshgrid(l, m)` (default `"xy"` indexing, not `"ij"`,
-`utils.py:1088`) now returns `(NY, NX)`-shaped maps natively, matching
+`utils.py:1148`) now returns `(NY, NX)`-shaped maps natively, matching
 FITS convention (axis 0 = m/north, axis 1 = l/east). Settled at commit
 `616906b`.
 
@@ -120,7 +120,7 @@ between this settled index-order question and the still-provisional
 physical orientation convention (D9-adjacent, not in this ledger's
 numbered list — see `beam-orientation.md`).
 
-**Source:** `utils.py:1080-1088`; `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
+**Source:** `utils.py:1140-1148`; `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
 `test_rotation_averaged_beam_map_indexes_as_y_x` (`tests/test_beam_wizard.py`);
 `beam-orientation.md`.
 
@@ -309,6 +309,12 @@ the `[[file]]` entry fought it. hip-cargo has the hook and no such entry.
 - **`publish-container.yml` had to move from `type=semver` to `type=pep440`.**
   `v0.1.0rc1` is not valid semver, so a pre-release tag would have produced no
   container tags at all — silent until the first rc.
+- **`publish-container.yml` builds but does not push for fork PRs.** A fork's
+  `pull_request` run gets a read-only `GITHUB_TOKEN` whatever `permissions:`
+  says, so the ghcr push failed with "installation not allowed to Write
+  organization package" (PR #46). Same-repo PRs, `main` and tags still push.
+  Do not switch to `pull_request_target` to get the image back: it would
+  build the fork's Dockerfile with a write token.
 - **Do not restore the `[[file]]` entry for `_container_image.py`,** and do not
   "fix" that file to a version number on `main`. Both re-break `tbump`.
 - **`CHANGELOG.md` is generated and hand edits do not survive.** `git-cliff -o`
@@ -586,10 +592,10 @@ you touch the fixtures.
 
 ## Sources
 
-- `src/meerkat_beams/utils.py:696-733,803-850` (`_get_prefilter`,
+- `src/meerkat_beams/utils.py:756-793,863-910` (`_get_prefilter`,
   `interpolate_beam`)
-- `src/meerkat_beams/utils.py:941-1269` (`get_rotation_averaged_beam`)
-- `src/meerkat_beams/utils.py:1446-1518` (`get_time_freq_beam`,
+- `src/meerkat_beams/utils.py:1001-1329` (`get_rotation_averaged_beam`)
+- `src/meerkat_beams/utils.py:1506-1578` (`get_time_freq_beam`,
   `_CANONICAL_DIM_NAMES` guard)
 - `src/meerkat_beams/cache.py` (cache layout, `BAND_GDRIVE_IDS`,
   `ensure_band_bds`, `.partial` atomicity)
@@ -894,7 +900,83 @@ leakage terms the chord still helps (about 1.5×) and the λ/D slope does not.
 - D2 is the spatial counterpart: off-cube in X/Y returns 0, off-cube in
   frequency raises, or scales within the margin when asked.
 
-**Source:** `utils.py:491-502` (constructor validation), `utils.py:564-567`
-(default margin), `utils.py:771-801` (`freq_range`, `check_freqs`),
-`utils.py:815-837` (scaling); `tests/test_freq_extrapolation.py`,
+**Source:** `utils.py:551-562` (constructor validation), `utils.py:624-627`
+(default margin), `utils.py:831-861` (`freq_range`, `check_freqs`),
+`utils.py:875-897` (scaling); `tests/test_freq_extrapolation.py`,
 `tests/test_freq_extrapolation_integration.py`; issue #41.
+
+## D20 — FITS output matches eidos's layout, with corrected CTYPEs
+
+**Context:** Consumers that read a primary beam FITS file — DDFacet / killMS
+with `Beam.Model: FITS` — get such files from `../eidos`, whose
+`write_fits`/`write_fits_cube` define what "compatible" means: file names
+(`<prefix>_re.fits` / `<prefix>_{ij}_{re,im}.fits`), FITS axis order,
+`CRPIX = centre + 1` at 0-based `n/2` (fixed in ratt-ru/eidos#1),
+`CDELT = diameter / pixels`, `TELESCOP = MeerKAT`. Adding a third output
+format to this package therefore had to be compatible in everything a
+consumer computes, without quietly forking the format.
+
+**Decision:** `bds-to-fits` (`core/bds_to_fits.py`) reproduces both eidos
+layouts and every geometry keyword, makes four header corrections —
+`CTYPE1`/`CTYPE2` (eidos swaps the X/Y labels relative to its own `CRPIX`
+on the 5-axis hypercube), the polarization `CTYPE`s (blank unless the
+channel count happens to be 2 for `H`/`V` or 4 for `Mx`/`My`), `DATE`
+(ISO-8601 UTC instead of local `ctime`), and `BITPIX` (float32, the BDS's
+precision, instead of float64) — and takes `TELESCOP` from the BDS
+`telescope` attr (falling back to `MeerKAT`) rather than hard-coding it, so
+the 2026 MKE store is not mislabelled. It also adds four non-WCS provenance
+cards (`ORIGIN`, `BEAMTYPE`, `ELEMNT`, `PART`). The complex-Mueller `_im`
+and the gapped-`--freqs` mean-`CDELT` rule are separate deliberate
+deviations, covered below. The full header table, and the diff measured
+against eidos 1.1.2 at identical geometry, are in `data-model.md`.
+
+**Rationale:**
+
+- Pixel→world is identical either way — both sky axes share `CRVAL 0` and,
+  on the square grids these files use, the same `CDELT` — so correcting the
+  labels costs no compatibility while fixing a header that otherwise says
+  "north" about the east axis.
+- One `centre0` value drives both the sampled grid and `CRPIX`, so header
+  and data cannot drift apart (the class of bug ratt-ru/eidos#1 fixed on
+  their side).
+- The file set follows `--beam-type`, not the stored dtype: `jones`,
+  `njones`, `mueller`, `nmueller` always get an `_im`, `stokes`/`nstokes`
+  never do. Otherwise switching BDS store would change how many files appear.
+- One sampling path: `--pixels`/`--diameter` resample through the existing
+  `interpolate_beam` (D1 prefilter, D2 off-cube zero) rather than growing a
+  second interpolator. The exception is the common case — native grid with
+  frequencies that are exact BDS channels — which copies the stored planes
+  bit-identically instead of interpolating them back onto their own grid.
+  The off-FOV warning evaluates the mask at each distinct `nu/nu_e` scale, so
+  an out-of-band `scale` plane that leaves the cube is reported even when the
+  nominal native grid is entirely inside it.
+- eidos is **not** a test dependency. Parity is pinned by our own header
+  and peak-vs-`CRPIX` tests (mirroring eidos's `test_fits_centre.py`), so
+  the suite stays hermetic and no GPL-3.0 package enters the test group;
+  the header diff can be re-derived any time by running both tools at the
+  same `-p`/`-d`.
+
+**Consequences.**
+
+- No image and no time axis: FITS output is the intrinsic beam, never
+  parallactic-angle rotated. A caller wanting apparent or time-resolved
+  beams uses `bds-to-xradio`; a caller wanting rotation-averaged maps uses
+  the wizard directly.
+- `--freqs` is **Hz** while eidos's `-f` is MHz. Consistent with every
+  other frequency input in this package, and called out because it is the
+  one place the two CLIs disagree on units.
+- A `--diameter` wider than the beam model fills the excess with 0 and
+  warns with the model's extent — eidos's own README carries the same
+  caveat about its 10° model.
+- A gapped `--freqs` has no linear `CDELT`: the mean spacing is written
+  with a warning, rather than eidos's first-spacing rule, which would
+  misplace every plane after the gap.
+- `-o8` with a non-Jones `--beam-type` raises, mirroring eidos's refusal of
+  `-o8` with `--Stokes`, and a hypercube Jones request that is not the full
+  2×2 raises pointing at `--output-eight`.
+
+**Source:** `core/bds_to_fits.py` (`_target_grid`, `_freq_cdelta`,
+`_sky_cards`, `_provenance_cards`, `cube_header`/`element_header`,
+`sample_element`, `_exact_channel_indices`), `cabs/bds_to_fits.yml`,
+`tests/test_bds_to_fits.py`, `tests/test_bds_to_fits_integration.py`;
+`../eidos/eidos/util.py:51-183`; `data-model.md` (FITS output section).
