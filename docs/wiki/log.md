@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-26T02:35:00Z
+timestamp: 2026-10-25T17:33:43Z
 ---
 
 # Wiki changelog
@@ -491,3 +491,17 @@ Adversarial review of PR #45.
 - The code fix landed in `708fd52`, so `data-model.md` and
   `design-decisions.md` are stamped at it. `beamwizard.md` keeps `551f623`:
   the fix did not change `utils.py`, the code that page covers.
+
+## 2026-10-25 — merge main (#45) into bds-to-fits (verified at `b78c372`)
+
+- Both branches shifted `utils.py` (#45 by +47 lines, `resolve_elements` by
+  +60), so every `utils.py:NNN` citation in `beamwizard.md`,
+  `beam-orientation.md`, `design-decisions.md` and `data-model.md` was
+  remapped onto the merged file from the version its line came from, and each
+  definition anchor was checked against the merged `utils.py`.
+- Where both branches had fixed the same stale D1 `Source:` citation, main's
+  is kept (`_get_prefilter` plus the `map_coordinates` call).
+- No code change: `bds-to-fits` reads only through `BeamWizard(bds_path)`,
+  already guarded by `require_zarr_xarray_compat` (the `bds_name` entry point
+  in `test_every_xarray_zarr_entry_point_is_guarded`), and writes FITS, not
+  zarr. All five stamped pages re-stamped at the merge commit `b78c372`.

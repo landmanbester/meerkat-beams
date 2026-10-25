@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Beam orientation and (Y, X) map-order conventions
 description: The settled (Y, X) rotation-averaged map order, parallactic-angle rotation averaging, the still-provisional beam-orientation convention with its open M1 validation, and the katbeam comparison probe that corroborates the BDS transpose but not the sign flips.
 tags: [beam, orientation, conventions, rotation, parallactic, yx-order, katbeam]
-timestamp: 2026-10-26T01:15:00Z
-last_verified_commit: 551f623
+timestamp: 2026-10-25T17:33:43Z
+last_verified_commit: b78c372
 ---
 
 # Beam orientation and (Y, X) map-order conventions

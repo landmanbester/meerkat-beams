@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+, fits, eidos]
-timestamp: 2026-10-26T02:35:00Z
-last_verified_commit: 708fd52
+timestamp: 2026-10-25T17:33:43Z
+last_verified_commit: b78c372
 ---
 
 # Design decisions, conventions, and recurring gotchas

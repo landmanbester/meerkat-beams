@@ -3,8 +3,8 @@ type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr, eidos FITS
 description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, the xradio primary-beam schema, and the eidos-compatible FITS output.
 tags: [mdv, bds, xradio, fits, eidos, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
-timestamp: 2026-10-26T02:35:00Z
-last_verified_commit: 708fd52
+timestamp: 2026-10-25T17:33:43Z
+last_verified_commit: b78c372
 ---
 
 # Data model — MdV npz, BDS zarr, xradio zarr, eidos FITS
