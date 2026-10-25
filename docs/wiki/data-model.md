@@ -33,7 +33,7 @@ Raw voltage beams from the SARAO archive
 
 ### Two input branches in `mdv_beams_to_bds`, different antenna handling
 
-`mdv_beams_to_bds` (`src/meerkat_beams/core/mdv_beams_to_bds.py:34-51`)
+`mdv_beams_to_bds` (`src/meerkat_beams/core/mdv_beams_to_bds.py:37-54`)
 accepts either an `.npz` file or a per-antenna mean-beam zarr, and the two
 branches disagree on whether antenna selection is needed:
 
@@ -63,7 +63,7 @@ and the `.npz` branch still does.
 ## BDS zarr
 
 Produced by `mdv-beams-to-bds`. Holds **six** data variables
-(`src/meerkat_beams/core/mdv_beams_to_bds.py:113-122`):
+(`src/meerkat_beams/core/mdv_beams_to_bds.py:116-125`):
 
 | variable | dtype | dims | normalisation |
 |---|---|---|---|
@@ -86,7 +86,7 @@ real Stokes like `stokes`/`nstokes` are) — hence `complex64` rather than
 `float32` despite sharing the `stokes_i`/`stokes_j` dims. Added in commit
 `2d6d0dc` ("feat(bds): add mueller term to bds").
 
-Additional dataset-level attrs (`mdv_beams_to_bds.py:123-125`):
+Additional dataset-level attrs (`mdv_beams_to_bds.py:126-128`):
 
 - `.attrs["fits_header"]` — a synthesized FITS header dict (`SIMPLE`,
   `NAXIS{1,2,3}`, `CRPIX{1,2,3}`, `CRVAL{1,2,3}`, `CDELT{1,2,3}`,
@@ -104,7 +104,7 @@ specifically needed.
 
 When `compress=True`, all six variables get the module-level
 `ZARR_COMPRESSOR` from `utils.py`, Blosc zstd/clevel=5 with bit-shuffle and
-no filter (`mdv_beams_to_bds.py:128-131`), so compression is lossless. Up to
+no filter (`mdv_beams_to_bds.py:131-134`), so compression is lossless. Up to
 0.2.0 a `Delta(float32)` filter was applied too. It was lossy on floats
 (~3e-6 against values near 1, from its cumulative-sum decode), and in a
 partly-filled edge chunk it carried the NaN fill value into every later
@@ -117,14 +117,18 @@ built by those releases should be deleted and rebuilt.
 Every store the package writes — BDS and both xradio paths — is **zarr
 format 2**, whichever zarr-python is installed: `to_zarr(...,
 zarr_format=ZARR_FORMAT)` for the xarray writers, and
-`zarr_open_group`/`zarr_create_array` (`utils.py:70-123`) for
+`zarr_open_group`/`zarr_create_array` (`utils.py:70-159`) for
 `get_time_freq_beam`/`enrich_bds_xradio`'s raw writes. zarr is unpinned
 (design-decisions D18), so output stays readable by consumers still on
 zarr-python 2, which cannot read v3. Inputs are the other way round: a
 mean-beam or image zarr may be v2 or v3 (`is_zarr_group`), since zarr 3
 writes v3 by default; under zarr-python 2 a v3 input raises a clear
 "needs zarr-python>=3" error (`require_readable_zarr`) rather than zarr 2's
-own. Pinned by `tests/test_zarr_format.py`.
+own. zarr-python 2 also needs `xarray<2026.9`; with a newer xarray every
+xarray zarr read or write raises an `IncompatibleZarrStackError` (an
+`ImportError`) saying so
+(`require_zarr_xarray_compat`, design-decisions D18). Pinned by
+`tests/test_zarr_format.py`.
 
 ## Synthesized katbeam BDS
 
@@ -577,7 +581,7 @@ script — not the BDS `mueller` variable itself).
 
 ## Sources
 
-- `src/meerkat_beams/core/mdv_beams_to_bds.py:24-131` (`mdv_beams_to_bds`;
+- `src/meerkat_beams/core/mdv_beams_to_bds.py:26-134` (`mdv_beams_to_bds`;
   antenna-branch asymmetry at `:34-51`, six-variable write at `:113-122`)
 - `src/meerkat_beams/core/bds_to_xradio.py` (`bds_to_xradio`; its element
   grammar lives in `src/meerkat_beams/utils.py::resolve_elements`, shared with

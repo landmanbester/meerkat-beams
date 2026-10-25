@@ -22,13 +22,13 @@ elsewhere.
 (once per source/time), so filtering on every call would be wasteful, and
 double-filtering would silently corrupt the interpolated values.
 
-**Decision:** `_get_prefilter` (`src/meerkat_beams/utils.py:709-746`) runs
+**Decision:** `_get_prefilter` (`src/meerkat_beams/utils.py:756-793`) runs
 `scipy.ndimage.spline_filter` once per `(var, i, j, order)` key and caches
-the result; `interpolate_beam` (`utils.py:816-863`) then calls
+the result; `interpolate_beam` (`utils.py:863-910`) then calls
 `map_coordinates` against that cached array with `prefilter=False`
-(`utils.py:856-863`). The cache's output dtype is **not** unconditionally
+(`utils.py:903-910`). The cache's output dtype is **not** unconditionally
 `float32` — it is chosen per variable kind: `np.complex64 if
-np.iscomplexobj(da) else np.float32` (`utils.py:735-739`). Complex
+np.iscomplexobj(da) else np.float32` (`utils.py:782-786`). Complex
 variables (`jones`, `njones`, `mueller`, `nmueller`) cache as `complex64`;
 real variables (`stokes`, `nstokes`) cache as `float32`. Passing a real
 dtype for complex input would make scipy implicitly promote it (a
@@ -48,7 +48,7 @@ their imaginary part without raising. See `beamwizard.md` for the full
 prefilter contract, including how the dtype rule propagates through
 `get_time_freq_beam`'s zarr writes.
 
-**Source:** `utils.py:709-746,816-863`; `test_subpixel_matches_direct_scipy`,
+**Source:** `utils.py:756-793,903-910`; `test_subpixel_matches_direct_scipy`,
 `test_prefilter_complex_var_is_complex64_without_warning`
 (`tests/test_beam_wizard.py`); commit `0f2a4f4` ("test: add tests for
 complex Mueller term" — landed the dtype-aware cache).
@@ -62,14 +62,14 @@ leaving it implicit means a future scipy version or a copy-pasted call
 site could silently change behavior (e.g. to nearest-edge extrapolation).
 
 **Decision:** `interpolate_beam` passes `mode="constant", cval=0.0`
-explicitly (`utils.py:861-862`) rather than relying on the scipy default.
+explicitly (`utils.py:908-909`) rather than relying on the scipy default.
 Out-of-cube coordinates return `0`, not a nearest-edge value or `NaN`.
 
 **Consequences:** Callers requesting positions well outside the beam
 support get zero gain, not an error or an extrapolated guess — relevant
 for sources near the edge of a wide field.
 
-**Source:** `utils.py:861-862`; `test_out_of_range_xy_returns_zero`
+**Source:** `utils.py:908-909`; `test_out_of_range_xy_returns_zero`
 (`tests/test_beam_wizard.py`).
 
 ## D3 — `get_time_freq_beam` accepts only canonical `dim_names`
@@ -81,7 +81,7 @@ array to match an arbitrary `dim_names` ordering is not implemented.
 
 **Decision:** Only the canonical xradio order
 `("time", "frequency", "polarization", "l", "m")` is accepted; any other
-tuple raises `ValueError` (`utils.py:1526-1531`).
+tuple raises `ValueError` (`utils.py:1573-1578`).
 
 **Rationale:** A non-canonical tuple would relabel the dims without
 reordering the underlying array — silent data corruption, not a
@@ -92,7 +92,7 @@ without implementing real permutation of the array first; a caller
 wanting a different axis order must transpose the opened dataset
 themselves after the fact.
 
-**Source:** `utils.py:1526-1531`; `test_time_freq_beam_rejects_non_canonical_dim_names`
+**Source:** `utils.py:1573-1578`; `test_time_freq_beam_rejects_non_canonical_dim_names`
 (`tests/test_beam_wizard.py`).
 
 ## D4 — Rotation-averaged maps are `(Y, X)` (FITS) order
@@ -106,7 +106,7 @@ hidden elsewhere because the MeerKAT rotation-averaged beam is nearly
 circularly symmetric, so a transpose barely changes it.
 
 **Decision:** `np.meshgrid(l, m)` (default `"xy"` indexing, not `"ij"`,
-`utils.py:1101`) now returns `(NY, NX)`-shaped maps natively, matching
+`utils.py:1148`) now returns `(NY, NX)`-shaped maps natively, matching
 FITS convention (axis 0 = m/north, axis 1 = l/east). Settled at commit
 `616906b`.
 
@@ -120,7 +120,7 @@ between this settled index-order question and the still-provisional
 physical orientation convention (D9-adjacent, not in this ledger's
 numbered list — see `beam-orientation.md`).
 
-**Source:** `utils.py:1093-1101`; `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
+**Source:** `utils.py:1140-1148`; `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
 `test_rotation_averaged_beam_map_indexes_as_y_x` (`tests/test_beam_wizard.py`);
 `beam-orientation.md`.
 
@@ -145,7 +145,7 @@ checks `mbeams --help` on 3.10. Test-group deps in `pyproject.toml` carry
 change intended to work on 3.10 should be smoke-tested against the base
 install, not the full test suite.
 
-**Source:** `pyproject.toml:6-9,125-136`; `.github/workflows/ci.yml:166-189`
+**Source:** `pyproject.toml:6-9,125-136`; `.github/workflows/ci.yml:221-244`
 (the `lightweight` job); CLAUDE.md ("Conventions" section).
 
 ## D6 — Band cache under `MBEAMS_CACHE_DIR`
@@ -586,16 +586,16 @@ you touch the fixtures.
 
 ## Sources
 
-- `src/meerkat_beams/utils.py:709-746,816-863` (`_get_prefilter`,
+- `src/meerkat_beams/utils.py:756-793,863-910` (`_get_prefilter`,
   `interpolate_beam`)
-- `src/meerkat_beams/utils.py:954-1282` (`get_rotation_averaged_beam`)
-- `src/meerkat_beams/utils.py:1459-1531` (`get_time_freq_beam`,
+- `src/meerkat_beams/utils.py:1001-1329` (`get_rotation_averaged_beam`)
+- `src/meerkat_beams/utils.py:1506-1578` (`get_time_freq_beam`,
   `_CANONICAL_DIM_NAMES` guard)
 - `src/meerkat_beams/cache.py` (cache layout, `BAND_GDRIVE_IDS`,
   `ensure_band_bds`, `.partial` atomicity)
 - `pyproject.toml:6-9,22,125-136` (Python support policy, hip-cargo
   dependency, test-group markers)
-- `.github/workflows/ci.yml:58-189` (test matrix, `zarr2` and `lightweight` jobs)
+- `.github/workflows/ci.yml:58-244` (test matrix, `latest`, `zarr2` and `lightweight` jobs)
 - `Dockerfile` (no `git` layer since commit `2a15cbb`)
 - `tests/test_beam_wizard.py`: `test_subpixel_matches_direct_scipy`,
   `test_prefilter_complex_var_is_complex64_without_warning`,
@@ -706,6 +706,32 @@ arrived in 2024.10, but xarray 2024.10–2025.4 fail to write under zarr 3
 (reviewer bisect against zarr 3.1.6), and with zarr unbounded the resolver
 could otherwise pick that broken pair.
 
+xarray has no **ceiling**, even though xarray>=2026.9 cannot drive
+zarr-python 2 (#44). Upstream dropped zarr 2 on purpose: 2026.4 raised
+xarray's own floor to `zarr>=3.0` and called zarr-python 2 unsupported, though
+its compatibility code still ran (2026.4 and 2026.7 pass our suite on zarr
+2.18.7); 2026.9 deleted that code, so every `open_zarr`/`to_zarr` raises
+`TypeError: open_group() got an unexpected keyword argument 'zarr_format'`. A
+cap cannot be made conditional on the zarr major, and a blanket
+`xarray<2026.9` would hold zarr 3 users back. Instead
+`require_zarr_xarray_compat()` raises `IncompatibleZarrStackError` naming the
+fix (pin `xarray<2026.9` or move to `zarr>=3`) whenever zarr-python 2 meets
+xarray>=`XARRAY_ZARR2_CAP`, pre-releases included (it compares release
+tuples). The error subclasses `ImportError` because the hip-cargo-generated
+CLIs wrap the core call in `except ImportError`: under `--backend auto` the
+broken native stack falls back to the container, whose stack is consistent,
+while `--backend native` re-raises. The generated code needed no change. The
+guard runs before every **xarray** zarr call and before any download feeding
+one: `require_readable_zarr`, both `BeamWizard` BDS branches (ahead of
+`cache.ensure_band_bds`/`ensure_group_bds`, so a cold cache does not download
+inputs only to fail), and the top of `mdv_beams_to_bds` / `mdv_to_xradio`.
+Raw zarr calls (`zarr_open_group`, `zarr_create_array`, `zarr.open`) are not
+guarded: they work under zarr-python 2 on any xarray, so a katbeam wizard on a
+FITS image still renders there. The same xarray
+release also stopped accepting the zarr-2 encoding key `compressor`; xarray
+writers build that entry with `zarr_compressor_encoding()`, which spells it
+`compressors` under zarr 3 and `compressor` under zarr 2.
+
 **Rationale.** zarr 3 reads and writes v2; zarr 2 cannot read v3. Writing v2
 keeps every BDS and rendered beam readable by both camps, and the existing
 caches and `tests/data` zarrs are v2 already. The helper is small because only
@@ -718,9 +744,26 @@ valid v2 codec under both majors, so it did not change.
   gives zarr's default, `compressor=None` writes uncompressed.
 - Do not read codec settings through `Array.compressor` in tests; its meaning
   differs between majors. Read the store's `.zarray` JSON.
-- CI runs the main matrix on the locked zarr 3 and a `zarr2` job on
-  `zarr<3`. Moving the output to v3 would be a separate, breaking decision for
-  zarr-2 consumers.
+- CI runs the main matrix on the locked zarr 3, a `latest` job that upgrades
+  xarray and zarr past the lock to their newest releases, and a `zarr2` job on
+  `zarr<3` with the newest `xarray<2026.9` (not the locked one). Both use
+  `uv pip install --upgrade-package xarray --upgrade-package zarr` and then
+  `uv pip check`: a plain `--upgrade` re-resolves the whole tree (it pulled
+  python-dateutil 3, which botocore rejects), so an unrelated transitive bump
+  could pass for an xarray/zarr break. Moving the
+  output to v3 would be a separate, breaking decision for zarr-2 consumers.
+- **This decision now has an expiry date.** zarr-python 2 users are stuck on
+  xarray<2026.9 and get no xarray fixes after that. Once the remaining
+  zarr-2 consumers (dask-ms users) have moved, require `zarr>=3`, delete the
+  zarr-2 branches in `_zarr_major` callers and the guard, drop the `zarr2`
+  job, and supersede this entry.
+- Pass compressors to xarray writers through `zarr_compressor_encoding`,
+  never as a literal `compressor=`/`compressors=` key.
+- A new path into xarray's zarr backend must call
+  `require_zarr_xarray_compat()` first, and must add a case to
+  `test_every_xarray_zarr_entry_point_is_guarded`
+  (`tests/test_zarr_format.py`). Do not guard raw zarr calls
+  (`test_raw_zarr_render_is_not_guarded`).
 - Compressed chunk bytes are not reproducible run to run even on one zarr
   version (Blosc zstd encodes the same buffer differently twice). Compare
   stores by decoded values and `.zarray` metadata, never by `diff -r`.
@@ -730,9 +773,10 @@ valid v2 codec under both majors, so it did not change.
   lossless, and `test_compressed_bds_is_lossless` /
   `test_compressed_partial_edge_chunk_round_trips` must stay green.
 
-**Source:** `utils.py:57-123`; `core/mdv_beams_to_bds.py:128-131`;
+**Source:** `utils.py:57-168`; `core/mdv_beams_to_bds.py:36,131-134`;
 `core/mdv_to_xradio.py`; `tests/test_zarr_format.py`; `.github/workflows/ci.yml`
-(`zarr2` job); `pyproject.toml` `[full]`.
+(`latest` and `zarr2` jobs); `pyproject.toml` `[full]`; xarray `whats-new.rst`
+(v2026.04.0 and v2026.09.0 breaking changes).
 
 ## D19 — Frequency extrapolation is opt-in λ/D scaling within one channel
 
@@ -850,9 +894,9 @@ leakage terms the chord still helps (about 1.5×) and the λ/D slope does not.
 - D2 is the spatial counterpart: off-cube in X/Y returns 0, off-cube in
   frequency raises, or scales within the margin when asked.
 
-**Source:** `utils.py:506-517` (constructor validation), `utils.py:577-580`
-(default margin), `utils.py:784-814` (`freq_range`, `check_freqs`),
-`utils.py:828-850` (scaling); `tests/test_freq_extrapolation.py`,
+**Source:** `utils.py:551-562` (constructor validation), `utils.py:624-627`
+(default margin), `utils.py:831-861` (`freq_range`, `check_freqs`),
+`utils.py:875-897` (scaling); `tests/test_freq_extrapolation.py`,
 `tests/test_freq_extrapolation_integration.py`; issue #41.
 
 ## D20 — FITS output matches eidos's layout, with corrected CTYPEs

@@ -81,12 +81,48 @@ def _zarr_major() -> int:
     return int(zarr.__version__.split(".")[0])
 
 
+# xarray dropped zarr-python 2: 2026.4 raised its zarr floor to 3.0 and 2026.9
+# removed the compatibility code, so every open_zarr/to_zarr raises a TypeError.
+XARRAY_ZARR2_CAP = "2026.9"
+
+
+class IncompatibleZarrStackError(ImportError):
+    """zarr-python 2 is installed alongside an xarray that cannot drive it.
+
+    An ``ImportError`` so the generated CLIs' ``--backend auto`` falls back to
+    the container, whose stack is consistent.
+    """
+
+
+def _zarr_xarray_incompatible() -> bool:
+    from packaging.version import Version
+
+    # .release ignores pre/dev suffixes, so 2026.9.0rc1 counts as 2026.9
+    return _zarr_major() < 3 and Version(xarray.__version__).release >= Version(XARRAY_ZARR2_CAP).release
+
+
+def require_zarr_xarray_compat():
+    """Raise a clear error when zarr-python 2 is paired with an xarray that cannot drive it.
+
+    zarr is unpinned so downstream applications can stay on zarr-python 2 (D18),
+    but no dependency spec can cap xarray only for them; call this before any
+    xarray zarr I/O, and before any download feeding it, instead of letting
+    xarray fail deep in its backend. Raw zarr calls do not need it.
+    """
+    if _zarr_xarray_incompatible():
+        raise IncompatibleZarrStackError(
+            f"xarray {xarray.__version__} cannot read or write zarr under zarr-python 2; "
+            f"pin 'xarray<{XARRAY_ZARR2_CAP}' or upgrade to 'zarr>=3'"
+        )
+
+
 def require_readable_zarr(path):
     """Raise a clear error for a zarr v3 input when only zarr-python 2 is installed.
 
     Inputs may be either format (zarr 3 writes v3 by default), but zarr-python 2
     cannot read v3, and its own error does not say why.
     """
+    require_zarr_xarray_compat()
     p = Path(path)
     if (p / "zarr.json").exists() and not (p / ".zgroup").exists() and _zarr_major() < 3:
         raise ValueError(f"{path} is a zarr format 3 store; reading it needs zarr-python>=3")
@@ -121,6 +157,15 @@ def zarr_create_array(group, name: str, compressor=_ZARR_DEFAULT_COMPRESSOR, fil
     if zarr3:
         return group.create_array(name, filters=filters, **kwargs)
     return group.create_dataset(name, filters=filters, **kwargs)
+
+
+def zarr_compressor_encoding(compressor) -> dict:
+    """xarray ``to_zarr`` encoding entry selecting ``compressor`` under zarr 2 or 3.
+
+    zarr 3 spells the key ``compressors``; xarray>=2026.9 accepts only that
+    spelling, while xarray under zarr-python 2 needs ``compressor`` (#44).
+    """
+    return {"compressors" if _zarr_major() >= 3 else "compressor": compressor}
 
 
 # ---------------------------------------------------------------------------
@@ -554,6 +599,7 @@ class BeamWizard(object):
                 raise ValueError("npix, fov_deg and num_freq only apply to beam_model='katbeam'")
             from meerkat_beams import cache
 
+            require_zarr_xarray_compat()  # before a cold cache downloads the inputs
             path_p, path_q = cache.ensure_group_bds(band, group)
             log.info(f"opening group {group} beam datasets: p={path_p}, q={path_q}")
             ds_p = xarray.open_zarr(path_p)
@@ -566,6 +612,7 @@ class BeamWizard(object):
                 raise ValueError("exactly one of bds_name or band must be provided")
             if npix is not None or fov_deg is not None or num_freq is not None:
                 raise ValueError("npix, fov_deg and num_freq only apply to beam_model='katbeam'")
+            require_zarr_xarray_compat()  # before a cold cache downloads the inputs
             if band is not None:
                 from meerkat_beams import cache
 

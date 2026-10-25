@@ -388,6 +388,43 @@ all threads; a merged group's weighted sum is computed in float64.
   `mdv_beams_to_bds.py:NNN` citations were remapped from the diff. All five
   stamped pages are re-stamped at `5cf1be5`.
 
+## 2026-10-25 — xarray 2026.9 drops zarr-python 2 (verified at `7942c7b`)
+
+Issue #44. xarray 2026.4 made zarr-python 2 unsupported and 2026.9 removed the
+code, so `open_zarr`/`to_zarr` fail under zarr 2.
+- `design-decisions.md` D18: why xarray stays uncapped,
+  `require_zarr_xarray_compat` and where it runs, `zarr_compressor_encoding`
+  (xarray 2026.9 also rejects the `compressor` encoding key), the new `latest`
+  CI job and the re-scoped `zarr2` job, and that zarr 2 support now has an
+  expiry date. CI line citations remapped.
+- `data-model.md`: zarr 2 needs `xarray<2026.9`.
+- `utils.py` and `core/mdv_beams_to_bds.py` shifted; `utils.py:NNN` and
+  `mdv_beams_to_bds.py:NNN` citations remapped from the diff. Fixed a
+  `beamwizard.md` citation (`:1549`) that was already stale and pointed at an
+  unrelated line; it is the coord `fill_value=None` write at `:1656`. All five
+  stamped pages re-stamped at `7942c7b`.
+
+## 2026-10-25 — #44 review fixes (verified at `9d470a4`)
+
+Adversarial review of PR #45.
+- `design-decisions.md` D18: the guard is now `IncompatibleZarrStackError`
+  (an `ImportError`, so `--backend auto` falls back to the container with no
+  change to the generated CLIs), catches pre-releases, runs before the
+  `BeamWizard` cache downloads, and no longer runs in raw zarr calls
+  (`zarr_open_group`), which work under zarr-python 2 on any xarray. The CI
+  jobs use `--upgrade-package` + `uv pip check`. New consequence: new xarray
+  zarr paths must be guarded and added to the entry-point test.
+- `data-model.md`: error type updated. Restored the
+  `tests/test_mdv_beams_to_bds.py:184` citation: the previous remap shifted it
+  by mistake (the pattern matched `test_mdv_beams_to_bds.py`).
+- `design-decisions.md` D1 Source and the Sources list: the `interpolate_beam`
+  citations were stale already on `main` and were carried forward under the
+  previous stamp; they now cite `interpolate_beam` (`:803-850`) and its
+  `map_coordinates` call (`:843-850`).
+- `utils.py` shifted again; citations remapped from the diff hunks, matching
+  `utils.py` exactly; `ci.yml` citations moved with the longer install steps.
+  All five stamped pages re-stamped at `9d470a4`.
+
 ## 2026-10-26 — eidos-compatible FITS output (bds-to-fits) (verified at `551f623`)
 
 - New command `mbeams bds-to-fits` (`core/bds_to_fits.py`,

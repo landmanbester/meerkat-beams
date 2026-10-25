@@ -4,7 +4,13 @@ import warnings
 
 import numpy as np
 
-from meerkat_beams.utils import LOGGER, ZARR_COMPRESSOR, ZARR_FORMAT
+from meerkat_beams.utils import (
+    LOGGER,
+    ZARR_COMPRESSOR,
+    ZARR_FORMAT,
+    require_zarr_xarray_compat,
+    zarr_compressor_encoding,
+)
 
 DEPRECATION = (
     "mdv-to-xradio is deprecated and will be removed in a future release: it reads only the raw MdV .npz "
@@ -40,6 +46,7 @@ def mdv_to_xradio(
     """
     warnings.warn(DEPRECATION, DeprecationWarning, stacklevel=2)
     LOGGER.warning(DEPRECATION)
+    require_zarr_xarray_compat()
     npz_path, output = str(npz_path), str(output)  # the CLI passes UPath objects (#38)
 
     import xarray
@@ -143,7 +150,7 @@ def mdv_to_xradio(
     chunk_m = min(chunks_y, m_len)
     enc = {"chunks": (chunk_time, chunk_freq, chunk_pol, chunk_l, chunk_m)}
     if compress:
-        enc["compressor"] = ZARR_COMPRESSOR
+        enc.update(zarr_compressor_encoding(ZARR_COMPRESSOR))
     encoding = {output_var: enc}
     ds.to_zarr(output, mode="w", encoding=encoding, zarr_format=ZARR_FORMAT)
     zarr.consolidate_metadata(output)

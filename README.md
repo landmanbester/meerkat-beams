@@ -10,7 +10,7 @@ MeerKAT primary-beam modelling based on the holographic beam models of [M. de Vi
 pip install meerkat-beams[full]
 ```
 
-The `[full]` extra pulls in the scientific stack (`xarray`, `xarray-fits`, `zarr`, `numcodecs`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask`, `wget`, `gdown`, `requests`, `katbeam` for the analytic beam model, plus `hip-cargo[s3]` for `s3://` paths). Use plain `meerkat-beams` only if you need the CLI metadata for Stimela without running the implementations locally. Every store the package writes is zarr format 2, whether zarr-python 2 or 3 is installed, so its output stays readable by either.
+The `[full]` extra pulls in the scientific stack (`xarray`, `xarray-fits`, `zarr`, `numcodecs`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask`, `wget`, `gdown`, `requests`, `katbeam` for the analytic beam model, plus `hip-cargo[s3]` for `s3://` paths). Use plain `meerkat-beams` only if you need the CLI metadata for Stimela without running the implementations locally. Every store the package writes is zarr format 2, whether zarr-python 2 or 3 is installed, so its output stays readable by either. zarr-python 2 needs `xarray<2026.9`: xarray 2026.9 removed its zarr-python 2 support, so with zarr 2 install `meerkat-beams[full]` together with `"zarr<3" "xarray<2026.9"`; meerkat-beams raises an error naming this pin if it finds the incompatible pair.
 
 ### Python support
 
@@ -118,7 +118,7 @@ bash scripts/genfuncs.sh                        # regenerate cli/*.py from cabs/
 
 There are three tiers.
 
-**CI** runs `MBEAMS_OFFLINE=1 uv run pytest` on Python 3.11–3.13 and on zarr-python 2. `MBEAMS_OFFLINE=1` makes the run hermetic:
+**CI** runs `MBEAMS_OFFLINE=1 uv run pytest` on Python 3.11–3.13, on the newest xarray and zarr releases, and on zarr-python 2 with the newest `xarray<2026.9`. `MBEAMS_OFFLINE=1` makes the run hermetic:
 
 - it skips the L-band cache warm-up in `tests/conftest.py`, so tests that need real beams skip;
 - it stops astropy downloading IERS Earth-orientation tables and uses the copy bundled with astropy, which is ample for parallactic angles. Without this, a failed download is retried by every test that computes a parallactic angle, at 30–75 s each, so an IERS outage stretches a one-minute CI run to hours.
