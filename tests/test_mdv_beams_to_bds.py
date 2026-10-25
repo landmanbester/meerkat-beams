@@ -1,7 +1,7 @@
 """
 Regression tests for mdv_beams_to_bds().
 
-Runs the refactored conversion on input zarr data in tests/data/,
+Runs the refactored conversion on the cached input zarr (cache.input_zarr_path),
 then compares the output BDS against a reference BDS produced by
 the original suricat-beams.
 
@@ -84,7 +84,7 @@ def bds_pair(request):
 
     input_zarr = _input_zarr_path(band)
     if input_zarr is None:
-        pytest.skip(f"Input zarr for band {band} not in tests/data/")
+        pytest.skip(f"Input zarr for band {band} not in the meerkat-beams cache")
 
     tmpdir = Path(tempfile.mkdtemp(prefix=f"mbeams_test_{band}_"))
     try:
@@ -274,4 +274,4 @@ def test_mdv_beams_to_bds_compress_uses_blosc(tmp_path):
     for v in ("jones", "njones", "stokes", "nstokes", "mueller", "nmueller"):
         meta = json.loads((out / v / ".zarray").read_text())
         assert meta["compressor"]["id"] == "blosc", f"{v} compressor is {meta['compressor']}"
-        assert [f["id"] for f in meta["filters"]] == ["delta"], f"{v} filters are {meta['filters']}"
+        assert meta["filters"] is None, f"{v} filters are {meta['filters']} (Delta is lossy on floats)"

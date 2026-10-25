@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-18T22:00:00Z
+timestamp: 2026-10-25T16:00:00Z
 ---
 
 # Wiki changelog
@@ -323,3 +323,67 @@ all threads; a merged group's weighted sum is computed in float64.
   that page's description.
 - `beamwizard.md`, `beam-orientation.md`, `design-decisions.md`,
   `data-model.md` and `index.md` are re-stamped at `9f91975`.
+
+## 2026-10-21 — #41 frequency extrapolation policy (verified at `c11614a`)
+
+- `design-decisions.md`: new D19 (opt-in λ/D frequency extrapolation within
+  one BDS channel), with the product range table, the scale-vs-clamp and
+  flat/chord/λ/D measurements, and the ripple note. The intro's "D1–D9" now
+  reads "D1–D19".
+- `beamwizard.md`: "Frequency guard" becomes "Frequency guard and the
+  extrapolation policy" (`check_freqs`, `freq_range`, `"raise"`/`"scale"`,
+  warn-once, bit-identical in-range results).
+- `index.md`: the `beamwizard.md` row mentions the `freq_extrapolation` policy.
+- `utils.py` grew by ~70 lines above most cited code, so every
+  `utils.py:NNN` citation in `beamwizard.md`, `design-decisions.md` and
+  `beam-orientation.md` was remapped line by line from the diff against
+  `608c054`. Those three pages and `index.md` are re-stamped at `c11614a`.
+  `data-model.md` cites nothing that moved and keeps its stamp.
+
+## 2026-10-21 — #41 pre-PR review (verified at `b2795d1`)
+
+- `check_freqs` now rejects non-finite frequencies (`b2795d1`).
+  `beamwizard.md` and D19 say so.
+- D19 table B gains the max values its caption promised. The text now notes
+  that the chord is flattered on the 2026 grids (its endpoints are scored
+  planes) and cites the legacy rows as the unbiased comparison. The chord
+  comparison is now asserted by `test_chunk_slope_error_bound`.
+- The 3-line insertion in `check_freqs` shifted later code, so the
+  `utils.py:NNN` citations in `beamwizard.md`, `design-decisions.md` and
+  `beam-orientation.md` were remapped from the diff again. Those three pages
+  and `index.md` are re-stamped at `b2795d1`.
+
+## 2026-10-24 — #41 cross-repo contract review (verified at `b2795d1`)
+
+- D19 Consequences no longer attributes the linear term to pfb-model-spec#39's
+  `dmueller`, which was dropped. It now points at pfb-imaging's
+  `degrid --spectral linear` (ratt-ru/pfb-imaging#385), which applies the chord
+  to beam × model together. No code changed; the stamp stays at `b2795d1`.
+
+## 2026-10-25 — offline IERS guard and manual-test survey (verified at `590327f`)
+
+- `tests/conftest.py` sets astropy's `iers.conf.auto_download = False` under
+  `MBEAMS_OFFLINE=1`. With the IERS servers returning errors, every
+  parallactic-angle test retried the download (30–75 s each) and CI took
+  2 h 48 min instead of about a minute. Online runs keep live tables.
+- Every data-gated test was run against real data. The legacy U/L conversion
+  regression passes but needs ~27 GB RAM; the image tests need a zarr image
+  with a `TIME` coordinate. `data-model.md`'s regression section no longer
+  says the inputs live in `tests/data/`. It and `beam-orientation.md`
+  (whose `conftest.py:18-36` citation is unchanged) are re-stamped at
+  `590327f`. The README's Development section now lists the manual tests.
+
+## 2026-10-25 — lossless compression, native CLI paths, npz deprecation (verified at `5cf1be5`)
+
+- `ZARR_FILTERS` (`Delta(float32)`) is gone (`6c07702`). It was lossy on
+  floats and, in a partly-filled edge chunk, carried the NaN fill value into
+  the rest of the chunk; the cache-built MdV-2026 BDSs had NaN in every Q/V
+  Stokes term for 31 of 63 channels. `data-model.md` and D18 say so, and that
+  old caches should be rebuilt.
+- Core functions and `attach_image` coerce paths to `str`, so every command
+  works natively from the CLI (`5cf1be5`, #38). `download-mdv-beams` and
+  `mdv-to-xradio` warn that they are deprecated: the raw `.npz` is ~35 GB per
+  band and nothing else uses it.
+- `utils.py` and `core/mdv_beams_to_bds.py` shifted, so `utils.py:NNN` and
+  `mdv_beams_to_bds.py:NNN` citations were remapped from the diff. All five
+  stamped pages are re-stamped at `5cf1be5`.

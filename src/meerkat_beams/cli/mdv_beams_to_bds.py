@@ -34,7 +34,7 @@ def mdv_beams_to_bds(
     compress: Annotated[
         bool,
         typer.Option(
-            help="apply Delta+Blosc compression to zarr output",
+            help="apply lossless Blosc compression to zarr output",
         ),
     ] = False,
     bds: Annotated[

@@ -11,14 +11,15 @@ import json
 import astropy.units as u
 import numpy as np
 import pytest
+import xarray
 import zarr
 from astropy.time import Time
+from numcodecs import Shuffle
 
 from meerkat_beams.core.mdv_beams_to_bds import mdv_beams_to_bds
 from meerkat_beams.core.mdv_to_xradio import mdv_to_xradio
 from meerkat_beams.utils import (
     ZARR_COMPRESSOR,
-    ZARR_FILTERS,
     BeamWizard,
     enrich_bds_xradio,
     is_zarr_group,
@@ -39,7 +40,7 @@ def assert_zarr_v2(path, compressed_vars=()):
         assert meta["zarr_format"] == 2
         assert meta["compressor"]["id"] == "blosc", f"{v}: {meta['compressor']}"
         assert meta["compressor"]["cname"] == "zstd"
-        assert [f["id"] for f in meta["filters"]] == ["delta"], f"{v}: {meta['filters']}"
+        assert meta["filters"] is None, f"{v}: {meta['filters']}"
 
 
 @pytest.mark.unit
@@ -61,7 +62,6 @@ def test_get_time_freq_beam_and_enrich_write_v2(tmp_path, compress):
         ij_list=[("I", "I")],
         var="nstokes",
         compressor=ZARR_COMPRESSOR if compress else None,
-        filters=ZARR_FILTERS if compress else None,
         verbose=0,
     )
     enrich_bds_xradio(str(out), bw, "SKY", ["I"])
@@ -93,14 +93,14 @@ def test_zarr_helpers_round_trip(tmp_path):
     path = tmp_path / "h.zarr"
     g = zarr_open_group(str(path), mode="w")
     data = np.arange(12, dtype=np.float32).reshape(3, 4)
-    zarr_create_array(g, "a", data=data, chunks=(3, 2), compressor=ZARR_COMPRESSOR, filters=ZARR_FILTERS)
+    zarr_create_array(g, "a", data=data, chunks=(3, 2), compressor=ZARR_COMPRESSOR, filters=[Shuffle(elementsize=4)])
     zarr_create_array(g, "b", shape=(2,), dtype="f8", fill_value=None)
     np.testing.assert_array_equal(zarr_open_group(str(path), mode="r")["a"][:], data)
     meta = json.loads((path / "a" / ".zarray").read_text())
     assert meta["zarr_format"] == 2
     assert meta["chunks"] == [3, 2]
     assert meta["compressor"]["id"] == "blosc"
-    assert [f["id"] for f in meta["filters"]] == ["delta"]
+    assert [f["id"] for f in meta["filters"]] == ["shuffle"]
     assert (path / ".zgroup").exists() and not (path / "zarr.json").exists()
     assert json.loads((path / "b" / ".zarray").read_text())["fill_value"] is None
 
@@ -154,3 +154,28 @@ def test_v3_input_under_zarr2_raises_clearly(tmp_path):
         require_readable_zarr(path)
     with pytest.raises(ValueError, match="needs zarr-python>=3"):
         mdv_beams_to_bds(mdv_beams=str(path), bds=str(tmp_path / "out.bds.zarr"))
+
+
+@pytest.mark.unit
+def test_compressed_bds_is_lossless(tmp_path):
+    """compress=True must not change a single value of any BDS variable."""
+    plain, packed = tmp_path / "plain.bds.zarr", tmp_path / "packed.bds.zarr"
+    npz = str(build_synthetic_npz(tmp_path))
+    mdv_beams_to_bds(mdv_beams=npz, bds=str(plain), compress=False)
+    mdv_beams_to_bds(mdv_beams=npz, bds=str(packed), compress=True)
+    a, b = xarray.open_zarr(plain), xarray.open_zarr(packed)
+    for v in ("jones", "njones", "stokes", "nstokes", "mueller", "nmueller"):
+        np.testing.assert_array_equal(b[v].values, a[v].values, err_msg=v)
+
+
+@pytest.mark.unit
+def test_compressed_partial_edge_chunk_round_trips(tmp_path):
+    """A partly-filled edge chunk with a NaN fill value must decode without NaNs.
+
+    The 2026 products have 63 channels in chunks of 32, so the last chunk is
+    padded with the fill value; a Delta filter carried that NaN into every later
+    value of the chunk (issue found on #42)."""
+    g = zarr_open_group(str(tmp_path / "e.zarr"), mode="w")
+    data = np.linspace(0.5, 1.0, 2 * 63, dtype=np.float32).reshape(2, 63)
+    zarr_create_array(g, "a", data=data, chunks=(2, 32), fill_value=np.nan, compressor=ZARR_COMPRESSOR)
+    np.testing.assert_array_equal(zarr_open_group(str(tmp_path / "e.zarr"), mode="r")["a"][:], data)

@@ -10,7 +10,7 @@ File = NewType("File", Path)
 
 @stimela_cab(
     name="mdv_to_xradio",
-    info="Converts raw MdV beam npz to an xradio-compatible zarr image",
+    info="Converts raw MdV beam npz to an xradio-compatible zarr image (deprecated, raw npz beams are no longer used)",
 )
 @stimela_output(
     dtype="Directory",
@@ -76,7 +76,7 @@ def mdv_to_xradio(
     compress: Annotated[
         bool,
         typer.Option(
-            help="apply Delta+Blosc compression to zarr output",
+            help="apply lossless Blosc compression to zarr output",
         ),
     ] = False,
     output: Annotated[
@@ -109,7 +109,7 @@ def mdv_to_xradio(
     ] = False,
 ):
     """
-    Converts raw MdV beam npz to an xradio-compatible zarr image
+    Converts raw MdV beam npz to an xradio-compatible zarr image (deprecated, raw npz beams are no longer used)
     """
     if backend == "native" or backend == "auto":
         try:

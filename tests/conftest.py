@@ -37,9 +37,19 @@ CALIBRATOR_SPECTRUM = {
 
 
 def pytest_sessionstart(session):
-    """Populate the L-band cache once per session if it isn't there yet."""
+    """Populate the L-band cache once per session if it isn't there yet.
+
+    Under MBEAMS_OFFLINE=1 also stop astropy fetching IERS tables: a failed
+    download is not cached, so with the IERS servers down every test that
+    computes a parallactic angle retries and stalls for 30-75 s. The bundled
+    IERS-A table is ample for parallactic angles. Online runs keep the live
+    tables.
+    """
     if os.environ.get("MBEAMS_OFFLINE") == "1":
-        print("MBEAMS_OFFLINE=1 - skipping L-band cache warm-up.")
+        from astropy.utils import iers
+
+        iers.conf.auto_download = False
+        print("MBEAMS_OFFLINE=1 - skipping L-band cache warm-up and IERS downloads.")
         return
     if cache.bds_path("L").exists():
         print(f"L-band BDS already cached at {cache.bds_path('L')}.")

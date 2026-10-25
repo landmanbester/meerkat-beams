@@ -2,12 +2,19 @@
 
 import os.path
 import sys
+import warnings
 from typing import List, Optional
 from urllib.error import HTTPError
 
 import wget
 
 from meerkat_beams.utils import log
+
+DEPRECATION = (
+    "download-mdv-beams is deprecated and will be removed in a future release. meerkat-beams now works "
+    "from the MdV mean-beam zarrs, which BeamWizard(band=...) downloads and caches on first use, so the "
+    "multi-GB raw .npz files are no longer needed."
+)
 
 
 def download_mdv_beams(
@@ -24,6 +31,10 @@ def download_mdv_beams(
         base_url: download locations (mirrors), multiple may be given
         exit_on_error: exit code on failure, or None to raise instead
     """
+    warnings.warn(DEPRECATION, DeprecationWarning, stacklevel=2)
+    log.warning(DEPRECATION)
+    source = str(source)
+    dest = None if dest is None else str(dest)  # the CLI passes UPath objects (#38)
     urls = []
     if "://" in source:
         urls = [source]

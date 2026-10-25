@@ -1,8 +1,16 @@
 """Core implementation for mdv-to-xradio command."""
 
+import warnings
+
 import numpy as np
 
-from meerkat_beams.utils import LOGGER, ZARR_COMPRESSOR, ZARR_FILTERS, ZARR_FORMAT
+from meerkat_beams.utils import LOGGER, ZARR_COMPRESSOR, ZARR_FORMAT
+
+DEPRECATION = (
+    "mdv-to-xradio is deprecated and will be removed in a future release: it reads only the raw MdV .npz "
+    "files, which meerkat-beams no longer uses. Convert a mean-beam zarr with mdv-beams-to-bds and render it "
+    "with bds-to-xradio instead."
+)
 
 
 def mdv_to_xradio(
@@ -28,8 +36,12 @@ def mdv_to_xradio(
         part: 'real', 'imag', 'abs', or 'phase'
         output_var: Data variable name (default: SKY)
         chunks_freq, chunks_x, chunks_y: Zarr chunk sizes
-        compress: Apply Delta+Blosc compression to zarr output (default: False)
+        compress: Apply lossless Blosc compression to zarr output (default: False)
     """
+    warnings.warn(DEPRECATION, DeprecationWarning, stacklevel=2)
+    LOGGER.warning(DEPRECATION)
+    npz_path, output = str(npz_path), str(output)  # the CLI passes UPath objects (#38)
+
     import xarray
     import zarr
 
@@ -132,7 +144,6 @@ def mdv_to_xradio(
     enc = {"chunks": (chunk_time, chunk_freq, chunk_pol, chunk_l, chunk_m)}
     if compress:
         enc["compressor"] = ZARR_COMPRESSOR
-        enc["filters"] = ZARR_FILTERS
     encoding = {output_var: enc}
     ds.to_zarr(output, mode="w", encoding=encoding, zarr_format=ZARR_FORMAT)
     zarr.consolidate_metadata(output)
