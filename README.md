@@ -1,6 +1,8 @@
 # meerkat-beams
 
-MeerKAT primary-beam model handling: download MdV beam files from the SARAO archive (https://doi.org/10.48479/wdb0-h061), convert them to a beam dataset (BDS), and render time/frequency-resolved primary beams to `xradio`-compatible zarr stores.
+This is a port of [suricat-beams](https://github.com/ratt-ru/suricat-beams) to the [hip-cargo](https://github.com/landmanbester/hip-cargo) format.
+
+MeerKAT primary-beam modelling based on the holographic beam models of [M. de Villiers](https://doi.org/10.48479/wdb0-h061) (see [paper](https://ui.adsabs.harvard.edu/abs/2023AJ....165...78D/abstract)). Only the array mean beam is currently exposed.
 
 ## Installation
 
