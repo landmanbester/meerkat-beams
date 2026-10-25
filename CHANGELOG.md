@@ -5,6 +5,39 @@ All notable changes to meerkat-beams are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-25
+
+### Added
+
+- Evaluate out-of-range frequencies by lambda/D scaling of the edge plane
+- Add freq_extrapolation policy, freq_range and check_freqs to BeamWizard
+
+### CI
+
+- Bump astral-sh/setup-uv
+
+### Documentation
+
+- README review for release; document lossless compression, native CLI paths and the npz deprecation
+- Point README at suricat-beams+MdV paper etc.
+- Document manual data tests, their resources, and the offline IERS guard
+- D19 points the linear term at pfb-imaging's --spectral linear
+- D19 chord bias note, B-table maxima, non-finite frequency guard
+- D19 frequency extrapolation policy and BeamWizard freq guard
+
+### Fixed
+
+- Accept the CLI's UPath arguments natively; deprecate the raw-npz commands
+- Drop the lossy Delta filter from compressed zarr writes
+- Reject non-finite frequencies in check_freqs; pin the chord in the chunk measurement
+
+### Testing
+
+- Skip IERS downloads under MBEAMS_OFFLINE so CI does not stall on dead IERS mirrors
+- Bound lambda/D extrapolation and in-chunk beam error on the real L-band products
+- Pin freq_extrapolation through the public BeamWizard entry points
+
+
 ## [0.2.0] - 2026-10-18
 
 ### CI
@@ -147,6 +180,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add parametrized BDS regression tests for mdv_beams_to_bds
 
 
+[0.3.0]: https://github.com/landmanbester/meerkat-beams/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/landmanbester/meerkat-beams/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/landmanbester/meerkat-beams/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/landmanbester/meerkat-beams/releases/tag/v0.0.1
