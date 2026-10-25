@@ -216,3 +216,18 @@ def build_synthetic_npz(tmp_path: Path) -> Path:
         antnames=np.array([b"ant0", b"array_average"]),
     )
     return path
+
+
+def build_synthetic_image_zarr(path: Path, n_times: int = 3) -> Path:
+    """Image zarr with a TIME coordinate (seconds, MJD scale) and a ``fits_header`` attr,
+    the shape of a pfb-imaging ``hci`` cube that ``BeamWizard.attach_image`` reads."""
+    fits_path = build_synthetic_image(Path(str(path) + ".fits"))
+    hdr = fits.getheader(str(fits_path))
+    t0 = 60310.0 * 86400.0  # 2024-01-01 in MJD seconds
+    ds = xarray.Dataset(
+        {"cube": (("TIME", "Y", "X"), np.zeros((n_times, hdr["NAXIS2"], hdr["NAXIS1"]), dtype=np.float32))},
+        coords={"TIME": t0 + 1800.0 * np.arange(n_times)},
+    )
+    ds.attrs["fits_header"] = [[k, v] for k, v in hdr.items()]
+    ds.to_zarr(str(path), mode="w", zarr_format=2)
+    return path

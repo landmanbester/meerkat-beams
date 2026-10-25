@@ -593,6 +593,7 @@ class BeamWizard(object):
         May be called after construction to upgrade a BDS-only wizard, or to
         swap the image on an existing wizard.
         """
+        image_name = str(image_name)  # accept path-like, e.g. the CLI's UPath (#38)
         if image_name.endswith(".fits"):
             log.info(f"obtaining WCS from FITS image {image_name}")
             with fits.open(image_name) as hdul:

@@ -16,7 +16,7 @@ File = NewType("File", Path)
 
 @stimela_cab(
     name="download_mdv_beams",
-    info="Downloads MdV-format primary beams from SARAO archive",
+    info="Downloads MdV-format primary beams from SARAO archive (deprecated, raw npz beams are no longer used)",
 )
 @stimela_output(
     dtype="File",
@@ -75,7 +75,7 @@ def download_mdv_beams(
     ] = False,
 ):
     """
-    Downloads MdV-format primary beams from SARAO archive
+    Downloads MdV-format primary beams from SARAO archive (deprecated, raw npz beams are no longer used)
     """
     if backend == "native" or backend == "auto":
         try:

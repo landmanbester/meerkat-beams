@@ -30,6 +30,7 @@ def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
         bds: output beam dataset (BDS) path
         compress: apply lossless Blosc compression to zarr output
     """
+    mdv_beams, bds = str(mdv_beams), str(bds)  # the CLI passes UPath objects (#38)
     LOGGER.info(f"loading MdV beams from {mdv_beams}")
     if mdv_beams.endswith(".npz"):
         # load from zarr (probably only the mean beam data, but should work with the full dataset too)

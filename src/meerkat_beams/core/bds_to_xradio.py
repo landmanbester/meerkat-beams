@@ -100,6 +100,7 @@ def bds_to_xradio(
     # Validate beam_type/elements (and resolve pol labels) before opening files.
     ij_list, output_pol = _resolve_elements(beam_type, elements, output_pol)
 
+    bds_path, image_path, output = str(bds_path), str(image_path), str(output)  # the CLI passes UPaths (#38)
     bw = BeamWizard(bds_path, image_path)
 
     bw.log.info(f"Rendering {beam_type} elements {ij_list} using pol labels {output_pol}")
