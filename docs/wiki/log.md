@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-25T16:00:00Z
+timestamp: 2026-10-26T01:15:00Z
 ---
 
 # Wiki changelog
@@ -387,3 +387,34 @@ all threads; a merged group's weighted sum is computed in float64.
 - `utils.py` and `core/mdv_beams_to_bds.py` shifted, so `utils.py:NNN` and
   `mdv_beams_to_bds.py:NNN` citations were remapped from the diff. All five
   stamped pages are re-stamped at `5cf1be5`.
+
+## 2026-10-26 — eidos-compatible FITS output (bds-to-fits) (verified at `551f623`)
+
+- New command `mbeams bds-to-fits` (`core/bds_to_fits.py`,
+  `cabs/bds_to_fits.yml`, generated `cli/bds_to_fits.py`) writes FITS beam cubes
+  in the layout `../eidos` writes: the `<prefix>_re/_im` hypercube (full Jones
+  by default, or one Stokes/Mueller element) and, with `--output-eight`, the
+  eight `<prefix>_{ij}_{re,im}.fits` files. `--pixels`/`--diameter` resample the
+  grid through the existing spline path, and on the native grid with exact BDS
+  channels the stored planes are copied instead. `--freqs` (Hz) / `--num-freq`
+  select channels; `--freq-extrapolation` carries the D19 policy through.
+- `data-model.md` gained the **FITS output (eidos-compatible)** section: both
+  layouts, the header contract table, the `centre0`/`CRPIX` invariant, the `df`
+  rule (mean spacing plus a warning for a gapped `--freqs`), the sampling path,
+  and the five deliberate deviations from eidos (swapped `CTYPE1/2`, blank
+  polarization `CTYPE`s, `ctime` `DATE`, `BITPIX`, the complex `mueller` `_im`).
+  `design-decisions.md` gained **D20** (why parity is geometry-only, and why
+  eidos stays out of the test group); `index.md` routes to the new section.
+- `_resolve_elements` moved to `utils.resolve_elements` for its second caller
+  (`bds-to-fits`), so `utils.py` grew 60 lines above `class BeamWizard`: every
+  `utils.py:NNN` citation in `beamwizard.md`, `beam-orientation.md` and
+  `design-decisions.md` was renumbered by +60 (the two citations below the
+  insertion, `utils.py:57-123` and `utils.py:70-123`, are unchanged) and all
+  five stamped pages were re-verified against the new line numbers and
+  re-stamped at `551f623`. The stale four-`beam_type` list in the
+  `bds_to_xradio` docstring now matches `resolve_elements`.
+- `README.md` (CLI examples, manual-test row) and `CLAUDE.md` (command row,
+  test bullet) were updated inside the feature commit `551f623`.
+- Parity was checked against eidos 1.1.2 at 64 px / 2 deg / 1300 MHz in both
+  layouts: every geometry keyword identical except the corrections above, and
+  identical pixel-to-world coordinates.
