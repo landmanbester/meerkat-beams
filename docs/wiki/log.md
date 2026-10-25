@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-25T16:00:00Z
+timestamp: 2026-10-25T08:29:05Z
 ---
 
 # Wiki changelog
@@ -387,3 +387,19 @@ all threads; a merged group's weighted sum is computed in float64.
 - `utils.py` and `core/mdv_beams_to_bds.py` shifted, so `utils.py:NNN` and
   `mdv_beams_to_bds.py:NNN` citations were remapped from the diff. All five
   stamped pages are re-stamped at `5cf1be5`.
+
+## 2026-10-25 — xarray 2026.9 drops zarr-python 2 (verified at `7942c7b`)
+
+Issue #44. xarray 2026.4 made zarr-python 2 unsupported and 2026.9 removed the
+code, so `open_zarr`/`to_zarr` fail under zarr 2.
+- `design-decisions.md` D18: why xarray stays uncapped,
+  `require_zarr_xarray_compat` and where it runs, `zarr_compressor_encoding`
+  (xarray 2026.9 also rejects the `compressor` encoding key), the new `latest`
+  CI job and the re-scoped `zarr2` job, and that zarr 2 support now has an
+  expiry date. CI line citations remapped.
+- `data-model.md`: zarr 2 needs `xarray<2026.9`.
+- `utils.py` and `core/mdv_beams_to_bds.py` shifted; `utils.py:NNN` and
+  `mdv_beams_to_bds.py:NNN` citations remapped from the diff. Fixed a
+  `beamwizard.md` citation (`:1549`) that was already stale and pointed at an
+  unrelated line; it is the coord `fill_value=None` write at `:1656`. All five
+  stamped pages re-stamped at `7942c7b`.
