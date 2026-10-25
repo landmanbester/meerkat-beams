@@ -1,0 +1,62 @@
+cabs:
+  bds_to_fits:
+    flavour: python
+    command: meerkat_beams.core.bds_to_fits.bds_to_fits
+    name: bds_to_fits
+    info:
+      Renders a beam dataset (BDS) to eidos-compatible FITS beam cubes
+    image: ghcr.io/landmanbester/meerkat-beams:latest
+    inputs:
+      bds-path:
+        info:
+          input beam dataset (.bds.zarr)
+        dtype: Directory
+        required: true
+        policies:
+          positional: true
+        metavar: BDS_PATH
+      beam-type:
+        info:
+          beam variable to render (njones, jones, nstokes, stokes, nmueller, mueller)
+        default: njones
+      elements:
+        info:
+          matrix elements to render, e.g.
+          XX,XY,YX,YY for Jones or II for Stokes (default is the full Jones matrix, or a single II element)
+        dtype: Optional[List[str]]
+      output-eight:
+        info:
+          write one file per Jones element per part (eidos -o8)
+        dtype: bool
+        default: false
+      pixels:
+        info:
+          pixels per side of the output grid, eidos -p (default uses the beam dataset grid)
+        dtype: Optional[int]
+      diameter:
+        info:
+          field of view of the output grid in degrees, eidos -d (default uses the beam dataset grid)
+        dtype: Optional[float]
+      freqs:
+        info:
+          explicit output frequencies in Hz, comma separated (default uses the beam dataset frequencies)
+        dtype: Optional[List[float]]
+        metavar: HZ
+      num-freq:
+        info:
+          number of evenly spaced output channels (default uses the beam dataset frequencies)
+        dtype: Optional[int]
+      freq-extrapolation:
+        info:
+          what to do with frequencies outside the beam dataset range
+        choices:
+        - raise
+        - scale
+        default: raise
+    outputs:
+      prefix:
+        dtype: File
+        info:
+          output path prefix (files are written as prefix_re.fits and friends)
+        policies:
+          positional: true

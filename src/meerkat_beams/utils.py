@@ -153,6 +153,12 @@ class PowerBeam(object):
 STOKES_TO_COHERENCY = np.array([[1, 1, 0, 0], [0, 0, 1, 1j], [0, 0, 1, -1j], [1, -1, 0, 0]])
 COHERENCY_TO_STOKES = numpy.linalg.inv(STOKES_TO_COHERENCY)
 
+# Element bookkeeping for resolve_elements(): BDS receptor indices, and the
+# output polarization label each receptor maps to when a Jones element is
+# rendered as a single-plane cube.
+_JONES_MAP = {"X": 0, "Y": 1}
+_JONES_OUTPUT_POL = {"X": "I", "Y": "Q"}
+
 
 def _check_order(order: int) -> None:
     """Refuse a spline order map_coordinates cannot use, before anything is cached."""
@@ -378,6 +384,60 @@ def _build_group_bds(bds_p: xarray.Dataset, bds_q: xarray.Dataset, group: str) -
         telescope_q=bds_q.attrs.get("telescope", expected_q),
     )
     return xds
+
+
+def resolve_elements(
+    beam_type: str,
+    elements: Optional[List[str]],
+    output_pol: Optional[List[str]],
+) -> Tuple[list, list]:
+    """Resolve the (ij_list, output_pol) pair for a beam_type and its elements.
+
+    Shared by every core module that renders selected BDS variables, so the
+    element grammar and its error messages stay identical across output
+    formats (see ``core/bds_to_xradio.py`` and ``core/bds_to_fits.py``).
+
+    - ``stokes``/``nstokes``: IQUV element pairs; default ``["II"]``; the output
+      polarization label is the output Stokes (``e[1]``) for backward compatibility.
+    - ``mueller``/``nmueller``: complex coherency Mueller, same IQUV labels; default
+      ``["II"]``; labelled by the full 2-char element (e.g. ``"IQ"``) so a 16-term
+      cube has unique polarization labels.
+    - ``jones``/``njones``: XY element pairs; default ``["XX"]``; labelled via
+      ``{X: I, Y: Q}``.
+    """
+    elements = list(elements) if elements else []
+    output_pol = list(output_pol) if output_pol else []
+    ij_list: list = []
+    output_pol_auto: list = []
+
+    if beam_type in ("nstokes", "stokes", "mueller", "nmueller"):
+        if not elements:
+            elements = ["II"]
+        label_by_element = beam_type in ("mueller", "nmueller")
+        for e in elements:
+            if len(e) != 2 or e[0] not in "IQUV" or e[1] not in "IQUV":
+                raise ValueError(f"Invalid Stokes matrix element '{e}'")
+            ij_list.append(tuple(e))
+            output_pol_auto.append(e if label_by_element else e[1])
+    elif beam_type in ("njones", "jones"):
+        if not elements:
+            elements = ["XX"]
+        for e in elements:
+            if len(e) != 2 or e[0] not in "XY" or e[1] not in "XY":
+                raise ValueError(f"Invalid Jones matrix element '{e}'")
+            ij_list.append(tuple(_JONES_MAP[c] for c in e))
+            output_pol_auto.append(_JONES_OUTPUT_POL[e[1]])
+    else:
+        raise ValueError(
+            f"Unknown beam_type '{beam_type}', expected 'nstokes', 'stokes', "
+            f"'mueller', 'nmueller', 'njones', or 'jones'"
+        )
+
+    if not output_pol:
+        output_pol = output_pol_auto
+    elif len(output_pol) != len(output_pol_auto):
+        raise ValueError("Length of output_pol must match length of elements")
+    return ij_list, output_pol
 
 
 class BeamWizard(object):
