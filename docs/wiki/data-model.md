@@ -3,8 +3,8 @@ type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr
 description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, and the xradio primary-beam schema.
 tags: [mdv, bds, xradio, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
-timestamp: 2026-10-25T12:00:00Z
-last_verified_commit: 590327f
+timestamp: 2026-10-25T16:00:00Z
+last_verified_commit: 5cf1be5
 ---
 
 # Data model — MdV npz, BDS zarr, xradio zarr
@@ -12,8 +12,9 @@ last_verified_commit: 590327f
 Three formats, three conversions: MdV `.npz` (raw archive data) →
 `mdv-beams-to-bds` → BDS zarr (the package's working format) →
 `bds-to-xradio` → xradio zarr (schema-compatible primary-beam image).
-`mdv-to-xradio` shortcuts directly from `.npz` to xradio, skipping the BDS
-and the time axis. This page pins the field/variable names, dtypes, dims,
+`mdv-to-xradio` (deprecated, like `download-mdv-beams`: the package now
+works from mean-beam zarrs, not the ~35 GB raw `.npz`) shortcuts directly
+from `.npz` to xradio, skipping the BDS and the time axis. This page pins the field/variable names, dtypes, dims,
 and one input-handling asymmetry that is easy to get backwards.
 
 ## MdV `.npz`
@@ -100,17 +101,21 @@ on-axis beam is the identity — use these unless raw voltage beams are
 specifically needed.
 
 When `compress=True`, all six variables get the module-level
-`ZARR_FILTERS` + `ZARR_COMPRESSOR` from `utils.py`, i.e. Delta(float32) +
-Blosc zstd/clevel=5 (`mdv_beams_to_bds.py:128-131`) — note the filter is
-`Delta(dtype="float32")` even for the `complex64` variables (`jones`,
-`njones`, `mueller`, `nmueller`).
+`ZARR_COMPRESSOR` from `utils.py`, Blosc zstd/clevel=5 with bit-shuffle and
+no filter (`mdv_beams_to_bds.py:128-131`), so compression is lossless. Up to
+0.2.0 a `Delta(float32)` filter was applied too. It was lossy on floats
+(~3e-6 against values near 1, from its cumulative-sum decode), and in a
+partly-filled edge chunk it carried the NaN fill value into every later
+value of the chunk: the MdV-2026 products (63 channels in chunks of 32) came
+out of the cache with NaN in every Q/V Stokes term for 31 channels. Caches
+built by those releases should be deleted and rebuilt.
 
 ### On-disk zarr format
 
 Every store the package writes — BDS and both xradio paths — is **zarr
 format 2**, whichever zarr-python is installed: `to_zarr(...,
 zarr_format=ZARR_FORMAT)` for the xarray writers, and
-`zarr_open_group`/`zarr_create_array` (`utils.py:68-121`) for
+`zarr_open_group`/`zarr_create_array` (`utils.py:70-123`) for
 `get_time_freq_beam`/`enrich_bds_xradio`'s raw writes. zarr is unpinned
 (design-decisions D18), so output stays readable by consumers still on
 zarr-python 2, which cannot read v3. Inputs are the other way round: a
@@ -367,8 +372,8 @@ unsliced one.
 
 ## xradio zarr
 
-Produced by `bds-to-xradio` (from a BDS) or `mdv-to-xradio` (directly from
-an `.npz`, no time axis, no parallactic-angle rotation). Schema:
+Produced by `bds-to-xradio` (from a BDS) or the deprecated `mdv-to-xradio`
+(directly from an `.npz`, no time axis, no parallactic-angle rotation). Schema:
 `(time, frequency, polarization, l, m)`, with `l`/`m` in **radians** (BDS
 values are in degrees; `enrich_bds_xradio` converts) and a `direction`
 attribute block (`icrs` frame, `SIN` projection, reference = field
@@ -432,7 +437,7 @@ script — not the BDS `mueller` variable itself).
 
 ## Sources
 
-- `src/meerkat_beams/core/mdv_beams_to_bds.py:25-131` (`mdv_beams_to_bds`;
+- `src/meerkat_beams/core/mdv_beams_to_bds.py:24-131` (`mdv_beams_to_bds`;
   antenna-branch asymmetry at `:34-51`, six-variable write at `:113-122`)
 - `src/meerkat_beams/core/bds_to_xradio.py:11-130` (`bds_to_xradio`,
   `_resolve_elements`)

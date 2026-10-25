@@ -2,8 +2,8 @@
 type: index
 title: meerkat-beams LLM wiki
 description: Progressive-disclosure listing of the in-repo knowledge bundle.
-timestamp: 2026-10-21T14:00:00Z
-last_verified_commit: b2795d1
+timestamp: 2026-10-25T16:00:00Z
+last_verified_commit: 5cf1be5
 ---
 
 # meerkat-beams LLM wiki

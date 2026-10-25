@@ -65,10 +65,10 @@ Two generators, inverse of each other:
 
 | command | core | purpose |
 |---|---|---|
-| `mbeams download-mdv-beams` | `core/download_mdv_beams.py` | fetch an MdV `.npz` from SARAO mirrors (band code `L`/`U`/`S0`…`S4`, filename, or full URL) |
+| `mbeams download-mdv-beams` | `core/download_mdv_beams.py` | **deprecated**: fetch a raw MdV `.npz` (~35 GB) from SARAO mirrors (band code `L`/`U`/`S0`/`S4`, filename, or full URL); the package now works from the mean-beam zarrs the cache downloads |
 | `mbeams mdv-beams-to-bds` | `core/mdv_beams_to_bds.py` | convert MdV `.npz` (or per-antenna mean-beam zarr) to a BDS (zarr) holding `jones`/`njones`/`stokes`/`nstokes` plus `mueller`/`nmueller` — see `docs/wiki/data-model.md` |
 | `mbeams bds-to-xradio` | `core/bds_to_xradio.py` | render a BDS into a full `(time, frequency, polarization, l, m)` xradio zarr by interpolating the beam along parallactic-angle-rotated tracks, using a WCS image for pointing/time |
-| `mbeams mdv-to-xradio` | `core/mdv_to_xradio.py` | shortcut: dump one Jones element / component of an MdV `.npz` directly into an xradio-shaped zarr (no time axis, no rotation) |
+| `mbeams mdv-to-xradio` | `core/mdv_to_xradio.py` | **deprecated**: dump one Jones element / component of a raw MdV `.npz` directly into an xradio-shaped zarr (no time axis, no rotation) |
 
 ## Key abstractions in `utils.py`
 
@@ -117,7 +117,7 @@ hand, which `scripts/stage_group_cache.py` does.
 `LOGGER` / `log` (same object). Console handler is kept on the module-level `CONSOLE`; change level via `set_console_logging_level(level)`. Don't create additional handlers.
 
 ### Zarr compression
-`ZARR_COMPRESSOR` = Blosc zstd/clevel=5/BITSHUFFLE, `ZARR_FILTERS` = `[Delta(float32)]`. Only applied when a core function is called with `compress=True`.
+`ZARR_COMPRESSOR` = Blosc zstd/clevel=5/BITSHUFFLE, with no filter. Only applied when a core function is called with `compress=True`. The old `ZARR_FILTERS = [Delta(float32)]` was removed: it was lossy on floats and turned partly-filled edge chunks to NaN (see `docs/wiki/data-model.md`).
 
 zarr is **unpinned** so downstream applications choose zarr-python 2 or 3; everything we write is zarr **format 2** (`ZARR_FORMAT`) either way. xarray writers pass `zarr_format=ZARR_FORMAT`; raw writes must go through `zarr_open_group` / `zarr_create_array` (never `create_dataset`/`create_array` directly — the two majors disagree). Inputs may be v2 or v3 (`is_zarr_group`; `require_readable_zarr` gives a clear error for v3 under zarr-python 2). `xarray>=2025.6` is load-bearing: older xarray cannot write under zarr 3. Assert codecs via the store's `.zarray` JSON, not `Array.compressor`. CI has a `zarr2` job on `zarr<3`. See `docs/wiki/design-decisions.md` D18.
 
@@ -125,7 +125,7 @@ zarr is **unpinned** so downstream applications choose zarr-python 2 or 3; every
 
 - **MdV beams**: raw voltage beams from the SARAO archive, `.npz` with `beam` (pol, ant, freq, y, x) complex64, `freq_MHz`, `margin_deg`, `pols` (`HH`/`HV`/`VH`/`VV`), `antnames`. Last antenna index (`-1`) is `array_average`.
 - **BDS (beam dataset)**: zarr holding normalised & unnormalised Jones, Stokes, and Mueller-coherency beams (`jones`/`njones`, `stokes`/`nstokes`, `mueller`/`nmueller`) + a synthesized FITS header in `.attrs["fits_header"]` and scalar attrs `x0`, `y0`, `dx`, `dy`, `freqs`. Produced by `mdv-beams-to-bds` — full schema in `docs/wiki/data-model.md`.
-- **xradio zarr**: schema-compatible primary-beam image `(time, frequency, polarization, l, m)` with `l`/`m` in radians and a `direction` attribute block. Produced by `bds-to-xradio` or `mdv-to-xradio`.
+- **xradio zarr**: schema-compatible primary-beam image `(time, frequency, polarization, l, m)` with `l`/`m` in radians and a `direction` attribute block. Produced by `bds-to-xradio` (or the deprecated `mdv-to-xradio`).
 - **Normalised vs not**: `njones` / `nstokes` are pre-multiplied by the inverse of the central-pixel Jones matrix so the on-axis beam is the identity; use these unless you specifically need raw voltage beams.
 - **MeerKAT+ (MKE)**: the MeerKAT Extension dishes. MdV's 2026 report (SSA-0004B-0002 Rev 01) ships `eavg` (extension-average) beams alongside the `mavg` MeerKAT ones, on a **different grid generation** from the legacy archive products: 64×64 / 63 channels / ±2° (L), versus the legacy 128×128 / 1024 channels / ±4°.
 - **Baseline groups**: on a mixed array the beam depends on which pair of dishes forms a baseline. `BeamWizard(band="L", group=...)` serves `MM` (MeerKAT–MeerKAT), `MPM` (MeerKAT–MeerKAT+) and `MPMP` (MeerKAT+–MeerKAT+), assembled **in memory** from two single-telescope BDSs — nothing group-shaped is written to disk. The first antenna of a baseline is MeerKAT by fixed convention, so `MPM`'s Stokes variables are **complex64** (the autos stay float32) and its `jones`/`njones` are absent. Partitioning visibilities into groups is the calling application's job (issue #30); the per-partition Mueller block it then asks for is `BeamWizard.partition_mueller` (issue #27), which has no `group=` argument of its own because the caller already holds the right wizard. **L band only** — no matched MeerKAT counterpart exists for MKE's S3 product (see `docs/wiki/design-decisions.md` D15; do not re-litigate without new MdV data).
@@ -171,6 +171,7 @@ CI (`.github/workflows/ci.yml`) runs ruff + pytest on Python 3.11–3.13, plus a
 Located in `tests/`. Markers: `unit`, `integration`, `slow`.
 
 - `test_install.py`, `test_cli.py` — always run; import + `--help` smoke tests.
+- `test_cli_native.py` — `unit`; runs every command through the real CLI with `--backend native` on synthetic inputs. The CLI hands core functions `UPath` objects, so this is what catches a core function calling `str` methods on a path (#38).
 - `test_roundtrip.py` — `unit`; pins `cli → cab → cli` idempotency via `hip_cargo.core.generate_cabs` + `hip_cargo.core.generate_function`. Any drift between `cli/*.py` and what hip-cargo would emit from `cabs/*.yml` fails this test. Modelled on `pfb-imaging/tests/test_roundtrip.py`. **If this fails, do not hand-fix `cli/*.py`** — edit the cab and run `scripts/genfuncs.sh`.
 - `test_cache.py`, `test_beam_wizard.py` — `unit`; hermetic. `test_beam_wizard.py` builds a synthetic BDS + FITS in `tmp_path` and pins the `BeamWizard` API surface.
 - `test_mdv_beams_to_bds.py` — `integration`; parametrised over bands `U`/`L`/`S0`–`S4`. Compares a freshly-converted BDS against a reference BDS. Needs `MBEAMS_REFERENCE_BDS_<BAND>` to point at a reference **and** the input zarr already in the cache (`cache.input_zarr_path(band)`; L arrives via the warm-up, U via `cache.ensure_band_bds("U")`). Only U and L have references; S1–S3 have no inputs. ~27 GB peak RAM and ~5.4 GB of `tempfile` scratch per band; point `TMPDIR` at a disk with room.

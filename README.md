@@ -10,7 +10,7 @@ MeerKAT primary-beam modelling based on the holographic beam models of [M. de Vi
 pip install meerkat-beams[full]
 ```
 
-The `[full]` extra pulls in the scientific stack (`xarray`, `zarr`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask`, `wget`, `gdown`, plus `hip-cargo[s3]` for `s3://` paths). Use plain `meerkat-beams` only if you need the CLI metadata for Stimela without running the implementations locally. Every store the package writes is zarr format 2, whether zarr-python 2 or 3 is installed, so its output stays readable by either.
+The `[full]` extra pulls in the scientific stack (`xarray`, `xarray-fits`, `zarr`, `numcodecs`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask`, `wget`, `gdown`, `requests`, `katbeam` for the analytic beam model, plus `hip-cargo[s3]` for `s3://` paths). Use plain `meerkat-beams` only if you need the CLI metadata for Stimela without running the implementations locally. Every store the package writes is zarr format 2, whether zarr-python 2 or 3 is installed, so its output stays readable by either.
 
 ### Python support
 
@@ -21,50 +21,75 @@ The `[full]` extra pulls in the scientific stack (`xarray`, `zarr`, `astropy`, `
 
 On 3.10 the base install lets you run every `mbeams` command by dispatching the actual computation to the container image — nothing scientific runs natively. CI pins this with a dedicated lightweight-install job; the test matrix itself starts at 3.11 (do not add 3.10 to it).
 
-## Quick start — auto-downloading cache
+## Quick start
 
-The simplest path is to construct a `BeamWizard` with just the MeerKAT band code; the mean-beam zarr is downloaded from Google Drive on first use and cached locally:
+`BeamWizard` is the main entry point. Give it a MeerKAT band code and the mean-beam zarr for that band is downloaded from Google Drive on first use, converted to a beam dataset (BDS), and cached locally:
 
 ```python
+import numpy as np
+import astropy.units as u
+from astropy.time import Time
 from meerkat_beams.utils import BeamWizard
 
 bw = BeamWizard(band="L", image_name="my_image.fits")
-beam_gain = bw.get_time_variable_beamgain(source_coord, times=obs_times)
+src = bw.centre.directional_offset_by(45 * u.deg, 0.5 * u.deg)  # a source 0.5 deg from the pointing centre
+times = Time("2024-01-01T18:00:00") + np.linspace(0, 8, 33) * u.hour
+gain = bw.get_time_variable_beamgain(src, times=times, freq=np.array([1.0e9, 1.4e9]))
+# gain.shape == (2, 33): centre-normalised Stokes I beam per frequency and time
 ```
 
-Supported bands: `U`, `L`, `S0`, `S4`. (S1, S2, S3 have no published Google Drive ID — pass `bds_name=` directly for those.)
+The image supplies the pointing centre and the l/m grid from its WCS. It can be either of two things:
+
+- **A FITS image** carries no time axis, so pass `times=` to every method that tracks the parallactic angle, as above. Without it they raise.
+- **A zarr image cube** with a `TIME` coordinate and a `fits_header` attribute, such as a pfb-imaging `hci` output, gives the wizard its times, so `times=` becomes optional. `bds-to-xradio` needs this kind of image.
+
+The image is optional. Without one, pass the pointing centre and times explicitly (`set_field_centre`, or `centre=` and `times=` on the methods that take them). Frequencies default to every BDS channel.
+
+Supported bands: `U`, `L`, `S0`, `S4`. There are no S1, S2 or S3 beams: neither the mean-beam mirror nor the SARAO archive has them. To use a BDS you built yourself, pass `bds_name=` instead of `band=`.
+
+### What else the wizard does
+
+- `get_rotation_averaged_beam`: the beam averaged over the observation's parallactic angles, or over a full turn with `average="azimuth"`.
+- `partition_mueller`: the rotation-averaged Stokes-basis Mueller block for one data partition, for imagers and calibrators that apply the full polarised beam.
+- `get_time_freq_beam`: render a full `(time, frequency, polarization, l, m)` xradio zarr; `bds-to-xradio` wraps it together with the module-level `enrich_bds_xradio`.
+- `beam_model="katbeam"`: the analytic katbeam model instead of the MdV holographic beams. Nothing is downloaded.
+- `group="MM" | "MPM" | "MPMP"` (L band only): the baseline-group beams for a mixed MeerKAT / MeerKAT+ array, built from the 2026 MdV MeerKAT and MeerKAT+ products. These are not on the download mirrors yet, so stage them first with `scripts/stage_group_cache.py`.
+- `freq_extrapolation="scale"`: evaluate frequencies up to one BDS channel past the BDS range by scaling the edge plane with λ/D, so data out to the receiver band edges can be modelled. `freq_range` and `check_freqs` let you validate frequencies up front. The default, `"raise"`, refuses anything outside the BDS range.
+
+[`docs/wiki/beamwizard.md`](docs/wiki/beamwizard.md) documents every method, and [`docs/wiki/data-model.md`](docs/wiki/data-model.md) the BDS and xradio schemas.
 
 ### Cache layout
 
 ```
 $MBEAMS_CACHE_DIR/  (or $XDG_CACHE_HOME/meerkat-beams, or ~/.cache/meerkat-beams)
-├── inputs/MeerKAT_<BAND>.zarr/    # downloaded mean-beam zarr
-└── bds/MeerKAT_<BAND>.bds.zarr/   # locally built compressed BDS
+├── inputs/<product>.zarr/      # downloaded (or staged) mean-beam zarr
+└── bds/<product>.bds.zarr/     # BDS built from it locally, Blosc-compressed
 ```
 
-Subsequent constructions of `BeamWizard(band=...)` reuse the cached BDS. To warm a band ahead of time, just instantiate the wizard once.
+`<product>` is `MeerKAT_<BAND>` for the band codes, and `MeerKAT_L_mdv2026` or `MKE_L` for the 2026 products behind `group=`. Later constructions reuse the cached BDS, so to warm a band ahead of time, construct a wizard once.
 
 **Concurrency:** the first-time download is not locked. Warm each band from a single process before fanning out.
 
+**Upgrading from 0.2.0 or earlier:** those releases compressed the cached BDS with a lossy filter that also wrote NaNs into the MdV-2026 products. Delete `bds/` from the cache once, and it is rebuilt on next use.
+
 ## CLI
 
-The `mbeams` command wraps each stage of the pipeline. The CLI is generated by [`hip-cargo`](https://github.com/caracal-pipeline/hip-cargo) and supports both native execution and container dispatch (`--backend apptainer|singularity|docker|podman`).
+The `mbeams` command wraps each stage of the pipeline. The CLI is generated by [`hip-cargo`](https://github.com/landmanbester/hip-cargo). With the default `--backend auto`, each command runs natively and falls back to the container image only when the scientific stack is not installed, for example on a base install. Pass `--backend apptainer|singularity|docker|podman` to choose the container runtime explicitly.
 
 ```bash
-# Download an MdV beam from SARAO (band code, filename, or full URL)
-mbeams download-mdv-beams --source L
+# Convert a mean-beam zarr (or a raw MdV .npz) to a BDS
+mbeams mdv-beams-to-bds --mdv-beams MeerKAT_L.zarr --bds MeerKAT_L.bds.zarr --compress
 
-# Convert MdV .npz (or mean-beam zarr) to a BDS
-mbeams mdv-beams-to-bds --mdv-beams input.npz --bds output.bds.zarr --compress
-
-# Render a BDS to an xradio-compatible zarr along an image's WCS / time axis
-mbeams bds-to-xradio --bds-path beam.bds.zarr --image-path image.zarr --output beam_xradio.zarr
-
-# Shortcut: dump one Jones element / component of an MdV .npz directly to an xradio zarr
-mbeams mdv-to-xradio --npz-path input.npz --output beam_xradio.zarr --jones HH --part real
+# Render a BDS to an xradio-compatible zarr along an image cube's WCS and time axis
+mbeams bds-to-xradio --bds-path MeerKAT_L.bds.zarr --image-path image_cube.zarr --output beam_xradio.zarr
 ```
 
-Each command accepts `--help`. The container-dispatch path is opt-in (`--backend` defaults to `auto` → native).
+`bds-to-xradio` needs a zarr image cube with a `TIME` coordinate; a FITS image has no time axis to render along. Each command accepts `--help`.
+
+Two commands are **deprecated** and will be removed in a future release. Both work only with the raw MdV `.npz` files (about 35 GB per band), which the package no longer needs:
+
+- `download-mdv-beams` fetches a raw `.npz` from the SARAO archive. `BeamWizard(band=...)` downloads the mean-beam zarr (about 420 MB) itself.
+- `mdv-to-xradio` dumps one Jones element of a raw `.npz` straight to an xradio zarr. Use `mdv-beams-to-bds` followed by `bds-to-xradio` instead.
 
 ## Development
 
@@ -81,7 +106,7 @@ bash scripts/genfuncs.sh                        # regenerate cli/*.py from cabs/
 
 ### CLI and cab generation
 
-`src/meerkat_beams/cli/*.py` and `src/meerkat_beams/cabs/*.yml` are generated by [`hip-cargo`](https://github.com/caracal-pipeline/hip-cargo), not written by hand. The `generate-cabs` pre-commit hook regenerates the cabs from the CLI on every commit (re-stage and commit again if it changes them), `scripts/genfuncs.sh` goes the other way, and `tests/test_roundtrip.py` fails if the two drift apart. Edit the plain-Python implementations in `core/` freely. See the [hip-cargo README](https://github.com/caracal-pipeline/hip-cargo#readme) for the decorators, the generators and how native-then-container dispatch works.
+`src/meerkat_beams/cli/*.py` and `src/meerkat_beams/cabs/*.yml` are generated by [`hip-cargo`](https://github.com/landmanbester/hip-cargo), not written by hand. The `generate-cabs` pre-commit hook regenerates the cabs from the CLI on every commit (re-stage and commit again if it changes them), `scripts/genfuncs.sh` goes the other way, and `tests/test_roundtrip.py` fails if the two drift apart. Edit the plain-Python implementations in `core/` freely. See the [hip-cargo README](https://github.com/landmanbester/hip-cargo#readme) for the decorators, the generators and how native-then-container dispatch works.
 
 ### Tests
 

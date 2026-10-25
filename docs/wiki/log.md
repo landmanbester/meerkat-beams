@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-25T12:00:00Z
+timestamp: 2026-10-25T16:00:00Z
 ---
 
 # Wiki changelog
@@ -372,3 +372,18 @@ all threads; a merged group's weighted sum is computed in float64.
   says the inputs live in `tests/data/`. It and `beam-orientation.md`
   (whose `conftest.py:18-36` citation is unchanged) are re-stamped at
   `590327f`. The README's Development section now lists the manual tests.
+
+## 2026-10-25 — lossless compression, native CLI paths, npz deprecation (verified at `5cf1be5`)
+
+- `ZARR_FILTERS` (`Delta(float32)`) is gone (`6c07702`). It was lossy on
+  floats and, in a partly-filled edge chunk, carried the NaN fill value into
+  the rest of the chunk; the cache-built MdV-2026 BDSs had NaN in every Q/V
+  Stokes term for 31 of 63 channels. `data-model.md` and D18 say so, and that
+  old caches should be rebuilt.
+- Core functions and `attach_image` coerce paths to `str`, so every command
+  works natively from the CLI (`5cf1be5`, #38). `download-mdv-beams` and
+  `mdv-to-xradio` warn that they are deprecated: the raw `.npz` is ~35 GB per
+  band and nothing else uses it.
+- `utils.py` and `core/mdv_beams_to_bds.py` shifted, so `utils.py:NNN` and
+  `mdv_beams_to_bds.py:NNN` citations were remapped from the diff. All five
+  stamped pages are re-stamped at `5cf1be5`.
