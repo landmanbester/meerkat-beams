@@ -6,6 +6,7 @@ cannot read v3. These tests run under whichever zarr the environment resolved;
 CI runs them under both.
 """
 
+import contextlib
 import json
 
 import astropy.units as u
@@ -21,14 +22,23 @@ from meerkat_beams.core.mdv_to_xradio import mdv_to_xradio
 from meerkat_beams.utils import (
     ZARR_COMPRESSOR,
     BeamWizard,
+    IncompatibleZarrStackError,
     enrich_bds_xradio,
     is_zarr_group,
     require_readable_zarr,
     require_zarr_xarray_compat,
+    zarr_compressor_encoding,
     zarr_create_array,
     zarr_open_group,
 )
-from tests._synthetic import DELTA, FREQS, build_synthetic_bds, build_synthetic_image, build_synthetic_npz
+from tests._synthetic import (
+    DELTA,
+    FREQS,
+    build_synthetic_bds,
+    build_synthetic_image,
+    build_synthetic_image_zarr,
+    build_synthetic_npz,
+)
 
 
 def assert_zarr_v2(path, compressed_vars=()):
@@ -160,27 +170,132 @@ def test_v3_input_under_zarr2_raises_clearly(tmp_path):
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "zarr_major, xarray_version, ok",
-    [(2, "2026.7.0", True), (2, "2026.9.0", False), (2, "2027.1.0", False), (3, "2026.9.0", True)],
+    [
+        (2, "2026.7.0", True),
+        (2, "2026.9.0", False),
+        (2, "2026.9.0rc1", False),
+        (2, "2026.9.0.dev3", False),
+        (2, "2027.1.0", False),
+        (3, "2026.9.0", True),
+    ],
 )
 def test_zarr_xarray_compat(monkeypatch, zarr_major, xarray_version, ok):
-    """xarray>=2026.9 removed its zarr-python 2 support; that pair must fail with a pin hint (#44)."""
+    """xarray>=2026.9, pre-releases included, removed its zarr-python 2 support; that pair must fail (#44)."""
     monkeypatch.setattr("meerkat_beams.utils._zarr_major", lambda: zarr_major)
     monkeypatch.setattr(xarray, "__version__", xarray_version)
     if ok:
         require_zarr_xarray_compat()
     else:
-        with pytest.raises(RuntimeError, match=r"xarray<2026\.9"):
+        # an ImportError, so the generated CLIs' --backend auto falls back to the container
+        with pytest.raises(ImportError, match=r"xarray<2026\.9"):
             require_zarr_xarray_compat()
 
 
+@pytest.fixture
+def incompatible_stack(monkeypatch):
+    """Pretend zarr-python 2 is installed alongside xarray>=2026.9."""
+    monkeypatch.setattr("meerkat_beams.utils._zarr_xarray_incompatible", lambda: True)
+
+
+def _no_download(*args, **kwargs):
+    raise AssertionError("the zarr/xarray guard must fire before the cache downloads anything")
+
+
 @pytest.mark.unit
-def test_bds_open_checks_zarr_xarray_compat(tmp_path, monkeypatch):
-    """BeamWizard reads a BDS through xarray.open_zarr, so it hits the guard before xarray's TypeError."""
-    bds_path = build_synthetic_bds(tmp_path / "in.bds.zarr")
+@pytest.mark.parametrize(
+    "entry_point",
+    ["mdv_beams_to_bds", "mdv_to_xradio", "bds_name", "band", "group", "image_zarr"],
+)
+def test_every_xarray_zarr_entry_point_is_guarded(tmp_path, monkeypatch, incompatible_stack, entry_point):
+    """Each path into xarray's zarr backend raises the clear error, before any work or download."""
+    from meerkat_beams import cache
+
+    monkeypatch.setattr(cache, "ensure_band_bds", _no_download)
+    monkeypatch.setattr(cache, "ensure_group_bds", _no_download)
+    npz = str(build_synthetic_npz(tmp_path))
+    out = tmp_path / "out.zarr"
+    calls = {
+        "mdv_beams_to_bds": lambda: mdv_beams_to_bds(mdv_beams=npz, bds=str(out)),
+        "mdv_to_xradio": lambda: mdv_to_xradio(npz_path=npz, output=str(out)),
+        "bds_name": lambda: BeamWizard(bds_name=str(build_synthetic_bds(tmp_path / "in.bds.zarr"))),
+        "band": lambda: BeamWizard(band="L"),
+        "group": lambda: BeamWizard(band="L", group="MM"),
+        "image_zarr": lambda: BeamWizard(
+            band="L",
+            beam_model="katbeam",
+            npix=32,
+            fov_deg=4.0,
+            num_freq=3,
+            image_name=str(build_synthetic_image_zarr(tmp_path / "img.zarr")),
+        ),
+    }
+    with pytest.warns(DeprecationWarning) if entry_point == "mdv_to_xradio" else contextlib.nullcontext():
+        with pytest.raises(IncompatibleZarrStackError):
+            calls[entry_point]()
+    assert not out.exists()
+
+
+@pytest.mark.unit
+def test_raw_zarr_render_is_not_guarded(tmp_path, incompatible_stack):
+    """katbeam + a FITS image renders through raw zarr only, which works under zarr-python 2 on any xarray."""
+    bw = BeamWizard(
+        image_name=str(build_synthetic_image(tmp_path / "in.fits")),
+        band="L",
+        beam_model="katbeam",
+        npix=32,
+        fov_deg=4.0,
+        num_freq=3,
+    )
+    out = tmp_path / "tf.zarr"
+    bw.get_time_freq_beam(
+        filename=str(out),
+        var_name="SKY",
+        dim_names=("time", "frequency", "polarization", "l", "m"),
+        l=np.array([-0.01, 0.0, 0.01]),
+        m=np.array([-0.01, 0.0, 0.01]),
+        times=Time("2024-01-01T00:00:00") + np.linspace(0, 1, 2) * u.hour,
+        freq=bw.bds.coords["FREQ"].values[:2],
+        pixel_stepping=1,
+        ij_list=[("I", "I")],
+        var="nstokes",
+        compressor=None,
+        verbose=0,
+    )
+    enrich_bds_xradio(str(out), bw, "SKY", ["I"])
+    assert zarr.open(str(out))["SKY"].shape == (2, 2, 1, 3, 3)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("backend", ["auto", "native"])
+def test_cli_auto_backend_falls_back_to_container(tmp_path, monkeypatch, incompatible_stack, backend):
+    """The generated CLI catches ImportError from the core call: auto runs the container, native re-raises."""
+    import hip_cargo.utils.config
+    import hip_cargo.utils.runner
+    from typer.testing import CliRunner
+
+    from meerkat_beams.cli import app
+
+    ran = []
+    monkeypatch.setattr(hip_cargo.utils.config, "get_container_image", lambda pkg: "example/meerkat-beams:test")
+    monkeypatch.setattr(hip_cargo.utils.runner, "run_in_container", lambda *a, **k: ran.append(k["backend"]))
+    npz = str(build_synthetic_npz(tmp_path))
+    args = ["mdv-beams-to-bds", "--mdv-beams", npz, "--bds", str(tmp_path / "o.bds.zarr"), "--backend", backend]
+    result = CliRunner().invoke(app, args)
+    if backend == "auto":
+        assert result.exit_code == 0, result.output
+        assert ran == ["auto"]
+    else:
+        assert isinstance(result.exception, IncompatibleZarrStackError)
+        assert ran == []
+
+
+@pytest.mark.unit
+def test_zarr_compressor_encoding_key_follows_zarr_major(monkeypatch):
+    """zarr 3 spells it compressors (the only key xarray>=2026.9 accepts); xarray under zarr 2 needs compressor."""
+    monkeypatch.setattr("meerkat_beams.utils._zarr_major", lambda: 3)
+    assert zarr_compressor_encoding(ZARR_COMPRESSOR) == {"compressors": ZARR_COMPRESSOR}
     monkeypatch.setattr("meerkat_beams.utils._zarr_major", lambda: 2)
-    monkeypatch.setattr(xarray, "__version__", "2026.9.0")
-    with pytest.raises(RuntimeError, match=r"xarray<2026\.9"):
-        BeamWizard(bds_name=str(bds_path))
+    assert zarr_compressor_encoding(ZARR_COMPRESSOR) == {"compressor": ZARR_COMPRESSOR}
 
 
 @pytest.mark.unit

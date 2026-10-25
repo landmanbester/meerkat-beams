@@ -86,17 +86,31 @@ def _zarr_major() -> int:
 XARRAY_ZARR2_CAP = "2026.9"
 
 
+class IncompatibleZarrStackError(ImportError):
+    """zarr-python 2 is installed alongside an xarray that cannot drive it.
+
+    An ``ImportError`` so the generated CLIs' ``--backend auto`` falls back to
+    the container, whose stack is consistent.
+    """
+
+
+def _zarr_xarray_incompatible() -> bool:
+    from packaging.version import Version
+
+    # .release ignores pre/dev suffixes, so 2026.9.0rc1 counts as 2026.9
+    return _zarr_major() < 3 and Version(xarray.__version__).release >= Version(XARRAY_ZARR2_CAP).release
+
+
 def require_zarr_xarray_compat():
     """Raise a clear error when zarr-python 2 is paired with an xarray that cannot drive it.
 
     zarr is unpinned so downstream applications can stay on zarr-python 2 (D18),
     but no dependency spec can cap xarray only for them; call this before any
-    zarr I/O instead of letting xarray fail deep in its backend.
+    xarray zarr I/O, and before any download feeding it, instead of letting
+    xarray fail deep in its backend. Raw zarr calls do not need it.
     """
-    from packaging.version import Version
-
-    if _zarr_major() < 3 and Version(xarray.__version__) >= Version(XARRAY_ZARR2_CAP):
-        raise RuntimeError(
+    if _zarr_xarray_incompatible():
+        raise IncompatibleZarrStackError(
             f"xarray {xarray.__version__} cannot read or write zarr under zarr-python 2; "
             f"pin 'xarray<{XARRAY_ZARR2_CAP}' or upgrade to 'zarr>=3'"
         )
@@ -121,7 +135,6 @@ def zarr_open_group(path, mode: str):
     """
     import zarr
 
-    require_zarr_xarray_compat()
     if _zarr_major() >= 3 and mode in ("w", "w-"):
         return zarr.open_group(path, mode=mode, zarr_format=ZARR_FORMAT)
     return zarr.open_group(path, mode=mode)
@@ -526,8 +539,8 @@ class BeamWizard(object):
                 raise ValueError("npix, fov_deg and num_freq only apply to beam_model='katbeam'")
             from meerkat_beams import cache
 
+            require_zarr_xarray_compat()  # before a cold cache downloads the inputs
             path_p, path_q = cache.ensure_group_bds(band, group)
-            require_zarr_xarray_compat()
             log.info(f"opening group {group} beam datasets: p={path_p}, q={path_q}")
             ds_p = xarray.open_zarr(path_p)
             ds_q = ds_p if path_q == path_p else xarray.open_zarr(path_q)
@@ -539,12 +552,12 @@ class BeamWizard(object):
                 raise ValueError("exactly one of bds_name or band must be provided")
             if npix is not None or fov_deg is not None or num_freq is not None:
                 raise ValueError("npix, fov_deg and num_freq only apply to beam_model='katbeam'")
+            require_zarr_xarray_compat()  # before a cold cache downloads the inputs
             if band is not None:
                 from meerkat_beams import cache
 
                 bds_name = cache.ensure_band_bds(band)
             log.info(f"opening BDS {bds_name}")
-            require_zarr_xarray_compat()
             self.bds = xarray.open_zarr(bds_name)
         freqs = self.bds.coords["FREQ"].values
         log.info(f"frequency range is {freqs[0] * 1e-6:.0f} to {freqs[-1] * 1e-6:.0f} MHz")

@@ -148,7 +148,10 @@ jobs:
         if: env.SKIP_CHECKS != 'true'
         run: |
           uv sync --group test --extra full
-          uv pip install --upgrade xarray zarr
+          # --upgrade-package, not --upgrade: only xarray and zarr move past the
+          # lock, so a failure here is theirs and not an unrelated transitive bump.
+          uv pip install --upgrade-package xarray --upgrade-package zarr xarray zarr
+          uv pip check
           uv run --no-sync python -c "import xarray, zarr; print('xarray', xarray.__version__, 'zarr', zarr.__version__)"
 
       - name: Run tests
@@ -199,7 +202,9 @@ jobs:
         if: env.SKIP_CHECKS != 'true'
         run: |
           uv sync --group test --extra full
-          uv pip install --upgrade 'zarr<3' 'xarray<2026.9'
+          # 2026.9 is utils.XARRAY_ZARR2_CAP; keep the two in step.
+          uv pip install --upgrade-package xarray --upgrade-package zarr 'zarr<3' 'xarray<2026.9'
+          uv pip check
           uv run --no-sync python -c "import xarray, zarr; print('xarray', xarray.__version__); assert zarr.__version__.startswith('2.'), zarr.__version__"
 
       - name: Run tests
