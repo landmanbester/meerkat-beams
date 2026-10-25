@@ -5,7 +5,7 @@ cabs:
     name: mdv_to_xradio
     info:
       Converts raw MdV beam npz to an xradio-compatible zarr image (deprecated, raw npz beams are no longer used)
-    image: ghcr.io/landmanbester/meerkat-beams:0.3.0
+    image: ghcr.io/landmanbester/meerkat-beams:latest
     inputs:
       npz-path:
         info:
