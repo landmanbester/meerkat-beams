@@ -16,17 +16,21 @@ ours the same way. What we copy and what we correct is pinned in
   and the last axis is ``FREQ`` in Hz with ``CRVAL5 = freq[0]``;
 * eidos swaps ``CTYPE1``/``CTYPE2`` (and ``CDELT1``/``CDELT2``) on the 5-axis
   hypercube and leaves the polarization ``CTYPEs`` blank unless the channel
-  count happens to be 2. We write ``px``/``py`` and real polarization labels.
+  count happens to be 2 (then ``H``/``V``) or 4 (then ``Mx``/``My``). We write
+  ``px``/``py`` and real polarization labels.
   World coordinates are identical either way: both sky axes share ``CRVAL 0``
   and the same ``CDELT`` on the square grids these files use.
 
 Two layouts, both eidos's:
 
 * hypercube (default): ``<prefix>_re.fits`` and ``<prefix>_im.fits`` (the
-  imaginary part is written for Jones and Mueller variables only, matching
-  eidos, which never writes it for its Stokes output) holding every selected
-  element, shaped ``(FREQ, p0, p1, Y, X)`` -- eidos's Jones hypercube, or one
-  Stokes/Mueller element, or the full 4x4 Mueller for ``-S M``;
+  imaginary part is written for Jones and Mueller variables; eidos writes it
+  for Jones only, because its Mueller output is auto-correlation and real,
+  while ours is a genuinely complex coherency-basis Mueller) holding every
+  selected element, shaped ``(FREQ, p0, p1, Y, X)`` -- eidos's Jones
+  hypercube, or one Stokes/Mueller element. eidos's own ``-S M`` writes the
+  full 4x4 Mueller; this command deliberately takes a single element, so a
+  hypercube's matrix axes stay 2x2 (Jones) or 1x1 (Stokes/Mueller);
 * ``output_eight`` (eidos's ``-o8``): ``<prefix>_{xx,xy,yx,yy}_{re,im}.fits``,
   one ``(FREQ, Y, X)`` real cube per Jones element per part. Jones only, as in
   eidos.
@@ -134,13 +138,18 @@ def _sky_cards(hdr: fits.Header, cdelt_x: float, cdelt_y: float, crpix_x: float,
     hdr["CUNIT2"] = "deg"
 
 
-def _provenance_cards(hdr: fits.Header, beam_type: str, elements: List[str], part: str) -> None:
+def _provenance_cards(
+    hdr: fits.Header, beam_type: str, elements: List[str], part: str, telescope: str = "MeerKAT"
+) -> None:
     """Non-WCS bookkeeping: what this plane is and which part it holds.
 
     ``DATE`` is ISO-8601 UTC rather than eidos's ``time.ctime()``: FITS wants
     ISO-8601 and astropy can parse it back, which it cannot do with ctime.
+    ``TELESCOP`` follows the BDS provenance attr (MeerKAT for the legacy
+    products, MeerKAT Extension for the 2026 MKE store); eidos hard-codes
+    MeerKAT because it only models that telescope.
     """
-    hdr["TELESCOP"] = "MeerKAT"
+    hdr["TELESCOP"] = telescope
     hdr["DATE"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     hdr["ORIGIN"] = "meerkat-beams"
     hdr["BEAMTYPE"] = beam_type
@@ -171,10 +180,13 @@ def _exact_channel_indices(bw: BeamWizard, freq: np.ndarray) -> Optional[np.ndar
     bds_freqs = bw.bds.coords["FREQ"].values
     if freq.size == 0:
         return None
-    # interp1d raises out of range, so the extrapolation margin under
-    # freq_extrapolation="scale" must be excluded here (interpolate_beam handles
-    # those frequencies itself).
-    if freq.min() < bds_freqs.min() - FREQ_MATCH_ATOL_HZ or freq.max() > bds_freqs.max() + FREQ_MATCH_ATOL_HZ:
+    # freq_to_index is a plain interp1d, which raises for *any* value outside
+    # the BDS range -- so the bounds must be strict here, with no
+    # FREQ_MATCH_ATOL_HZ slack. A frequency within the extrapolation margin
+    # (even one only a few Hz outside the edge) must go through
+    # interpolate_beam, which clips to the edge plane and scales it by nu/nu_e.
+    # The tolerance is still used below for the exact-channel match itself.
+    if freq.min() < bds_freqs.min() or freq.max() > bds_freqs.max():
         return None
     idx = np.rint(bw.freq_to_index(freq)).astype(int)
     if np.all(np.abs(bw.index_to_freq(idx) - freq) <= FREQ_MATCH_ATOL_HZ):
@@ -206,7 +218,8 @@ def bds_to_fits(
           'nstokes', 'stokes', 'nmueller' or 'mueller'
         elements: matrix elements to render. Default: all four Jones elements
           for a Jones variable (eidos's default full-matrix hypercube), or a
-          single 'II' otherwise (eidos's default Stokes output)
+          single 'II' otherwise (a single Stokes element, as eidos's -S
+          selects). An empty list is treated as the default.
         output_eight: write one file per Jones element per part (eidos's -o8);
           refuses non-Jones beam types, as eidos refuses -o8 with --Stokes
         pixels: pixels per side of the output grid (eidos's -p)
@@ -229,8 +242,11 @@ def bds_to_fits(
         raise ValueError(f"diameter must be positive (degrees), got {diameter}")
 
     # --- element selection and layout checks -------------------------------
-    if elements is None:
+    if not elements:
         # eidos's defaults: the full Jones matrix, or a single Stokes element.
+        # An explicit empty list means the same as omitting it, matching
+        # resolve_elements()'s own default and avoiding a silent no-op with
+        # --output-eight (which would otherwise write no files at all).
         els = list(_JONES_FULL) if beam_type in _JONES_TYPES else [_STOKES_DEFAULT]
     else:
         els = list(elements)
@@ -257,6 +273,7 @@ def bds_to_fits(
 
     # --- open the BDS and resolve frequencies ------------------------------
     bw = BeamWizard(bds_path, freq_extrapolation=freq_extrapolation)
+    telescope = str(bw.bds.attrs.get("telescope", "MeerKAT"))
     try:
         da = bw.bds[beam_type]
     except KeyError:
@@ -279,16 +296,48 @@ def bds_to_fits(
     # BeamWizard works in BDS pixel coordinates: x = l/dx + x0.
     xp, yp = l / dx_b + x0_b, m / dy_b + y0_b
     grid_x, grid_y = np.meshgrid(xp, yp)  # (n_y, n_x), x fastest -- C order below
-    outside = (grid_x < -0.5) | (grid_x > nx_b - 0.5) | (grid_y < -0.5) | (grid_y > ny_b - 0.5)
-    if outside.any():
+    xpyp = np.stack([grid_x.ravel(), grid_y.ravel()])
+
+    # interpolate_beam zero-fills pixels outside the model cube (mode="constant",
+    # cval=0.0). Under freq_extrapolation="scale" an out-of-band plane is the
+    # edge plane with its offsets scaled by nu/nu_e, so its footprint is not the
+    # nominal one: count each distinct scale, otherwise a scaled native-grid
+    # plane that leaves the cube is zero-filled without being reported.
+    bds_freqs = bw.bds.coords["FREQ"].values
+    scales, scale_counts = np.unique(freq / np.clip(freq, bds_freqs.min(), bds_freqs.max()), return_counts=True)
+
+    def _outside_count(scale: float) -> int:
+        """Number of target pixels outside the cube at one nu/nu_e scale.
+
+        xp/yp are 1-D, so the 2-D mask is separable: the union of the x and y
+        out-of-range columns is nx_out * n_y + ny_out * n_x - nx_out * ny_out.
+        """
+        xs = x0_b + (xp - x0_b) * scale
+        ys = y0_b + (yp - y0_b) * scale
+        nx_out = int(((xs < -0.5) | (xs > nx_b - 0.5)).sum())
+        ny_out = int(((ys < -0.5) | (ys > ny_b - 0.5)).sum())
+        return nx_out * n_y + ny_out * n_x - nx_out * ny_out
+
+    outside_counts = [_outside_count(float(s)) for s in scales]
+    outside_total = int(np.dot(outside_counts, scale_counts))
+    if outside_total:
         l_b = (np.arange(nx_b) - x0_b) * dx_b
         m_b = (np.arange(ny_b) - y0_b) * dy_b
+        scale_note = ""
+        out_scales = scales[scales != 1.0]
+        if out_scales.size:
+            eff_l = [float(l_b.min() / s) for s in out_scales], [float(l_b.max() / s) for s in out_scales]
+            eff_m = [float(m_b.min() / s) for s in out_scales], [float(m_b.max() / s) for s in out_scales]
+            scale_note = (
+                "; out-of-band channels are evaluated on the edge plane with offsets scaled by nu/nu_e, "
+                f"so their model covers l in [{min(eff_l[0]):.3f}, {max(eff_l[1]):.3f}] deg and "
+                f"m in [{min(eff_m[0]):.3f}, {max(eff_m[1]):.3f}] deg"
+            )
         log.warning(
-            f"{int(outside.sum())} of {outside.size} output pixels fall outside the beam model "
-            f"(l in [{l_b.min():.3f}, {l_b.max():.3f}] deg, m in [{m_b.min():.3f}, {m_b.max():.3f}] deg) "
-            "and are set to 0"
+            f"{outside_total} of {nfreq * n_x * n_y} output pixels fall outside the beam model "
+            f"(nominal l in [{l_b.min():.3f}, {l_b.max():.3f}] deg, "
+            f"m in [{m_b.min():.3f}, {m_b.max():.3f}] deg) and are set to 0{scale_note}"
         )
-    xpyp = np.stack([grid_x.ravel(), grid_y.ravel()])
     freq_cdelt = _freq_cdelta(freq)
     exact_idx = _exact_channel_indices(bw, freq) if native else None
     block = max(1, min(nfreq, _BLOCK_ELEMENTS // max(1, n_x * n_y)))
@@ -324,8 +373,8 @@ def bds_to_fits(
         _sky_cards(hdr, cdelt_x, cdelt_y, crpix_x, crpix_y)
         if is_jones:
             # eidos maps xy[0]='H' to the matrix row (FITS axis 4) and xy[1]='V'
-            # to the column (axis 3); eidos only writes these when the channel
-            # count happens to be 2, and leaves them blank otherwise.
+            # to the column (axis 3); it only writes them when the channel count
+            # happens to be 2 (H/V) or 4 (Mx/My), and blanks them otherwise.
             hdr["CTYPE4"], hdr["CRPIX4"], hdr["CRVAL4"], hdr["CDELT4"] = "H", 1.0, 0.0, 1.0
             hdr["CTYPE3"], hdr["CRPIX3"], hdr["CRVAL3"], hdr["CDELT3"] = "V", 1.0, 0.0, 1.0
         else:
@@ -336,7 +385,7 @@ def bds_to_fits(
             hdr["CTYPE3"], hdr["CRPIX3"], hdr["CRVAL3"], hdr["CDELT3"] = "STOKES", 1.0, float(_STOKES_CODE[e1]), 1.0
         hdr["CTYPE5"], hdr["CRPIX5"] = "FREQ", 1.0
         hdr["CRVAL5"], hdr["CDELT5"], hdr["CUNIT5"] = float(freq[0]), float(freq_cdelt), "Hz"
-        _provenance_cards(hdr, beam_type, els, part)
+        _provenance_cards(hdr, beam_type, els, part, telescope)
         return hdr
 
     def element_header(element: str, part: str) -> fits.Header:
@@ -344,7 +393,7 @@ def bds_to_fits(
         _sky_cards(hdr, cdelt_x, cdelt_y, crpix_x, crpix_y)
         hdr["CTYPE3"], hdr["CRPIX3"] = "FREQ", 1.0
         hdr["CRVAL3"], hdr["CDELT3"], hdr["CUNIT3"] = float(freq[0]), float(freq_cdelt), "Hz"
-        _provenance_cards(hdr, beam_type, [element], part)
+        _provenance_cards(hdr, beam_type, [element], part, telescope)
         return hdr
 
     written: List[str] = []

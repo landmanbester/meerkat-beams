@@ -260,6 +260,100 @@ def test_out_of_band_freq_raises_unless_scaling(synthetic_bds, tmp_path):
     assert hdr["CRVAL5"] == pytest.approx(1.35e9)
 
 
+@pytest.mark.parametrize(
+    "freq",
+    [FREQS[0] - 500.0, FREQS[-1] + 500.0],
+    ids=["below-min", "above-max"],
+)
+def test_near_edge_freq_within_match_tolerance_scales(synthetic_bds, tmp_path, freq):
+    """A frequency a few hundred Hz outside the band must take the lambda/D path.
+
+    ``_exact_channel_indices`` used to leave one ``FREQ_MATCH_ATOL_HZ`` of slack
+    before calling ``freq_to_index``, but that is a plain ``interp1d`` and raises
+    for *any* out-of-range value. On the native grid with
+    ``freq_extrapolation="scale"`` this therefore crashed instead of evaluating
+    the edge plane.
+    """
+    prefix = str(tmp_path / f"near_{freq:.0f}")
+    written = bds_to_fits(str(synthetic_bds), prefix, freqs=[freq], freq_extrapolation="scale")
+    assert written == [prefix + "_re.fits", prefix + "_im.fits"]
+
+    hdr, data = read(prefix + "_re.fits")
+    assert data.shape == (1, 2, 2, N_XY, N_XY)
+    assert hdr["CRVAL5"] == pytest.approx(freq)
+    # normalised Jones is the identity on axis on the scaled edge plane too
+    assert data[0, 0, 0, I0, I0] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_native_scaled_frequency_reports_off_model_pixels(synthetic_bds, tmp_path, caplog):
+    """The off-FOV report must follow the scaled footprint of a lambda/D plane.
+
+    At 1.35 GHz the edge plane is scaled up by 1.35/1.3, so the corners of the
+    native grid leave the model cube even though the nominal grid is entirely
+    inside it. The old mask only looked at the nominal grid and stayed silent.
+    """
+    prefix = str(tmp_path / "scaled_native")
+    with caplog.at_level(logging.WARNING, logger="meerkat_beams"):
+        bds_to_fits(str(synthetic_bds), prefix, freqs=[1.35e9], freq_extrapolation="scale")
+
+    off_model = [r.message for r in caplog.records if "fall outside the beam model" in r.message]
+    assert off_model, "the scaled native-grid plane left the model cube without a warning"
+    assert "nu/nu_e" in off_model[0]
+
+    _, data = read(prefix + "_re.fits")
+    assert data.shape == (1, 2, 2, N_XY, N_XY)
+    assert data[0, 0, 0, 0, 0] == 0.0  # scaled footprint no longer covers the corner
+    assert data[0, 0, 0, I0, I0] == pytest.approx(1.0)
+
+
+def test_fits_plane_orientation_is_y_x(synthetic_bds, tmp_path):
+    """A point beam at BDS (Y=10, X=30) must land at FITS (row=10, column=30).
+
+    The usual Gaussian fixture is symmetric, so it cannot catch an X/Y
+    transpose or a sign flip. A single-pixel beam on the native-to-target
+    mapping (40 px over 2 deg has cdelt == dx and centre == x0, so target pixel
+    p is BDS pixel p) pins the orientation hermetically.
+    """
+    ds = xarray.open_zarr(str(synthetic_bds)).load()
+    ds["njones"].values[...] = 0.0
+    ds["njones"].values[0, 0, :, 10, 30] = 1.0
+    point_bds = tmp_path / "point.bds.zarr"
+    ds.to_zarr(str(point_bds), mode="w")
+
+    prefix = str(tmp_path / "point")
+    bds_to_fits(str(point_bds), prefix, pixels=N_XY - 1, diameter=(N_XY - 1) * DELTA)
+    _, plane = read(prefix + "_re.fits")
+    first = plane.reshape(-1, N_XY - 1, N_XY - 1)[0]
+    y, x = np.unravel_index(np.argmax(np.abs(first)), first.shape)
+    assert (y, x) == (10, 30)
+
+
+def test_empty_elements_is_treated_as_the_default(synthetic_bds, tmp_path):
+    """An explicit empty ``elements`` must not silently write zero files."""
+    prefix = str(tmp_path / "empty")
+    written = bds_to_fits(str(synthetic_bds), prefix, elements=[], output_eight=True)
+    assert written == [f"{prefix}_{el}_{part}.fits" for el in ("xx", "xy", "yx", "yy") for part in ("re", "im")]
+
+    cube_prefix = str(tmp_path / "empty_cube")
+    assert bds_to_fits(str(synthetic_bds), cube_prefix, elements=[]) == [
+        cube_prefix + "_re.fits",
+        cube_prefix + "_im.fits",
+    ]
+
+
+def test_telescope_card_follows_the_bds_attr(synthetic_bds, tmp_path):
+    """MKE/2026 stores must not be labelled TELESCOP = MeerKAT."""
+    ds = xarray.open_zarr(str(synthetic_bds)).load()
+    ds.attrs["telescope"] = "MeerKAT Extension"
+    mke_bds = tmp_path / "mke.bds.zarr"
+    ds.to_zarr(str(mke_bds), mode="w")
+
+    prefix = str(tmp_path / "mke")
+    bds_to_fits(str(mke_bds), prefix, pixels=8, diameter=1.0)
+    hdr, _ = read(prefix + "_re.fits")
+    assert hdr["TELESCOP"] == "MeerKAT Extension"
+
+
 def test_freqs_and_num_freq_are_mutually_exclusive(synthetic_bds, tmp_path):
     with pytest.raises(ValueError, match="mutually exclusive"):
         bds_to_fits(str(synthetic_bds), str(tmp_path / "both"), freqs=[1.1e9], num_freq=2)
