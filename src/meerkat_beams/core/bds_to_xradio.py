@@ -2,7 +2,7 @@
 
 from typing import List, Optional, Tuple
 
-from meerkat_beams.utils import ZARR_COMPRESSOR, ZARR_FILTERS, BeamWizard, enrich_bds_xradio
+from meerkat_beams.utils import ZARR_COMPRESSOR, BeamWizard, enrich_bds_xradio
 
 _JONES_MAP = {"X": 0, "Y": 1}
 _JONES_OUTPUT_POL = {"X": "I", "Y": "Q"}
@@ -92,7 +92,7 @@ def bds_to_xradio(
         output_pol: corresponding list of output polarization labels for each element,
           default is chosen automatically
         beam_type: Beam variable ('nstokes', 'stokes', 'njones', 'jones')
-        compress: Apply Delta+Blosc compression to zarr output (default: False)
+        compress: Apply lossless Blosc compression to zarr output (default: False)
 
     Returns:
         Path to the output zarr dataset.
@@ -121,7 +121,6 @@ def bds_to_xradio(
         var=beam_type,
         ij_list=ij_list,
         compressor=ZARR_COMPRESSOR if compress else None,
-        filters=ZARR_FILTERS if compress else None,
     )
 
     enrich_bds_xradio(output, bw, output_var, output_pol)

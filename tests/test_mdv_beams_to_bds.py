@@ -274,4 +274,4 @@ def test_mdv_beams_to_bds_compress_uses_blosc(tmp_path):
     for v in ("jones", "njones", "stokes", "nstokes", "mueller", "nmueller"):
         meta = json.loads((out / v / ".zarray").read_text())
         assert meta["compressor"]["id"] == "blosc", f"{v} compressor is {meta['compressor']}"
-        assert [f["id"] for f in meta["filters"]] == ["delta"], f"{v} filters are {meta['filters']}"
+        assert meta["filters"] is None, f"{v} filters are {meta['filters']} (Delta is lossy on floats)"

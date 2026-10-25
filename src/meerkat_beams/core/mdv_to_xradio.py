@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from meerkat_beams.utils import LOGGER, ZARR_COMPRESSOR, ZARR_FILTERS, ZARR_FORMAT
+from meerkat_beams.utils import LOGGER, ZARR_COMPRESSOR, ZARR_FORMAT
 
 
 def mdv_to_xradio(
@@ -28,7 +28,7 @@ def mdv_to_xradio(
         part: 'real', 'imag', 'abs', or 'phase'
         output_var: Data variable name (default: SKY)
         chunks_freq, chunks_x, chunks_y: Zarr chunk sizes
-        compress: Apply Delta+Blosc compression to zarr output (default: False)
+        compress: Apply lossless Blosc compression to zarr output (default: False)
     """
     import xarray
     import zarr
@@ -132,7 +132,6 @@ def mdv_to_xradio(
     enc = {"chunks": (chunk_time, chunk_freq, chunk_pol, chunk_l, chunk_m)}
     if compress:
         enc["compressor"] = ZARR_COMPRESSOR
-        enc["filters"] = ZARR_FILTERS
     encoding = {output_var: enc}
     ds.to_zarr(output, mode="w", encoding=encoding, zarr_format=ZARR_FORMAT)
     zarr.consolidate_metadata(output)

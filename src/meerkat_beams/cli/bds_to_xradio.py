@@ -119,7 +119,7 @@ def bds_to_xradio(
     compress: Annotated[
         bool,
         typer.Option(
-            help="apply Delta+Blosc compression to zarr output",
+            help="apply lossless Blosc compression to zarr output",
         ),
     ] = False,
     output: Annotated[

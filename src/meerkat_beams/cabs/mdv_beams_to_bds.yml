@@ -17,7 +17,7 @@ cabs:
         metavar: MDV_FILE
       compress:
         info:
-          apply Delta+Blosc compression to zarr output
+          apply lossless Blosc compression to zarr output
         dtype: bool
         default: false
     outputs:

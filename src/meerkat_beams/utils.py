@@ -25,7 +25,7 @@ from astropy.coordinates import AltAz, EarthLocation, SkyCoord
 from astropy.io import fits
 from astropy.time import Time
 from astropy.wcs import WCS
-from numcodecs import Blosc, Delta
+from numcodecs import Blosc
 from scipy.ndimage import map_coordinates, spline_filter
 
 # ---------------------------------------------------------------------------
@@ -58,8 +58,10 @@ log = LOGGER = create_logger()
 # Zarr compression defaults
 # ---------------------------------------------------------------------------
 
+# Blosc alone, losslessly. No Delta filter: on floats its cumulative-sum decode
+# loses precision, and a NaN fill value in a partly-filled edge chunk turns the
+# rest of that chunk into NaN on read.
 ZARR_COMPRESSOR = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
-ZARR_FILTERS = [Delta(dtype="float32")]
 
 # zarr is unpinned so downstream applications can pick their own major version.
 # Every store we write is zarr format 2 regardless, so its output stays readable
@@ -1449,7 +1451,7 @@ class BeamWizard(object):
             ij_list: List of (i, j) tuples specifying which matrix elements to compute.
                      Default is [("I", "I")].
             compressor: Zarr compressor (e.g. numcodecs.Blosc). If None, uses zarr default.
-            filters: List of zarr filters (e.g. [numcodecs.Delta]). If None, no filters.
+            filters: List of zarr filters. If None, no filters.
 
         """
         import zarr
