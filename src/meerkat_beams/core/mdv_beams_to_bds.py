@@ -12,6 +12,8 @@ from meerkat_beams.utils import (
     jones_to_mueller,
     mueller_to_stokes,
     require_readable_zarr,
+    require_zarr_xarray_compat,
+    zarr_compressor_encoding,
 )
 
 # Attrs copied from an MdV mean-beam zarr onto the BDS it produces. BeamWizard
@@ -31,6 +33,7 @@ def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
         compress: apply lossless Blosc compression to zarr output
     """
     mdv_beams, bds = str(mdv_beams), str(bds)  # the CLI passes UPath objects (#38)
+    require_zarr_xarray_compat()  # the BDS is written with to_zarr whatever the input (#44)
     LOGGER.info(f"loading MdV beams from {mdv_beams}")
     if mdv_beams.endswith(".npz"):
         # load from zarr (probably only the mean beam data, but should work with the full dataset too)
@@ -127,5 +130,5 @@ def mdv_beams_to_bds(mdv_beams: str, bds: str, compress: bool = False):
     encoding = {}
     if compress:
         for var in ["jones", "njones", "stokes", "nstokes", "mueller", "nmueller"]:
-            encoding[var] = dict(compressor=ZARR_COMPRESSOR)
+            encoding[var] = zarr_compressor_encoding(ZARR_COMPRESSOR)
     xds.to_zarr(bds, mode="w", encoding=encoding, zarr_format=ZARR_FORMAT)
