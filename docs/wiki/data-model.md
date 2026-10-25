@@ -3,8 +3,8 @@ type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr
 description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, and the xradio primary-beam schema.
 tags: [mdv, bds, xradio, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
-timestamp: 2026-10-25T08:29:05Z
-last_verified_commit: 7942c7b
+timestamp: 2026-10-25T17:18:22Z
+last_verified_commit: 9d470a4
 ---
 
 # Data model — MdV npz, BDS zarr, xradio zarr
@@ -115,7 +115,7 @@ built by those releases should be deleted and rebuilt.
 Every store the package writes — BDS and both xradio paths — is **zarr
 format 2**, whichever zarr-python is installed: `to_zarr(...,
 zarr_format=ZARR_FORMAT)` for the xarray writers, and
-`zarr_open_group`/`zarr_create_array` (`utils.py:70-146`) for
+`zarr_open_group`/`zarr_create_array` (`utils.py:70-159`) for
 `get_time_freq_beam`/`enrich_bds_xradio`'s raw writes. zarr is unpinned
 (design-decisions D18), so output stays readable by consumers still on
 zarr-python 2, which cannot read v3. Inputs are the other way round: a
@@ -123,7 +123,8 @@ mean-beam or image zarr may be v2 or v3 (`is_zarr_group`), since zarr 3
 writes v3 by default; under zarr-python 2 a v3 input raises a clear
 "needs zarr-python>=3" error (`require_readable_zarr`) rather than zarr 2's
 own. zarr-python 2 also needs `xarray<2026.9`; with a newer xarray every
-zarr read or write raises a `RuntimeError` saying so
+xarray zarr read or write raises an `IncompatibleZarrStackError` (an
+`ImportError`) saying so
 (`require_zarr_xarray_compat`, design-decisions D18). Pinned by
 `tests/test_zarr_format.py`.
 
@@ -427,7 +428,7 @@ five bands always skip. Verified on 2026-10-25: U and L pass (34 tests,
 must point at a disk with room).
 
 This regression test's variable-parametrised checks
-(`tests/test_mdv_beams_to_bds.py:187`, `:191`) cover only
+(`tests/test_mdv_beams_to_bds.py:184`, `:191`) cover only
 `["jones", "njones", "stokes", "nstokes"]` — `mueller`/`nmueller` (added
 later, commit `2d6d0dc`) are **not** in this cross-reference suite.
 Mueller coverage instead comes from unit tests: `test_bds_to_xradio.py`

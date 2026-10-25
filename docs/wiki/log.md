@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-25T08:29:05Z
+timestamp: 2026-10-25T17:18:22Z
 ---
 
 # Wiki changelog
@@ -403,3 +403,24 @@ code, so `open_zarr`/`to_zarr` fail under zarr 2.
   `beamwizard.md` citation (`:1549`) that was already stale and pointed at an
   unrelated line; it is the coord `fill_value=None` write at `:1656`. All five
   stamped pages re-stamped at `7942c7b`.
+
+## 2026-10-25 — #44 review fixes (verified at `9d470a4`)
+
+Adversarial review of PR #45.
+- `design-decisions.md` D18: the guard is now `IncompatibleZarrStackError`
+  (an `ImportError`, so `--backend auto` falls back to the container with no
+  change to the generated CLIs), catches pre-releases, runs before the
+  `BeamWizard` cache downloads, and no longer runs in raw zarr calls
+  (`zarr_open_group`), which work under zarr-python 2 on any xarray. The CI
+  jobs use `--upgrade-package` + `uv pip check`. New consequence: new xarray
+  zarr paths must be guarded and added to the entry-point test.
+- `data-model.md`: error type updated. Restored the
+  `tests/test_mdv_beams_to_bds.py:184` citation: the previous remap shifted it
+  by mistake (the pattern matched `test_mdv_beams_to_bds.py`).
+- `design-decisions.md` D1 Source and the Sources list: the `interpolate_beam`
+  citations were stale already on `main` and were carried forward under the
+  previous stamp; they now cite `interpolate_beam` (`:803-850`) and its
+  `map_coordinates` call (`:843-850`).
+- `utils.py` shifted again; citations remapped from the diff hunks, matching
+  `utils.py` exactly; `ci.yml` citations moved with the longer install steps.
+  All five stamped pages re-stamped at `9d470a4`.
