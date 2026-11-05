@@ -22,10 +22,22 @@ File = NewType("File", Path)
     info="Renders a beam dataset (BDS) to eidos-compatible FITS beam cubes",
 )
 @stimela_output(
-    dtype="File",
+    dtype="str",
     name="prefix",
     info="output path prefix (files are written as prefix_re.fits and friends)",
     policies={"positional": True},
+)
+@stimela_output(
+    dtype="File",
+    name="re-fits",
+    info="implicit hypercube real part <prefix>_re.fits (not written with --output-eight)",
+    implicit="{prefix}_re.fits",
+)
+@stimela_output(
+    dtype="File",
+    name="im-fits",
+    info="implicit hypercube imaginary part <prefix>_im.fits (not written for stokes/nstokes or --output-eight)",
+    implicit="{prefix}_im.fits",
 )
 def bds_to_fits(
     bds_path: Annotated[
@@ -94,9 +106,8 @@ def bds_to_fits(
         ),
     ] = "raise",
     prefix: Annotated[
-        File | None,
+        str | None,
         typer.Option(
-            parser=parse_upath,
             help="output path prefix (files are written as prefix_re.fits and friends)",
         ),
     ] = None,

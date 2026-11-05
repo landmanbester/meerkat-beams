@@ -55,8 +55,18 @@ cabs:
         default: raise
     outputs:
       prefix:
-        dtype: File
+        dtype: str
         info:
           output path prefix (files are written as prefix_re.fits and friends)
         policies:
           positional: true
+      re-fits:
+        dtype: File
+        info:
+          implicit hypercube real part <prefix>_re.fits (not written with --output-eight)
+        implicit: '{prefix}_re.fits'
+      im-fits:
+        dtype: File
+        info:
+          implicit hypercube imaginary part <prefix>_im.fits (not written for stokes/nstokes or --output-eight)
+        implicit: '{prefix}_im.fits'
