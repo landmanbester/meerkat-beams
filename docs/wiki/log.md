@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-10-25T17:38:52Z
+timestamp: 2026-11-05T04:12:00Z
 ---
 
 # Wiki changelog
@@ -511,3 +511,60 @@ Adversarial review of PR #45.
 - `publish-container.yml` no longer pushes for fork PRs, whose `GITHUB_TOKEN`
   is read-only; recorded as a D10 consequence in `design-decisions.md`,
   re-stamped at `147ea36`.
+
+## 2026-11-05 — bds-to-fits PR #46 review fixes (verified at `eed826f`)
+
+Five inline review comments on `landmanbester/meerkat-beams#46`, plus two
+non-inline notes. The writer/test fixes landed in `6a3ddc8` and the cab
+output contract in `eed826f`; the documentation fixes are in the commit
+carrying this entry.
+
+- **Mueller correlation codes** (`6a3ddc8`): the hypercube `STOKES` axis for
+  `mueller`/`nmueller` now carries the FITS correlation product codes
+  (`XX=-5, YY=-6, XY=-7, YX=-8`) instead of IAU Stokes `1–4` — the BDS reuses
+  IQUV labels only positionally for the coherency pairs, so `nmueller`'s `II`
+  is `|Jxx|^2`, not Stokes I→I. `stokes`/`nstokes` keep `1–4`. New
+  `_CORRELATION_CODE` map; header table and the polarization-`CTYPE`
+  deviation item in `data-model.md` updated, D20's decision text too.
+- **Off-FOV count** (`6a3ddc8`): the warning counted against a half-pixel
+  footprint `[-0.5, n-0.5]` while scipy zeroes outside `[0, n-1]`, so the
+  edge row/column (pixels `−0.4 … 0`) was zeroed but unreported — 39 of 400
+  pixels silently zero at `pixels=20, diameter=2.04`. Bounds now `< 0` /
+  `> n-1`, and the in-band branch hands scipy verbatim coordinates.
+- **`file://` parent creation** (`6a3ddc8`): `_write_fits` mkdirs the parent
+  for URI prefixes too (`UPath.open` does not; only the plain-path branch
+  did), so `file://…/new/deeper/beam` no longer raises `FileNotFoundError`.
+- **Duplicate `--freqs`** (`6a3ddc8`): a repeat makes `CDELT5 = 0` and
+  `astropy.wcs.WCS` refuses the header as singular; rejected up front with a
+  `ValueError` naming the offending values, before anything is written.
+- **eidos citation** (docs): `ratt-ru/eidos#1` was wrong — that is an
+  unrelated 2018 packaging PR. The `_crpix` rule lives in the
+  **`tmolteno/eidos` fork** (`../eidos`, still reporting 1.1.2) via
+  `tmolteno/eidos#2` for issue `#1`; released ratt-ru eidos 1.1.2 has no
+  `_crpix` at all, so our `CRPIX` sits 0–1.5 px from released eidos
+  **on purpose** (header and data agree). Fixed in the module docstring,
+  `data-model.md` (centre rule, deviations, sources) and D20.
+- **Orientation caveat** (docs): new "Orientation versus eidos — unverified"
+  section in `data-model.md` — the `-o8` `px`/`py` labels match eidos's
+  `-o8` CTYPEs (so `FITSLAxis=±px` parsets read them), but the BDS X-axis
+  direction vs eidos's last numpy axis is unchecked and the BDS convention
+  is still provisional (M1 open); `LMVoltageBeam` reads only the eight-file
+  layout. Mirrored as a D20 consequence.
+- **Cab output contract** (`eed826f`): `prefix` changed from `dtype: File`
+  to `str`, plus two *implicit* File outputs (`{prefix}_re.fits`,
+  `{prefix}_im.fits`) — a prefix is not a file, so `skip_if_outputs` could
+  never succeed and downstream steps had nothing to reference. Explicit
+  `List[File]` outputs were not viable: the file set is dynamic
+  (`-o8`/`stokes` modes) and non-implicit outputs become core-function
+  parameters. Implicit outputs stay out of the signature (core call
+  unchanged) and now carry the container-dispatch rw mount that `prefix`
+  used to provide — verified empirically against the old `File` behaviour
+  (same ancestor mount; `s3://` protocol collection intact). New
+  `tests/test_cab_outputs.py` pins the contract and the mount.
+
+`data-model.md` and `design-decisions.md` re-stamped at `eed826f` (the last
+commit changing the code they cover), `index.md` at `6a3ddc8` (its table
+routes to `core/bds_to_fits.py`; the table itself needed no edit — its
+descriptions are still accurate).
+`beamwizard.md` and `beam-orientation.md` keep `b78c372`: neither
+`utils.py` nor the katbeam probe changed.

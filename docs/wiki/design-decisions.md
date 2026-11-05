@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+, fits, eidos]
-timestamp: 2026-10-25T17:38:52Z
-last_verified_commit: 147ea36
+timestamp: 2026-11-05T04:12:00Z
+last_verified_commit: eed826f
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -908,11 +908,14 @@ leakage terms the chord still helps (about 1.5×) and the λ/D slope does not.
 ## D20 — FITS output matches eidos's layout, with corrected CTYPEs
 
 **Context:** Consumers that read a primary beam FITS file — DDFacet / killMS
-with `Beam.Model: FITS` — get such files from `../eidos`, whose
-`write_fits`/`write_fits_cube` define what "compatible" means: file names
+with `Beam.Model: FITS` — get such files from `../eidos` (the
+`tmolteno/eidos` fork checkout), whose `write_fits`/`write_fits_cube` define
+what "compatible" means: file names
 (`<prefix>_re.fits` / `<prefix>_{ij}_{re,im}.fits`), FITS axis order,
-`CRPIX = centre + 1` at 0-based `n/2` (fixed in ratt-ru/eidos#1),
-`CDELT = diameter / pixels`, `TELESCOP = MeerKAT`. Adding a third output
+`CRPIX = centre + 1` at 0-based `n/2` (the fork's `_crpix`,
+`tmolteno/eidos#2` for issue `tmolteno/eidos#1` — *not* `ratt-ru/eidos#1`,
+which is an unrelated 2018 packaging PR), `CDELT = diameter / pixels`,
+`TELESCOP = MeerKAT`. Adding a third output
 format to this package therefore had to be compatible in everything a
 consumer computes, without quietly forking the format.
 
@@ -920,7 +923,12 @@ consumer computes, without quietly forking the format.
 layouts and every geometry keyword, makes four header corrections —
 `CTYPE1`/`CTYPE2` (eidos swaps the X/Y labels relative to its own `CRPIX`
 on the 5-axis hypercube), the polarization `CTYPE`s (blank unless the
-channel count happens to be 2 for `H`/`V` or 4 for `Mx`/`My`), `DATE`
+channel count happens to be 2 for `H`/`V` or 4 for `Mx`/`My`; we write
+`H`/`V` for Jones, the IAU Stokes codes 1–4 for `stokes`/`nstokes`, and the
+FITS **correlation product codes** `XX=-5`/`YY=-6`/`XY=-7`/`YX=-8` for
+`mueller`/`nmueller` — the BDS's IQUV labels on those variables are only
+positional names for the coherency pairs, so `II` of `nmueller` is `XX`
+(`|Jxx|^2`), never Stokes I→I), `DATE`
 (ISO-8601 UTC instead of local `ctime`), and `BITPIX` (float32, the BDS's
 precision, instead of float64) — and takes `TELESCOP` from the BDS
 `telescope` attr (falling back to `MeerKAT`) rather than hard-coding it, so
@@ -928,7 +936,7 @@ the 2026 MKE store is not mislabelled. It also adds four non-WCS provenance
 cards (`ORIGIN`, `BEAMTYPE`, `ELEMNT`, `PART`). The complex-Mueller `_im`
 and the gapped-`--freqs` mean-`CDELT` rule are separate deliberate
 deviations, covered below. The full header table, and the diff measured
-against eidos 1.1.2 at identical geometry, are in `data-model.md`.
+against the `../eidos` fork at identical geometry, are in `data-model.md`.
 
 **Rationale:**
 
@@ -937,8 +945,12 @@ against eidos 1.1.2 at identical geometry, are in `data-model.md`.
   labels costs no compatibility while fixing a header that otherwise says
   "north" about the east axis.
 - One `centre0` value drives both the sampled grid and `CRPIX`, so header
-  and data cannot drift apart (the class of bug ratt-ru/eidos#1 fixed on
-  their side).
+  and data cannot drift apart (the class of bug `tmolteno/eidos#1` reports
+  against released eidos and `tmolteno/eidos#2` fixes).
+- One `centre0` rule also means our `CRPIX` deliberately sits up to 1.5 px
+  from *released* ratt-ru eidos 1.1.2 (which has no `_crpix`): header and
+  data agree in our files, which is the property that matters to a consumer
+  placing a beam on an image.
 - The file set follows `--beam-type`, not the stored dtype: `jones`,
   `njones`, `mueller`, `nmueller` always get an `_im`, `stokes`/`nstokes`
   never do. Otherwise switching BDS store would change how many files appear.
@@ -970,13 +982,45 @@ against eidos 1.1.2 at identical geometry, are in `data-model.md`.
   caveat about its 10° model.
 - A gapped `--freqs` has no linear `CDELT`: the mean spacing is written
   with a warning, rather than eidos's first-spacing rule, which would
-  misplace every plane after the gap.
+  misplace every plane after the gap. A *duplicate* `--freqs` value has no
+  representable `CDELT` at all (0 → singular WCS), so it is rejected with a
+  `ValueError` before anything is opened or written.
+- The off-FOV count is against scipy's zero-fill domain (`[0, n-1]` per
+  axis), not a half-pixel footprint: `map_coordinates(mode="constant")`
+  zeroes anything outside it, so a footprint-based count under-reports the
+  edge row/column by a half-pixel band. The counted zeros now equal the
+  zeros in the data, on in-band and scaled planes alike.
+- A `file://` (or any URI) `prefix` with a missing parent directory works:
+  `UPath.open` does not mkdir, so `_write_fits` creates the parent explicitly
+  for URIs, as the plain-path branch already did.
+- The cab declares `prefix` as `str` (not `File`) plus two *implicit* File
+  outputs, `{prefix}_re.fits`/`{prefix}_im.fits` (PR #46). A prefix is not a
+  file: as a `File` output its value never exists on disk, so Stimela's
+  `skip_if_outputs` could never succeed and downstream steps had nothing real
+  to reference. Explicit `List[File]` outputs were rejected because the file
+  set is dynamic — `-o8` writes neither `_re`/`_im`, `stokes`/`nstokes` no
+  `_im` — and hip-cargo passes non-implicit outputs to the core function, so
+  they would also have become core parameters. Implicit outputs stay out of
+  the signature (core call unchanged), give skip checks and recipes the real
+  file names, and carry the container-dispatch rw mount now that `prefix` is
+  not path-typed (default `must_exist` means a missing output blocks a skip,
+  so `stokes`/`-o8` runs re-run rather than falsely skip; pinned by
+  `tests/test_cab_outputs.py`).
+- Orientation versus eidos is **unverified**: the `-o8` `px`/`py` labels
+  match eidos's own `-o8` CTYPEs (so existing `FITSLAxis=±px` parsets read
+  them), but nobody has checked that the BDS `X` axis points the same way as
+  eidos's last numpy axis, and the BDS orientation convention is itself
+  still provisional (M1 open in `beam-orientation.md`). DDFacet/Cattery
+  `LMVoltageBeam` reads only the eight-file layout.
 - `-o8` with a non-Jones `--beam-type` raises, mirroring eidos's refusal of
   `-o8` with `--Stokes`, and a hypercube Jones request that is not the full
   2×2 raises pointing at `--output-eight`.
 
 **Source:** `core/bds_to_fits.py` (`_target_grid`, `_freq_cdelta`,
 `_sky_cards`, `_provenance_cards`, `cube_header`/`element_header`,
-`sample_element`, `_exact_channel_indices`), `cabs/bds_to_fits.yml`,
-`tests/test_bds_to_fits.py`, `tests/test_bds_to_fits_integration.py`;
-`../eidos/eidos/util.py:51-183`; `data-model.md` (FITS output section).
+`sample_element`, `_exact_channel_indices`, `_outside_count`, `_write_fits`,
+`_CORRELATION_CODE`), `cabs/bds_to_fits.yml` (output contract),
+`tests/test_bds_to_fits.py`, `tests/test_bds_to_fits_integration.py`,
+`tests/test_cab_outputs.py`;
+`../eidos/eidos/util.py:51-183` (the `tmolteno/eidos` fork);
+`data-model.md` (FITS output section).
