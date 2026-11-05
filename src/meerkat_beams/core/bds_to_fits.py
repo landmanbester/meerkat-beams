@@ -10,14 +10,23 @@ ours the same way. What we copy and what we correct is pinned in
   axes 5, 4, 3, 2, 1, so axis 1 is the X (east) pixel axis and axis 3/4 carry
   the matrix (polarization) indices;
 * ``CRPIX = centre0 + 1`` with the 0-based centre at ``pixels / 2`` -- the rule
-  ``eidos.util._crpix`` uses (fixed in ratt-ru/eidos#1) -- or, on the native
-  grid, at the BDS centre index ``x0``/``y0`` (identical for even grids);
+  ``eidos.util._crpix`` uses in the ``../eidos`` fork checkout
+  (tmolteno/eidos#2, on top of tmolteno/eidos#1; released ratt-ru eidos 1.1.2
+  has no ``_crpix`` and still writes ``n/2`` on the hypercube and
+  ``n/2 + 0.5`` on ``-o8`` for even ``n``, so our header sits 0--1.5 px from
+  released eidos *on purpose*: our data are sampled on the centre the header
+  names) -- or, on the native grid, at the BDS centre index ``x0``/``y0``
+  (identical for even grids);
 * ``CDELT1/2`` are the pixel scale in degrees, ``CRVAL`` 0 on both sky axes,
   and the last axis is ``FREQ`` in Hz with ``CRVAL5 = freq[0]``;
 * eidos swaps ``CTYPE1``/``CTYPE2`` (and ``CDELT1``/``CDELT2``) on the 5-axis
   hypercube and leaves the polarization ``CTYPEs`` blank unless the channel
   count happens to be 2 (then ``H``/``V``) or 4 (then ``Mx``/``My``). We write
-  ``px``/``py`` and real polarization labels.
+  ``px``/``py`` and real polarization labels: ``H``/``V`` for Jones, the IAU
+  Stokes codes 1--4 for ``stokes``/``nstokes``, and the FITS correlation codes
+  ``XX=-5``/``YY=-6``/``XY=-7``/``YX=-8`` for ``mueller``/``nmueller`` -- the
+  BDS's IQUV labels there are only positional names for the coherency pairs
+  (element ``II`` of ``nmueller`` is ``|Jxx|^2``, not Stokes I->I).
   World coordinates are identical either way: both sky axes share ``CRVAL 0``
   and the same ``CDELT`` on the square grids these files use.
 
@@ -69,6 +78,14 @@ _SINGLE_FREQ_CDELT_HZ = 1.0e6
 
 # IAU Stokes axis codes: axis value = CRVAL + (pixel - CRPIX) * CDELT.
 _STOKES_CODE = {c: i for i, c in enumerate("IQUV", start=1)}
+# FITS correlation-product codes (FITS User's Guide 5.8: XX=-5, YY=-6, XY=-7,
+# YX=-8), which live on the STOKES axis as negative values. mueller/nmueller
+# are coherency-basis (kron(J, conj J)), and the BDS labels their axes IQUV
+# only positionally: position 0..3 is the coherency pair (XX, XY, YX, YY), so
+# element II of nmueller is |Jxx|^2 -- the XX correlation -- and not Stokes
+# I->I. Mapping the letters through the positional alias gives the pair the
+# data actually carry.
+_CORRELATION_CODE = {"I": -5, "Q": -7, "U": -8, "V": -6}
 
 
 def _target_grid(
@@ -158,11 +175,18 @@ def _provenance_cards(
 
 
 def _write_fits(path: str, data: np.ndarray, hdr: fits.Header) -> None:
-    """Write one real plane: local paths get their parent created, URIs a file handle."""
+    """Write one real plane: local paths get their parent created, URIs too.
+
+    UPath.open does not create the parent -- not even for ``file://`` -- so the
+    URI branch mkdirs it first (a no-op for existing parents, and for schemes
+    whose filesystem has no real directories).
+    """
     hdu = fits.PrimaryHDU(data, header=hdr)
     if "://" in path:
         # astropy wants a seekable binary handle; UPath gives one for s3/gs/…
-        with UPath(path).open("wb") as fh:
+        upath = UPath(path)
+        upath.parent.mkdir(parents=True, exist_ok=True)
+        with upath.open("wb") as fh:
             hdu.writeto(fh)
     else:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -285,6 +309,16 @@ def bds_to_fits(
     freq = bw.check_freqs(np.asarray(freq, dtype=float))
     if freq.size == 0:
         raise ValueError("no frequencies selected: give --freqs and/or --num-freq")
+    uniq, counts = np.unique(freq, return_counts=True)
+    if uniq.size != freq.size:
+        # A linear FREQ axis (CRVAL + k*CDELT) cannot encode a repeat: the
+        # duplicate makes CDELT 0 (or a mislabelled plane) and astropy's WCS
+        # then rejects the header as singular.
+        dups = uniq[counts > 1]
+        raise ValueError(
+            f"duplicate frequencies selected: {', '.join(f'{d:.6g}' for d in dups)}; the FITS FREQ axis is "
+            "linear (CRVAL + k*CDELT), so every channel must be distinct -- drop the repeats"
+        )
 
     # --- output geometry ---------------------------------------------------
     l, m, cdelt_x, cdelt_y, crpix_x, crpix_y = _target_grid(bw.bds, pixels, diameter)
@@ -309,13 +343,25 @@ def bds_to_fits(
     def _outside_count(scale: float) -> int:
         """Number of target pixels outside the cube at one nu/nu_e scale.
 
+        The bounds are scipy's, not the half-pixel footprint: map_coordinates
+        with mode="constant" returns cval for any coordinate outside [0, n-1]
+        of an axis (a pixel at -0.001 is zeroed; one at 0.0 is not), so the
+        mask must use ``< 0`` / ``> n-1`` or it misses the edge row/column.
+        The in-band case uses xp/yp verbatim because that is exactly what
+        interpolate_beam hands to map_coordinates (it only rewrites the
+        coordinates of out-of-band rows), keeping count and data bit-identical
+        at the boundary.
+
         xp/yp are 1-D, so the 2-D mask is separable: the union of the x and y
         out-of-range columns is nx_out * n_y + ny_out * n_x - nx_out * ny_out.
         """
-        xs = x0_b + (xp - x0_b) * scale
-        ys = y0_b + (yp - y0_b) * scale
-        nx_out = int(((xs < -0.5) | (xs > nx_b - 0.5)).sum())
-        ny_out = int(((ys < -0.5) | (ys > ny_b - 0.5)).sum())
+        if scale == 1.0:
+            xs, ys = xp, yp
+        else:
+            xs = x0_b + (xp - x0_b) * scale
+            ys = y0_b + (yp - y0_b) * scale
+        nx_out = int(((xs < 0) | (xs > nx_b - 1)).sum())
+        ny_out = int(((ys < 0) | (ys > ny_b - 1)).sum())
         return nx_out * n_y + ny_out * n_x - nx_out * ny_out
 
     outside_counts = [_outside_count(float(s)) for s in scales]
@@ -378,11 +424,15 @@ def bds_to_fits(
             hdr["CTYPE4"], hdr["CRPIX4"], hdr["CRVAL4"], hdr["CDELT4"] = "H", 1.0, 0.0, 1.0
             hdr["CTYPE3"], hdr["CRPIX3"], hdr["CRVAL3"], hdr["CDELT3"] = "V", 1.0, 0.0, 1.0
         else:
-            # Label both matrix axes with the FITS Stokes code of the element
-            # they carry (row -> axis 4, column -> axis 3).
+            # Label both matrix axes with the code of the element they carry
+            # (row -> axis 4, column -> axis 3): the IAU Stokes code for the
+            # Stokes variables, the FITS correlation code for the coherency
+            # Mueller variables, whose BDS IQUV labels are only positional
+            # names for the (XX, XY, YX, YY) pairs (see _CORRELATION_CODE).
             e0, e1 = label_list[0]
-            hdr["CTYPE4"], hdr["CRPIX4"], hdr["CRVAL4"], hdr["CDELT4"] = "STOKES", 1.0, float(_STOKES_CODE[e0]), 1.0
-            hdr["CTYPE3"], hdr["CRPIX3"], hdr["CRVAL3"], hdr["CDELT3"] = "STOKES", 1.0, float(_STOKES_CODE[e1]), 1.0
+            code = _CORRELATION_CODE if beam_type in ("mueller", "nmueller") else _STOKES_CODE
+            hdr["CTYPE4"], hdr["CRPIX4"], hdr["CRVAL4"], hdr["CDELT4"] = "STOKES", 1.0, float(code[e0]), 1.0
+            hdr["CTYPE3"], hdr["CRPIX3"], hdr["CRVAL3"], hdr["CDELT3"] = "STOKES", 1.0, float(code[e1]), 1.0
         hdr["CTYPE5"], hdr["CRPIX5"] = "FREQ", 1.0
         hdr["CRVAL5"], hdr["CDELT5"], hdr["CUNIT5"] = float(freq[0]), float(freq_cdelt), "Hz"
         _provenance_cards(hdr, beam_type, els, part, telescope)

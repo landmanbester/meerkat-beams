@@ -165,14 +165,21 @@ def test_stokes_hypercube_writes_real_part_only(synthetic_bds, tmp_path):
     np.testing.assert_array_equal(data[:, 0, 0], expected)
 
 
-def test_mueller_element_selects_and_labels_stokes_axes(synthetic_bds, tmp_path):
+def test_mueller_element_selects_and_labels_correlation_axes(synthetic_bds, tmp_path):
+    """A Mueller element carries the FITS correlation code of its coherency pair.
+
+    The BDS labels mueller/nmueller axes IQUV, but only positionally: the data
+    are kron(J, conj(J)), so element "UV" is the (YX, YY) pair, not Stokes U->V.
+    """
     prefix = str(tmp_path / "mueller")
     written = bds_to_fits(str(synthetic_bds), prefix, beam_type="nmueller", elements=["UV"])
     assert written == [prefix + "_re.fits", prefix + "_im.fits"]
 
     hdr, data = read(prefix + "_re.fits")
-    # row of the element goes to axis 4, column to axis 3: U=3, V=4
-    assert (hdr["CRVAL4"], hdr["CRVAL3"]) == (3.0, 4.0)
+    # row of the element goes to axis 4, column to axis 3: U sits at position 2
+    # = coherency (Y,X) = YX = -8, V at position 3 = (Y,Y) = YY = -6
+    assert (hdr["CTYPE4"], hdr["CTYPE3"]) == ("STOKES", "STOKES")  # correlator codes live on the STOKES axis
+    assert (hdr["CRVAL4"], hdr["CRVAL3"]) == (-8.0, -6.0)
     assert hdr["ELEMNT"] == "UV"
 
     bds = xarray.open_zarr(str(synthetic_bds))
@@ -181,6 +188,18 @@ def test_mueller_element_selects_and_labels_stokes_axes(synthetic_bds, tmp_path)
     _, imag = read(prefix + "_im.fits")
     np.testing.assert_array_equal(imag[:, 0, 0], expected.imag)
     assert np.any(expected.imag != 0)  # the synthetic cross-hand is complex
+
+
+def test_mueller_default_element_is_the_xx_correlation(synthetic_bds, tmp_path):
+    """--elements II on a Mueller variable is XX (|Jxx|^2), never Stokes I."""
+    prefix = str(tmp_path / "mueller_ii")
+    bds_to_fits(str(synthetic_bds), prefix, beam_type="nmueller")
+    hdr, data = read(prefix + "_re.fits")
+    assert (hdr["CRVAL4"], hdr["CRVAL3"]) == (-5.0, -5.0)  # XX = -5, not I = 1
+
+    bds = xarray.open_zarr(str(synthetic_bds))
+    expected = bds["nmueller"].sel(stokes_i="I", stokes_j="I").values
+    np.testing.assert_array_equal(data[:, 0, 0], expected.real)
 
 
 def test_requested_grid_agrees_with_native_where_pixels_share(synthetic_bds, tmp_path):
@@ -211,6 +230,27 @@ def test_output_beyond_bds_fov_is_zero_and_warns(synthetic_bds, tmp_path, caplog
     _, data = read(prefix + "_re.fits")
     assert data[0, 0, 0, 0, 0] == 0.0  # corner, 4 deg off, is outside the model
     assert data[0, 0, 0, 32, 32] == pytest.approx(1.0)  # on axis the beam is unity
+
+
+def test_off_fov_count_matches_scipy_zero_fill(synthetic_bds, tmp_path, caplog):
+    """map_coordinates zeroes coordinates outside [0, n-1], not [-0.5, n-0.5].
+
+    At 20 px over 2.04 deg the first row/column lands on pixel -0.4: inside
+    the old half-pixel footprint (so unreported) but outside scipy's domain
+    (so zero-filled). The warning must count exactly what the data zeroes.
+    """
+    prefix = str(tmp_path / "halfpx")
+    with caplog.at_level(logging.WARNING, logger="meerkat_beams"):
+        bds_to_fits(str(synthetic_bds), prefix, beam_type="nstokes", pixels=20, diameter=2.04)
+
+    off = [r.message for r in caplog.records if "fall outside the beam model" in r.message]
+    assert off, "the first row/column is zeroed by scipy but was not reported"
+    _, data = read(prefix + "_re.fits")
+    plane = data[0, 0, 0]
+    zeros = int((plane == 0).sum())
+    assert zeros == 39  # first row + first column, corner shared: 20 + 20 - 1
+    # every zeroed pixel is reported: 39 per plane over all four channels
+    assert f"{zeros * len(FREQS)} of {plane.size * len(FREQS)}" in off[0]
 
 
 def test_num_freq_selects_a_uniform_channel_axis(synthetic_bds, tmp_path):
@@ -246,6 +286,19 @@ def test_single_frequency_keeps_eidos_cdelta(synthetic_bds, tmp_path):
     assert data.shape[0] == 1
     assert hdr["CRVAL5"] == pytest.approx(1.2e9)
     assert hdr["CDELT5"] == pytest.approx(1e6)  # eidos's fallback for one channel
+
+
+def test_duplicate_frequencies_are_rejected(synthetic_bds, tmp_path):
+    """A repeat on the FREQ axis makes CDELT 0 and the WCS singular."""
+    with pytest.raises(ValueError, match="duplicate frequencies"):
+        bds_to_fits(str(synthetic_bds), str(tmp_path / "dup"), freqs=[1.1e9, 1.1e9])
+
+    # a non-adjacent repeat degenerates the axis just as much
+    with pytest.raises(ValueError, match="duplicate frequencies"):
+        bds_to_fits(str(synthetic_bds), str(tmp_path / "dup2"), freqs=[1.0e9, 1.2e9, 1.0e9])
+
+    # nothing was written before the rejection
+    assert not Path(str(tmp_path / "dup") + "_re.fits").exists()
 
 
 def test_out_of_band_freq_raises_unless_scaling(synthetic_bds, tmp_path):
@@ -413,3 +466,12 @@ def test_writes_through_a_file_uri(synthetic_bds, tmp_path):
     hdr, data = read(tmp_path / "beam_re.fits")
     assert data.shape == (len(FREQS), 2, 2, PIXELS, PIXELS)
     assert hdr["CTYPE1"] == "px"
+
+
+def test_file_uri_creates_missing_parent(synthetic_bds, tmp_path):
+    """UPath.open does not create the parent -- not even for file://."""
+    prefix = f"file://{tmp_path}/new/deeper/beam"
+    written = bds_to_fits(str(synthetic_bds), prefix, pixels=PIXELS, diameter=DIAMETER)
+    assert len(written) == 2
+    assert (tmp_path / "new" / "deeper" / "beam_re.fits").exists()
+    assert (tmp_path / "new" / "deeper" / "beam_im.fits").exists()
