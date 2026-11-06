@@ -48,3 +48,10 @@ def test_mdv_to_xradio_help():
     result = run_cli("mdv-to-xradio", "--help")
     assert result.returncode == 0
     assert "Converts raw MdV beam npz" in result.stdout
+
+
+@pytest.mark.unit
+def test_bds_to_fits_help():
+    result = run_cli("bds-to-fits", "--help")
+    assert result.returncode == 0
+    assert "eidos-compatible FITS beam cubes" in result.stdout

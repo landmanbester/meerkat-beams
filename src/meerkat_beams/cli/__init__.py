@@ -32,5 +32,9 @@ from meerkat_beams.cli.bds_to_xradio import bds_to_xradio  # noqa: E402
 
 app.command(name="bds-to-xradio")(bds_to_xradio)
 
+from meerkat_beams.cli.bds_to_fits import bds_to_fits  # noqa: E402
+
+app.command(name="bds-to-fits")(bds_to_fits)
+
 
 __all__ = ["app"]

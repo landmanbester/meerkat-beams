@@ -10,7 +10,8 @@ import numpy as np
 import pytest
 import xarray
 
-from meerkat_beams.core.bds_to_xradio import _resolve_elements, bds_to_xradio
+from meerkat_beams.core.bds_to_xradio import bds_to_xradio
+from meerkat_beams.utils import resolve_elements
 from tests._synthetic import build_synthetic_bds, build_synthetic_image
 
 
@@ -26,7 +27,7 @@ def synthetic_bds_image(tmp_path_factory):
 def test_resolve_elements_mueller_accepts_iquv_and_labels_by_element():
     """mueller/nmueller share IQUV labels with stokes, but a 16-term cube must be
     labelled by the full element (e.g. 'IQ') to avoid polarization-label collisions."""
-    ij_list, pol = _resolve_elements("nmueller", ["IQ", "UV"], [])
+    ij_list, pol = resolve_elements("nmueller", ["IQ", "UV"], [])
     assert ij_list == [("I", "Q"), ("U", "V")]
     assert pol == ["IQ", "UV"]
 
@@ -34,13 +35,13 @@ def test_resolve_elements_mueller_accepts_iquv_and_labels_by_element():
 @pytest.mark.unit
 def test_resolve_elements_mueller_rejects_jones_element():
     with pytest.raises(ValueError, match="Invalid Stokes matrix element"):
-        _resolve_elements("mueller", ["XX"], [])
+        resolve_elements("mueller", ["XX"], [])
 
 
 @pytest.mark.unit
 def test_resolve_elements_stokes_backward_compatible_label():
     """stokes/nstokes keep labelling by the output Stokes (e[1])."""
-    ij_list, pol = _resolve_elements("nstokes", ["IQ"], [])
+    ij_list, pol = resolve_elements("nstokes", ["IQ"], [])
     assert ij_list == [("I", "Q")]
     assert pol == ["Q"]
 

@@ -5,9 +5,11 @@ with them end to end, rather than only through its Python core."""
 
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 import xarray
+from astropy.io import fits
 
 from tests._synthetic import build_mean_beam_zarr, build_synthetic_bds, build_synthetic_image_zarr, build_synthetic_npz
 
@@ -64,3 +66,16 @@ def test_mdv_to_xradio(tmp_path):
     result = run_cli("mdv-to-xradio", "--npz-path", str(build_synthetic_npz(tmp_path)), "--output", str(out))
     assert_ok(result, out)
     assert "deprecated" in (result.stdout + result.stderr).lower()
+
+
+def test_bds_to_fits(tmp_path):
+    bds = build_synthetic_bds(tmp_path / "in.bds.zarr")
+    prefix = tmp_path / "beam"
+    args = ("--bds-path", str(bds), "--prefix", str(prefix), "--pixels", "32", "--diameter", "2")
+    result = run_cli("bds-to-fits", *args)
+    out = Path(str(prefix) + "_re.fits")
+    assert_ok(result, out)
+    assert Path(str(prefix) + "_im.fits").exists()
+    with fits.open(out) as h:
+        assert h[0].header["CTYPE1"] == "px"
+        assert h[0].data.shape == (4, 2, 2, 32, 32)

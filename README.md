@@ -82,9 +82,15 @@ mbeams mdv-beams-to-bds --mdv-beams MeerKAT_L.zarr --bds MeerKAT_L.bds.zarr --co
 
 # Render a BDS to an xradio-compatible zarr along an image cube's WCS and time axis
 mbeams bds-to-xradio --bds-path MeerKAT_L.bds.zarr --image-path image_cube.zarr --output beam_xradio.zarr
+
+# Write eidos-compatible FITS beam cubes on the BDS's own grid
+mbeams bds-to-fits --bds-path MeerKAT_L.bds.zarr --prefix beam_l
+
+# ... resampled onto eidos's -p/-d geometry, one file pair per Jones element (eidos -o8)
+mbeams bds-to-fits --bds-path MeerKAT_L.bds.zarr --prefix beam_l8 --pixels 256 --diameter 10 --output-eight
 ```
 
-`bds-to-xradio` needs a zarr image cube with a `TIME` coordinate; a FITS image has no time axis to render along. Each command accepts `--help`.
+`bds-to-xradio` needs a zarr image cube with a `TIME` coordinate; a FITS image has no time axis to render along. `bds-to-fits` needs no image at all: it writes the beam as `<prefix>_re.fits`/`<prefix>_im.fits` (plus `<prefix>_{ij}_{re,im}.fits` with `--output-eight`) in the layout `eidos` produces, so DDFacet/killMS-style `Beam.Model: FITS` consumers read either interchangeably. `--pixels`/`--diameter` resample the grid, `--beam-type` picks the BDS variable (`njones` by default), `--freqs` (Hz) or `--num-freq` select channels, and `--freq-extrapolation scale` reaches up to one BDS channel past the band edge. The header contract, and the four header corrections relative to eidos, are in [`docs/wiki/data-model.md`](docs/wiki/data-model.md). Each command accepts `--help`.
 
 Two commands are **deprecated** and will be removed in a future release. Both work only with the raw MdV `.npz` files (about 35 GB per band), which the package no longer needs:
 
@@ -126,6 +132,7 @@ There are three tiers.
 | `test_mdv_beams_to_bds.py`: convert the legacy U and L inputs and compare against reference BDSs | `MBEAMS_REFERENCE_BDS_U`, `MBEAMS_REFERENCE_BDS_L` | Reference BDSs (5.4 GB each; not published, ask the maintainer). The inputs must already be in the cache: L is fetched by the warm-up, U by `meerkat_beams.cache.ensure_band_bds("U")`. | ~80 s, **~27 GB peak RAM**, ~5.4 GB scratch per band in `$TMPDIR` |
 | `test_beam_consistency.py`, `test_rendered_beam.py`: time-variable gain vs rotation-averaged beam vs rendered zarr | `MBEAMS_BDS_PATH`, `MBEAMS_IMAGE_PATH` | Legacy L BDS, plus an image zarr with a `TIME` coordinate and a `fits_header` attr, such as a pfb-imaging `hci` cube. A FITS image does not work: it has no time axis. | ~20 s, ~2 GB |
 | `test_freq_extrapolation_integration.py`: λ/D extrapolation and in-chunk error bounds (D19) | `MBEAMS_BDS_PATH`, `MBEAMS_MK2026_BDS_PATH`, `MBEAMS_MKE_BDS_PATH` | Legacy L BDS, plus MdV-2026 MeerKAT and MeerKAT+ L BDSs (see below) | ~60 s, ~1 GB |
+| `test_bds_to_fits_integration.py`: render the real L BDS to FITS and compare the planes against the stored ones | `MBEAMS_BDS_PATH` | Legacy L BDS | a few seconds, <100 MB |
 | `test_group_integration.py`: baseline-group assembly on the real 2026 beams | `MBEAMS_MK2026_BDS_PATH`, `MBEAMS_MKE_BDS_PATH` | MdV-2026 MeerKAT and MeerKAT+ L BDSs | a few seconds |
 
 The MdV-2026 products are not on the download mirrors yet. Stage their mean-beam zarrs with `scripts/stage_group_cache.py`, then construct `BeamWizard(band="L", group="MPM")` once (or call `mdv_beams_to_bds` directly) to build `<cache>/bds/MeerKAT_L_mdv2026.bds.zarr` and `<cache>/bds/MKE_L.bds.zarr`.
