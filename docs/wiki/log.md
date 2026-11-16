@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-05T04:12:00Z
+timestamp: 2026-11-16T12:00:00Z
 ---
 
 # Wiki changelog
@@ -568,3 +568,14 @@ routes to `core/bds_to_fits.py`; the table itself needed no edit — its
 descriptions are still accurate).
 `beamwizard.md` and `beam-orientation.md` keep `b78c372`: neither
 `utils.py` nor the katbeam probe changed.
+
+## 2026-11-16 — containers published on merge, not per PR (verified at `30c6cc1`)
+
+- `publish-container.yml` dropped its `pull_request` trigger: images are
+  published on a merge to `main`, on a version tag, and on a manual
+  `workflow_dispatch` run (branch-named tag when run on a feature branch).
+  The D10 consequence about fork PRs is rewritten to say so in
+  `design-decisions.md`, re-stamped at `30c6cc1`.
+- CLAUDE.md gained the matching convention: agents leave the container image
+  tag at `:latest`; publishing and retagging a feature-branch image is a
+  manual maintainer step.
