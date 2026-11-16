@@ -5,10 +5,28 @@ from typing import List, Optional
 from meerkat_beams.utils import ZARR_COMPRESSOR, BeamWizard, enrich_bds_xradio, resolve_elements
 
 
+def parse_pointing_centre(text: str):
+    """Parse ``--pointing-centre``: sexagesimal with unit letters, or decimal degrees, in ICRS.
+
+    ``"05h21m09.9s +16d38m22s"`` and ``"80.29 16.64"`` are accepted. The colon
+    form is refused: with no unit on the RA, astropy reads ``05:21:09.9`` as
+    degrees, a 75 degree error that would pass silently.
+    """
+    from astropy.coordinates import SkyCoord
+
+    if ":" in text:
+        raise ValueError(
+            f"pointing centre {text!r} uses colons, which leave the RA unit ambiguous. "
+            'Write it with unit letters ("05h21m09.9s +16d38m22s") or in decimal degrees ("80.29 16.64").'
+        )
+    return SkyCoord(text, unit="deg", frame="icrs")
+
+
 def bds_to_xradio(
     bds_path: str,
     image_path: str,
     output: str,
+    pointing_centre: Optional[str] = None,
     output_var: str = "SKY",
     pixel_stepping: int = 4,
     time_stepping: int = 1,
@@ -27,7 +45,12 @@ def bds_to_xradio(
 
     Args:
         bds_path: Path to beam dataset (.bds.zarr)
-        image_path: Path to image/dataset for WCS and time info
+        image_path: Path to image/dataset for WCS and time info. Its reference
+          direction is the phase centre of the rendered l/m grid.
+        pointing_centre: Where the dishes point, as a string (see
+          ``parse_pointing_centre``). None (default) means the image's phase
+          centre; otherwise the image grid is mapped onto the pointing
+          centre's SIN plane before the beam is evaluated.
         output: Output path for the zarr dataset
         output_var: Name of the output data variable (default: SKY)
         pixel_stepping: Compute every Nth pixel, interpolate back (default 4)
@@ -48,7 +71,10 @@ def bds_to_xradio(
     ij_list, output_pol = resolve_elements(beam_type, elements, output_pol)
 
     bds_path, image_path, output = str(bds_path), str(image_path), str(output)  # the CLI passes UPaths (#38)
+    pointing = parse_pointing_centre(pointing_centre) if pointing_centre is not None else None
     bw = BeamWizard(bds_path, image_path)
+    if pointing is not None:
+        bw.set_pointing_centre(pointing)
 
     bw.log.info(f"Rendering {beam_type} elements {ij_list} using pol labels {output_pol}")
     bw.log.info(f"Using ij_list: {ij_list}")

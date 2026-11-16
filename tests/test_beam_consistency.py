@@ -62,8 +62,8 @@ def time_variable_vs_rotation_averaged(
         tv_mean = np.mean(time_variable_beam, axis=1)
 
     # Method 2: rotation-averaged beam at source's l/m
-    angle = beam_wizard.centre.position_angle(srcpos)
-    sep = beam_wizard.centre.separation(srcpos)
+    angle = beam_wizard.pointing_centre.position_angle(srcpos)
+    sep = beam_wizard.pointing_centre.separation(srcpos)
     l_src = sep.deg * np.sin(angle.rad)
     m_src = sep.deg * np.cos(angle.rad)
 
@@ -104,7 +104,7 @@ def time_variable_vs_rotation_averaged(
 def test_beam_consistency_at_center():
     """Test consistency at field center."""
     bw = _make_beam_wizard()
-    srcpos = bw.centre
+    srcpos = bw.pointing_centre
     results = time_variable_vs_rotation_averaged(bw, srcpos, time_stepping=4, num_freq=1)
     assert results["consistent"], (
         f"Inconsistent beam results: max relative difference {np.max(results['relative_difference']):.3f}%"
@@ -117,7 +117,7 @@ def test_beam_consistency_at_center():
 def test_beam_consistency_multi_freq():
     """Test consistency with multiple frequencies."""
     bw = _make_beam_wizard()
-    srcpos = bw.centre
+    srcpos = bw.pointing_centre
     results = time_variable_vs_rotation_averaged(bw, srcpos, time_stepping=4, num_freq=3)
     assert results["consistent"], (
         f"Inconsistent beam results: max relative difference {np.max(results['relative_difference']):.3f}%"

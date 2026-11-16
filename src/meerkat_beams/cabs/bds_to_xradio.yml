@@ -23,6 +23,11 @@ cabs:
         policies:
           positional: true
         metavar: IMAGE_PATH
+      pointing-centre:
+        info:
+          where the dishes point, as a SkyCoord string in ICRS (e.g.
+          "05h21m09.9s +16d38m22s" or "80.29 16.64" in degrees); default is the image phase centre
+        dtype: Optional[str]
       output-var:
         info:
           name of the output data variable

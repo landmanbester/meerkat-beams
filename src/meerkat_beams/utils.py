@@ -206,6 +206,80 @@ def _upsample_planes(planes: np.ndarray, upsample_coords: np.ndarray, full_shape
 
 
 # ---------------------------------------------------------------------------
+# Phase centre -> pointing centre geometry
+# ---------------------------------------------------------------------------
+
+# Where phase_to_pointing_lm sends a direction the pointing-frame SIN plane does
+# not cover. Far enough off every BDS grid that interpolate_beam returns its
+# off-cube value (0, D2) whatever the parallactic-angle rotation does to it.
+OFF_SKY_DEG = 1.0e6
+
+
+def _local_frame(ra: float, dec: float) -> np.ndarray:
+    """3x3 matrix whose columns are the east, north and radial unit vectors at ``(ra, dec)`` (radians)."""
+    sa, ca, sd, cd = np.sin(ra), np.cos(ra), np.sin(dec), np.cos(dec)
+    return np.array(
+        [
+            [-sa, -sd * ca, cd * ca],
+            [ca, -sd * sa, cd * sa],
+            [0.0, cd, sd],
+        ]
+    )
+
+
+def sky_rotation_matrix(pointing_centre: SkyCoord, phase_centre: SkyCoord) -> np.ndarray:
+    """Rotation taking SIN direction cosines about ``phase_centre`` to those about ``pointing_centre``.
+
+    ``M = R(pointing)^T R(phase)``, where ``R(ra, dec)`` holds the local east,
+    north and radial unit vectors as columns. A direction with direction cosines
+    ``s_f = (l, m, n)`` about the phase centre has ``s_0 = M s_f`` about the
+    pointing centre. Both centres are taken to ICRS first. When they coincide the
+    result is exactly ``np.eye(3)``, so callers can short-circuit the
+    single-field case without a round-off tolerance.
+    """
+    pointing = pointing_centre.icrs
+    phase = phase_centre.icrs
+    ra0, dec0 = float(pointing.ra.rad), float(pointing.dec.rad)
+    raf, decf = float(phase.ra.rad), float(phase.dec.rad)
+    if ra0 == raf and dec0 == decf:
+        return np.eye(3)
+    return _local_frame(ra0, dec0).T @ _local_frame(raf, decf)
+
+
+def phase_to_pointing_lm(l, m, rotation: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Map ``(l, m)`` about the phase centre to ``(l', m')`` about the pointing centre.
+
+    ``l`` and ``m`` are in degrees, meaning ``rad2deg`` of the SIN direction
+    cosine (the unit of the BDS feed-plane grids, see ``GLOSSARY.md``), East and
+    North positive. ``rotation`` is ``sky_rotation_matrix(pointing, phase)``.
+    The arithmetic is float64 whatever the input dtype.
+
+    Returns ``(l', m', valid)``, each shaped like the broadcast of ``l`` and
+    ``m``. ``valid`` is False where the input is off the sky (``l² + m² ≥ 1`` in
+    direction cosines) or the direction lies on the far hemisphere of the
+    pointing centre; there ``l'`` and ``m'`` are ``OFF_SKY_DEG``, which every
+    interpolation in this package treats as off-cube. With the identity rotation
+    ``l'`` and ``m'`` are ``l`` and ``m`` themselves.
+    """
+    l = np.asarray(l, dtype=float)
+    m = np.asarray(m, dtype=float)
+    l, m = np.broadcast_arrays(l, m)
+    lr, mr = np.deg2rad(l), np.deg2rad(m)
+    r2 = lr * lr + mr * mr
+    on_sky = r2 < 1.0
+    if np.array_equal(rotation, np.eye(3)):
+        lp, mp = l, m
+        valid = on_sky
+    else:
+        n = np.sqrt(np.where(on_sky, 1.0 - r2, 0.0))
+        s0 = np.einsum("ij,j...->i...", rotation, np.stack([lr, mr, n]))
+        valid = on_sky & (s0[2] > 0.0)
+        lp, mp = np.rad2deg(s0[0]), np.rad2deg(s0[1])
+    # np.where also copies, so the broadcast (read-only) views of the inputs never leak out
+    return np.where(valid, lp, OFF_SKY_DEG), np.where(valid, mp, OFF_SKY_DEG), valid
+
+
+# ---------------------------------------------------------------------------
 # BeamWizard
 # ---------------------------------------------------------------------------
 
@@ -529,10 +603,20 @@ class BeamWizard(object):
 
     ``image_name`` is optional. Without an image the wizard runs in BDS-only
     mode: ``interpolate_beam`` and the prefilter/frequency helpers work, but
-    ``centre``/``wcs``/``l_grid``/``m_grid`` raise ``RuntimeError`` and
-    ``times`` is ``None``. Call ``attach_image(image_name)`` to populate all
-    image-derived state from a FITS/xradio image, or ``set_field_centre(centre)``
-    to supply just a pointing centre (e.g. for beam gain at a fixed source).
+    ``pointing_centre``/``phase_centre``/``wcs``/``l_grid``/``m_grid`` raise
+    ``RuntimeError`` and ``times`` is ``None``. Call ``attach_image(image_name)``
+    to populate all image-derived state from a FITS/xradio image, or
+    ``set_pointing_centre(pointing_centre)`` to supply just a pointing centre
+    (e.g. for beam gain at a fixed source).
+
+    Two directions matter and may differ. The **pointing centre** is where the
+    dishes track; the beam is centred on it and turns about it with parallactic
+    angle. The **phase centre** is the tangent point that image or model ``l``/``m``
+    are measured from. An attached image sets the phase centre (its reference
+    direction); the pointing centre defaults to it unless set explicitly, by
+    ``set_pointing_centre`` or a method's ``pointing_centre=``. The render methods
+    take ``phase_centre=`` too and map ``l``/``m`` onto the pointing centre's SIN
+    plane before evaluating the beam; when the two coincide nothing is mapped.
 
     ``freq_extrapolation`` sets what happens to a requested frequency outside
     the BDS ``FREQ`` range. ``"raise"`` (default) refuses it. ``"scale"``
@@ -646,10 +730,11 @@ class BeamWizard(object):
         log.info(f"location is MeerKAT ({self.default_location})")
         self._prefilters = {}
 
-        # Image-derived state; unset until an image is attached or a field
-        # centre is supplied. See attach_image() / set_field_centre().
+        # Image-derived state; unset until an image is attached or a pointing
+        # centre is supplied. See attach_image() / set_pointing_centre().
         self._wcs = None
-        self._centre = None
+        self._pointing_centre = None
+        self._phase_centre = None
         self._times = None
         self._l_grid = None
         self._m_grid = None
@@ -659,19 +744,35 @@ class BeamWizard(object):
         else:
             log.warning(
                 "BeamWizard constructed without an image: operating in BDS-only mode. "
-                "Methods needing a field centre, time axis, or default l/m grid "
+                "Methods needing a pointing centre, time axis, or default l/m grid "
                 "(get_source_coordinates, get_rotation_averaged_beam, get_time_freq_beam) "
-                "will raise until you call attach_image(image_name) or set_field_centre(centre=...)."
+                "will raise until you call attach_image(image_name) or "
+                "set_pointing_centre(pointing_centre=...)."
             )
 
     @property
-    def centre(self):
-        if self._centre is None:
-            raise RuntimeError(
-                "BeamWizard.centre is unavailable: this wizard was constructed without an image. "
-                "Call attach_image(image_name) or set_field_centre(centre=...) first."
-            )
-        return self._centre
+    def pointing_centre(self) -> SkyCoord:
+        """Where the dishes point: set explicitly, else the phase centre of an attached image."""
+        if self._pointing_centre is not None:
+            return self._pointing_centre
+        if self._phase_centre is not None:
+            return self._phase_centre
+        raise RuntimeError(
+            "BeamWizard.pointing_centre is unavailable: this wizard was constructed without an image. "
+            "Call attach_image(image_name) or set_pointing_centre(pointing_centre=...) first."
+        )
+
+    @property
+    def phase_centre(self) -> SkyCoord:
+        """Tangent point of the attached image's l/m grid; the pointing centre if no image is attached."""
+        if self._phase_centre is not None:
+            return self._phase_centre
+        if self._pointing_centre is not None:
+            return self._pointing_centre
+        raise RuntimeError(
+            "BeamWizard.phase_centre is unavailable: this wizard was constructed without an image. "
+            "Call attach_image(image_name) or set_pointing_centre(pointing_centre=...) first."
+        )
 
     @property
     def wcs(self):
@@ -707,7 +808,7 @@ class BeamWizard(object):
         return self._times
 
     def attach_image(self, image_name: str) -> None:
-        """Attach an image (FITS or xradio zarr), populating the field centre,
+        """Attach an image (FITS or xradio zarr), populating the phase centre,
         time axis, and default l/m grid from its WCS.
 
         May be called after construction to upgrade a BDS-only wizard, or to
@@ -735,8 +836,12 @@ class BeamWizard(object):
             log.debug(f"dropping WCS axis {wcs.axis_type_names[-1]}")
             wcs = wcs.dropaxis(len(wcs.axis_type_names) - 1)
         self._wcs = wcs
-        self._centre = wcs.pixel_to_world(fitshdr["CRPIX1"] - 1, fitshdr["CRPIX2"] - 1)
-        log.info(f"image centre is at {self._centre}")
+        # The image's reference direction is the tangent point of its l/m grid:
+        # a phase centre. The pointing centre follows it unless set explicitly.
+        self._phase_centre = wcs.pixel_to_world(fitshdr["CRPIX1"] - 1, fitshdr["CRPIX2"] - 1)
+        log.info(f"image phase centre is at {self._phase_centre}")
+        if self._pointing_centre is None:
+            log.info("pointing centre defaults to the image phase centre")
 
         # Construct default l/m grid from image pixels
         nx, ny = fitshdr["NAXIS1"], fitshdr["NAXIS2"]
@@ -751,20 +856,45 @@ class BeamWizard(object):
             f"m=[{self._m_grid[0]:.4f}, {self._m_grid[-1]:.4f}] deg"
         )
 
-    def set_field_centre(self, centre: SkyCoord, times: Optional[Time] = None) -> None:
-        """Set the field (pointing) centre — and optionally the time axis —
-        without attaching an image.
+    def set_pointing_centre(self, pointing_centre: SkyCoord, times: Optional[Time] = None) -> None:
+        """Set the pointing centre — and optionally the time axis.
 
-        Use this for workflows that only need beam values at explicit source
-        positions (e.g. beam gain at a calibrator). ``centre`` is an astropy
-        ``SkyCoord``; ``times`` an astropy ``Time``. The WCS and default l/m
-        grid stay unavailable, so methods that fall back to the image grid
-        still require explicit l/m.
+        Works with or without an attached image. Without one, use it for
+        workflows that only need beam values at explicit source positions (e.g.
+        beam gain at a calibrator); the WCS and default l/m grid stay
+        unavailable, so methods that fall back to the image grid still require
+        explicit l/m. With one, it overrides the default (the image's phase
+        centre), and the image grid is then mapped onto the pointing centre's SIN
+        plane by the render methods. ``pointing_centre`` is an astropy
+        ``SkyCoord``; ``times`` an astropy ``Time``.
         """
-        self._centre = centre
+        self._pointing_centre = pointing_centre
         if times is not None:
             self._times = times
-        log.info(f"field centre set to {centre}")
+        log.info(f"pointing centre set to {pointing_centre}")
+
+    def _phase_rotation(self, pointing_centre: Optional[SkyCoord], phase_centre: Optional[SkyCoord]) -> np.ndarray:
+        """``sky_rotation_matrix`` for one call: the l/m grid's phase centre onto the pointing centre.
+
+        ``phase_centre`` defaults to the stored one (an attached image's) and
+        ``pointing_centre`` to ``self.pointing_centre``. With no phase centre
+        either way, l/m are already about the pointing centre and the result is
+        exactly the identity without a pointing centre being needed at all (so
+        ``average="azimuth"`` keeps working on a bare wizard). Nothing is stored.
+        """
+        if phase_centre is None:
+            phase_centre = self._phase_centre
+        if phase_centre is None:
+            return np.eye(3)
+        pointing = self.pointing_centre if pointing_centre is None else pointing_centre
+        return sky_rotation_matrix(pointing, phase_centre)
+
+    def _to_pointing_frame(self, ll: np.ndarray, mm: np.ndarray, rotation: np.ndarray):
+        """``phase_to_pointing_lm`` without the mask, and a no-op (same arrays) for the identity."""
+        if np.array_equal(rotation, np.eye(3)):
+            return ll, mm
+        lp, mp, _ = phase_to_pointing_lm(ll, mm, rotation)
+        return lp, mp
 
     def _get_prefilter(self, var: str, i: Union[str, int], j: Union[str, int], order: int = 3, verbose=1):
         # order is included in the cache key: spline_filter coefficients depend on
@@ -842,16 +972,16 @@ class BeamWizard(object):
         return times
 
     def _parallactic_angles(
-        self, times: Time, loc: Optional[EarthLocation] = None, centre: Optional[SkyCoord] = None
+        self, times: Time, loc: Optional[EarthLocation] = None, pointing_centre: Optional[SkyCoord] = None
     ) -> np.ndarray:
         """Parallactic angle of the pointing centre at each time, in radians.
 
-        ``centre=None`` uses the wizard's own pointing centre (which raises if
-        no image is attached). A supplied centre is used here and nowhere else:
+        ``pointing_centre=None`` uses the wizard's own pointing centre (which
+        raises if there is none). A supplied one is used here and nowhere else:
         nothing is stored, so one wizard can serve many pointings.
         """
         frame = AltAz(obstime=times, location=self.default_location if loc is None else loc)
-        altaz_centre = (self.centre if centre is None else centre).transform_to(frame)
+        altaz_centre = (self.pointing_centre if pointing_centre is None else pointing_centre).transform_to(frame)
         # position angle from the centre to the north celestial pole
         ncp = SkyCoord(ra=0 * u.deg, dec=90 * u.deg)
         return altaz_centre.position_angle(ncp.transform_to(frame)).rad
@@ -873,7 +1003,7 @@ class BeamWizard(object):
         # convert positions to alt-az
         frame = AltAz(obstime=times, location=loc)
         altaz_src = srcpos.transform_to(frame)
-        altaz_centre = self.centre.transform_to(frame)
+        altaz_centre = self.pointing_centre.transform_to(frame)
         # get angle and separation of source w.r.t. centre
         angles = altaz_centre.position_angle(altaz_src)
         seps = altaz_centre.separation(altaz_src)
@@ -1073,7 +1203,8 @@ class BeamWizard(object):
         average: str = "pa",
         num_angles: int = 64,
         verbose: int = 1,
-        centre: Optional[SkyCoord] = None,
+        pointing_centre: Optional[SkyCoord] = None,
+        phase_centre: Optional[SkyCoord] = None,
         nthreads: int = 1,
         pa_tolerance: float = 0.0,
         order: int = 3,
@@ -1081,15 +1212,15 @@ class BeamWizard(object):
         """
         Compute the rotation-averaged beam at specified l/m coordinates.
 
-        Given a grid of l/m coordinates (in degrees, relative to field center),
-        computes the average beam value at each position by rotating through
-        the parallactic angles corresponding to the given times.
+        Given a grid of l/m coordinates (in degrees, relative to the phase
+        centre), computes the average beam value at each position by rotating
+        through the parallactic angles corresponding to the given times.
 
         Args:
-            l: 1D or 2D array of l coordinates in degrees (east offset from center).
-               If None, uses image grid. If 1D, will be meshed with m.
-            m: 1D or 2D array of m coordinates in degrees (north offset from center).
-               If None, uses image grid. If 1D, will be meshed with l.
+            l: 1D or 2D array of l coordinates in degrees (east offset from the
+               phase centre). If None, uses image grid. If 1D, will be meshed with m.
+            m: 1D or 2D array of m coordinates in degrees (north offset from the
+               phase centre). If None, uses image grid. If 1D, will be meshed with l.
             times: Times to average over. If None, uses times from image/dataset.
             loc: Observer location. If None, uses MeerKAT.
             freq: Explicit frequency array in Hz. If None, uses beam dataset frequencies.
@@ -1113,13 +1244,19 @@ class BeamWizard(object):
                      symmetric map -- usually enough for image-space mosaicing.
             num_angles: number of angles for average="azimuth" (default 64).
                         Must be at least 2. Ignored when average="pa".
-            centre: Pointing centre for the parallactic-angle computation when
-                    average="pa". If None (default), uses the wizard's own centre
-                    from an attached image or set_field_centre(), which raises if
-                    neither is available. A supplied SkyCoord is used for this
-                    call only and is not stored, so one wizard can serve many
-                    pointings. Ignored when average="azimuth", which has no
-                    centre dependence.
+            pointing_centre: Where the dishes point: the parallactic angles are
+                    computed for it and the beam is centred on it. If None
+                    (default), uses the wizard's pointing_centre (set
+                    explicitly, else an attached image's phase centre), which
+                    raises if neither is available. A supplied SkyCoord is used
+                    for this call only and is not stored, so one wizard can
+                    serve many pointings.
+            phase_centre: Tangent point l/m are measured from. If None
+                    (default), uses an attached image's phase centre, else the
+                    pointing centre. When it differs from the pointing centre,
+                    l/m are mapped onto the pointing centre's SIN plane before
+                    the beam is evaluated; directions that plane does not cover
+                    get 0. Not stored.
             nthreads: Threads to spread the pixels over (default 1). The pixels
                       are split into at least nthreads chunks, each accumulated
                       over every angle on its own thread; scipy's map_coordinates
@@ -1211,9 +1348,13 @@ class BeamWizard(object):
         # Pixel stepping: evaluate on a subsampled grid, interpolate back at the end
         full_shape = ll.shape
         ll_flat, mm_flat, shape, upsample_coords = _coarsen_grid(ll, mm, pixel_stepping)
+        # l/m are about the phase centre; the beam is about the pointing centre.
+        # The map is pointwise, so applying it after coarsening is exact.
+        rotation = self._phase_rotation(pointing_centre, phase_centre)
+        ll_flat, mm_flat = self._to_pointing_frame(ll_flat, mm_flat, rotation)
 
         if average == "pa":
-            angles = self._parallactic_angles(times, loc, centre)
+            angles = self._parallactic_angles(times, loc, pointing_centre)
 
         n_times = len(angles)
         if pa_tolerance > 0:
@@ -1333,7 +1474,7 @@ class BeamWizard(object):
     def partition_mueller(
         self,
         *,
-        field_centre: SkyCoord,
+        pointing_centre: SkyCoord,
         times: Time,
         freq: float,
         l: np.ndarray,
@@ -1341,6 +1482,7 @@ class BeamWizard(object):
         stokes_out: str = "IQUV",
         stokes_in: str = "I",
         location: Optional[EarthLocation] = None,
+        phase_centre: Optional[SkyCoord] = None,
         time_stepping: int = 1,
         pixel_stepping: int = 1,
         normalised: bool = True,
@@ -1363,15 +1505,15 @@ class BeamWizard(object):
         calling application's job, so a mixed array means one wizard per group.
 
         Args:
-            field_centre: Where the antennas point -- the pointing centre, not the
-                          image tangent point. Parallactic angles are computed for
-                          this direction. Not stored: one wizard serves many
-                          partitions with different pointings.
+            pointing_centre: Where the dishes point. Parallactic angles are
+                          computed for this direction and the beam is centred on
+                          it. Not stored: one wizard serves many partitions with
+                          different pointings.
             times: The chunk's timestamps. The parallactic-angle average runs over
                    these. A scalar Time (a single timestamp) is accepted.
             freq: The chunk's effective frequency in Hz, a scalar.
-            l: Output grid in degrees, East positive, relative to field_centre.
-            m: Output grid in degrees, North positive, relative to field_centre.
+            l: Output grid in degrees, East positive, relative to the phase centre.
+            m: Output grid in degrees, North positive, relative to the phase centre.
                1D l/m are meshed internally; 2D l/m must already be (Y, X)-shaped
                and are passed through in that orientation.
             stokes_out: Subset of "IQUV" selecting the block's rows, in the order
@@ -1380,6 +1522,11 @@ class BeamWizard(object):
                        given. Defaults to "I" -- the apparent-from-intrinsic-I
                        column, which is what a total-intensity model needs.
             location: Observer EarthLocation. None means MeerKAT.
+            phase_centre: Tangent point of the model grid that l/m are measured
+                          from. None means an attached image's phase centre, else
+                          pointing_centre (no mapping). A model whose tangent point
+                          is not the pointing passes it here; the block is then the
+                          beam seen on the model's own grid. Not stored.
             time_stepping: Use every Nth timestamp. Defaults to 1, unlike
                            get_rotation_averaged_beam's 4, because a data partition
                            is already a narrow time range.
@@ -1490,7 +1637,8 @@ class BeamWizard(object):
                     i=i,
                     j=j,
                     average="pa",
-                    centre=field_centre,
+                    pointing_centre=pointing_centre,
+                    phase_centre=phase_centre,
                     verbose=0,
                     nthreads=nthreads,
                     pa_tolerance=pa_tolerance,
@@ -1528,6 +1676,8 @@ class BeamWizard(object):
         compressor=None,
         filters=None,
         verbose: int = 1,
+        pointing_centre: Optional[SkyCoord] = None,
+        phase_centre: Optional[SkyCoord] = None,
     ):
         """
         Compute the beam per time and frequency and write to a zarr dataset.
@@ -1543,8 +1693,10 @@ class BeamWizard(object):
             ds: Optional existing xarray Dataset.
                 If provided, its coordinates are used as defaults for l, m, times,
                 freq; explicitly provided values are checked for consistency.
-            l: 1D array of l coordinates in degrees. If None, uses ds coords or image grid.
-            m: 1D array of m coordinates in degrees. If None, uses ds coords or image grid.
+            l: 1D array of l coordinates in degrees, about the phase centre. If
+               None, uses ds coords or image grid.
+            m: 1D array of m coordinates in degrees, about the phase centre. If
+               None, uses ds coords or image grid.
             times: Times to compute at. If None, uses ds coords or image/dataset times.
             loc: Observer location. If None, uses MeerKAT.
             freq: Explicit frequency array in Hz. If None, uses ds coords or beam
@@ -1562,6 +1714,10 @@ class BeamWizard(object):
                      Default is [("I", "I")].
             compressor: Zarr compressor (e.g. numcodecs.Blosc). If None, uses zarr default.
             filters: List of zarr filters. If None, no filters.
+            pointing_centre: Where the dishes point; as for
+                             get_rotation_averaged_beam. Not stored.
+            phase_centre: Tangent point l/m are measured from; as for
+                          get_rotation_averaged_beam. Not stored.
 
         """
         import zarr
@@ -1634,8 +1790,10 @@ class BeamWizard(object):
         full_shape = ll.shape
         nx, ny = full_shape
         ll_flat, mm_flat, compute_shape, upsample_coords = _coarsen_grid(ll, mm, pixel_stepping)
+        rotation = self._phase_rotation(pointing_centre, phase_centre)
+        ll_flat, mm_flat = self._to_pointing_frame(ll_flat, mm_flat, rotation)
 
-        pa = self._parallactic_angles(times, loc)
+        pa = self._parallactic_angles(times, loc, pointing_centre)
 
         n_times = len(times)
         n_freq = len(freq)
@@ -1745,8 +1903,9 @@ def enrich_bds_xradio(zarr_path: str, bw: BeamWizard, output_var: str, polarizat
     store[output_var].attrs["_ARRAY_DIMENSIONS"] = ["time", "frequency", "polarization", "l", "m"]
 
     # Dataset-level attributes: direction block matching reference schema
-    ra0 = float(bw.centre.ra.rad)
-    dec0 = float(bw.centre.dec.rad)
+    # the l/m axes are the image's, so the direction reference is its phase centre
+    ra0 = float(bw.phase_centre.ra.rad)
+    dec0 = float(bw.phase_centre.dec.rad)
 
     existing_attrs = dict(store.attrs)
     existing_attrs["direction"] = {

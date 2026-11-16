@@ -1,4 +1,4 @@
-"""BeamWizard.partition_mueller and the centre= override that serves it."""
+"""BeamWizard.partition_mueller and the pointing_centre= override that serves it."""
 
 import numpy as np
 import pytest
@@ -29,7 +29,7 @@ def image_path(tmp_path_factory):
 
 @pytest.fixture
 def bw(bds_path):
-    """BDS-only wizard: no image, so self.centre raises until a centre is supplied."""
+    """BDS-only wizard: no image, so self.pointing_centre raises until one is supplied."""
     return BeamWizard(bds_path)
 
 
@@ -49,33 +49,33 @@ def _avg(bw, **kwargs):
 
 @pytest.mark.unit
 def test_centre_override_works_without_an_image(bw):
-    """A BDS-only wizard has no self.centre; centre= must make PA averaging possible."""
-    mean, var = _avg(bw, centre=FIELD_CENTRE)
+    """A BDS-only wizard has no self.pointing_centre; pointing_centre= must make PA averaging possible."""
+    mean, var = _avg(bw, pointing_centre=FIELD_CENTRE)
     assert mean.shape == (len(M), len(L))
     assert np.isfinite(mean).all()
 
 
 @pytest.mark.unit
 def test_centre_override_does_not_mutate_the_wizard(bw):
-    assert bw._centre is None
-    _avg(bw, centre=FIELD_CENTRE)
-    assert bw._centre is None
+    assert bw._pointing_centre is None
+    _avg(bw, pointing_centre=FIELD_CENTRE)
+    assert bw._pointing_centre is None
 
 
 @pytest.mark.unit
 def test_centre_none_matches_the_attached_image_centre(bds_path, image_path):
-    """centre=None must reproduce today's behaviour bit for bit."""
+    """pointing_centre=None must reproduce today's behaviour bit for bit."""
     bw = BeamWizard(bds_path, image_path)
     implicit, _ = _avg(bw)
-    explicit, _ = _avg(bw, centre=bw.centre)
+    explicit, _ = _avg(bw, pointing_centre=bw.pointing_centre)
     assert np.array_equal(implicit, explicit)
 
 
 @pytest.mark.unit
 def test_different_centres_give_different_parallactic_averages(bw):
     """The override must actually reach the PA computation, not be ignored."""
-    south, _ = _avg(bw, centre=SkyCoord(ra=0.0, dec=-30.0, unit="deg"))
-    pole, _ = _avg(bw, centre=SkyCoord(ra=0.0, dec=-75.0, unit="deg"))
+    south, _ = _avg(bw, pointing_centre=SkyCoord(ra=0.0, dec=-30.0, unit="deg"))
+    pole, _ = _avg(bw, pointing_centre=SkyCoord(ra=0.0, dec=-75.0, unit="deg"))
     assert not np.allclose(south, pole)
 
 
@@ -92,7 +92,7 @@ def test_centre_is_ignored_for_azimuth_averaging(bw):
         average="azimuth",
         num_angles=8,
         pixel_stepping=1,
-        centre=SkyCoord(ra=0.0, dec=-75.0, unit="deg"),
+        pointing_centre=SkyCoord(ra=0.0, dec=-75.0, unit="deg"),
         verbose=0,
     )[0]
     assert np.array_equal(without, with_centre)
@@ -101,25 +101,25 @@ def test_centre_is_ignored_for_azimuth_averaging(bw):
 @pytest.mark.unit
 def test_speed_options_reach_get_rotation_averaged_beam(bw):
     """nthreads, pa_tolerance and order are forwarded, not swallowed."""
-    kw = dict(field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M, stokes_out="I")
+    kw = dict(pointing_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M, stokes_out="I")
     block = bw.partition_mueller(**kw)
     assert np.array_equal(bw.partition_mueller(**kw, nthreads=3), block)
     for opt in ({"pa_tolerance": 180.0}, {"order": 1}):
-        expected, _ = _avg(bw, i="I", j="I", centre=FIELD_CENTRE, **opt)
+        expected, _ = _avg(bw, i="I", j="I", pointing_centre=FIELD_CENTRE, **opt)
         assert np.array_equal(bw.partition_mueller(**kw, **opt)[0, 0], expected.astype(np.float32))
 
 
 @pytest.mark.unit
 def test_default_block_shape(bw):
     """stokes_out='IQUV', stokes_in='I' is the apparent-I-from-intrinsic-I column."""
-    M_blk = bw.partition_mueller(field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M)
+    M_blk = bw.partition_mueller(pointing_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M)
     assert M_blk.shape == (4, 1, len(M), len(L))
 
 
 @pytest.mark.unit
 def test_requested_subsets_set_the_block_shape(bw):
     M_blk = bw.partition_mueller(
-        field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M, stokes_out="IQ", stokes_in="IQUV"
+        pointing_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M, stokes_out="IQ", stokes_in="IQUV"
     )
     assert M_blk.shape == (2, 4, len(M), len(L))
 
@@ -128,11 +128,11 @@ def test_requested_subsets_set_the_block_shape(bw):
 def test_elements_equal_get_rotation_averaged_beam(bw):
     """partition_mueller assembles; it must not reimplement the averaging."""
     M_blk = bw.partition_mueller(
-        field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M, stokes_out="IQ", stokes_in="IU"
+        pointing_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M, stokes_out="IQ", stokes_in="IU"
     )
     for a, i in enumerate("IQ"):
         for b, j in enumerate("IU"):
-            expected, _ = _avg(bw, i=i, j=j, centre=FIELD_CENTRE)
+            expected, _ = _avg(bw, i=i, j=j, pointing_centre=FIELD_CENTRE)
             assert np.array_equal(M_blk[a, b], expected.astype(np.float32))
 
 
@@ -140,10 +140,10 @@ def test_elements_equal_get_rotation_averaged_beam(bw):
 def test_block_follows_caller_stokes_order(bw):
     """Column 0 of stokes_in='VI' is V, not the dataset's first Stokes parameter."""
     reversed_blk = bw.partition_mueller(
-        field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M, stokes_out="VI", stokes_in="VI"
+        pointing_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M, stokes_out="VI", stokes_in="VI"
     )
     forward_blk = bw.partition_mueller(
-        field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M, stokes_out="IV", stokes_in="IV"
+        pointing_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M, stokes_out="IV", stokes_in="IV"
     )
     # Reversing both axes of a 2x2 block is the same as [::-1, ::-1] of the other.
     assert np.array_equal(reversed_blk, forward_blk[::-1, ::-1])
@@ -155,7 +155,7 @@ def test_on_axis_block_is_the_identity(bw):
     the centre pixel, so the PA average there is the on-axis value."""
     zero = np.array([0.0])
     M_blk = bw.partition_mueller(
-        field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=zero, m=zero, stokes_out="IQUV", stokes_in="IQUV"
+        pointing_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=zero, m=zero, stokes_out="IQUV", stokes_in="IQUV"
     )
     assert M_blk.shape == (4, 4, 1, 1)
     np.testing.assert_allclose(M_blk[:, :, 0, 0], np.eye(4), rtol=0, atol=1e-4)
@@ -167,7 +167,7 @@ def test_non_square_grid_pins_the_y_x_order(bw):
     transpose a shape error rather than a silent wrong answer."""
     l7 = np.linspace(-0.3, 0.3, 7)
     m5 = np.linspace(-0.2, 0.2, 5)
-    M_blk = bw.partition_mueller(field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=l7, m=m5)
+    M_blk = bw.partition_mueller(pointing_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=l7, m=m5)
     assert M_blk.shape == (4, 1, 5, 7)
 
 
@@ -175,8 +175,8 @@ def test_non_square_grid_pins_the_y_x_order(bw):
 def test_two_dimensional_lm_grids_pass_through(bw):
     """A caller holding meshgrid output passes it straight in."""
     ll, mm = np.meshgrid(L, M)
-    from_2d = bw.partition_mueller(field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=ll, m=mm)
-    from_1d = bw.partition_mueller(field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M)
+    from_2d = bw.partition_mueller(pointing_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=ll, m=mm)
+    from_1d = bw.partition_mueller(pointing_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M)
     assert np.array_equal(from_2d, from_1d)
 
 
@@ -185,30 +185,30 @@ def test_pixel_stepping_returns_full_grid(bw):
     """pixel_stepping=3 on a 7-pixel axis must still return 7 pixels."""
     l7 = np.linspace(-0.3, 0.3, 7)
     m7 = np.linspace(-0.3, 0.3, 7)
-    M_blk = bw.partition_mueller(field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=l7, m=m7, pixel_stepping=3)
+    M_blk = bw.partition_mueller(pointing_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=l7, m=m7, pixel_stepping=3)
     assert M_blk.shape == (4, 1, 7, 7)
     assert np.isfinite(M_blk).all()
 
 
 @pytest.mark.unit
 def test_dtype_is_float32_for_a_single_telescope(bw):
-    M_blk = bw.partition_mueller(field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M)
+    M_blk = bw.partition_mueller(pointing_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M)
     assert M_blk.dtype == np.float32
 
 
 @pytest.mark.unit
 def test_normalised_false_selects_the_raw_stokes_beam(bw):
     """normalised=False must read 'stokes', not 'nstokes'."""
-    raw = bw.partition_mueller(field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M, normalised=False)
-    expected, _ = _avg(bw, var="stokes", i="I", j="I", centre=FIELD_CENTRE)
+    raw = bw.partition_mueller(pointing_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M, normalised=False)
+    expected, _ = _avg(bw, var="stokes", i="I", j="I", pointing_centre=FIELD_CENTRE)
     assert np.array_equal(raw[0, 0], expected.astype(np.float32))
 
 
 @pytest.mark.unit
 def test_field_centre_does_not_mutate_the_wizard(bw):
-    assert bw._centre is None
-    bw.partition_mueller(field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M)
-    assert bw._centre is None
+    assert bw._pointing_centre is None
+    bw.partition_mueller(pointing_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M)
+    assert bw._pointing_centre is None
 
 
 @pytest.mark.unit
@@ -216,14 +216,14 @@ def test_an_attached_image_centre_survives_a_different_field_centre(bds_path, im
     """A wizard built from an image keeps that centre even after answering for
     a partition pointed somewhere else."""
     bw = BeamWizard(bds_path, image_path)
-    before = bw.centre
-    bw.partition_mueller(field_centre=SkyCoord(ra=10.0, dec=-45.0, unit="deg"), times=TIMES, freq=FREQ, l=L, m=M)
-    assert bw.centre is before
+    before = bw.pointing_centre
+    bw.partition_mueller(pointing_centre=SkyCoord(ra=10.0, dec=-45.0, unit="deg"), times=TIMES, freq=FREQ, l=L, m=M)
+    assert bw.pointing_centre is before
 
 
 def _call(bw, **kwargs):
     """partition_mueller with valid defaults, so each test overrides one thing."""
-    defaults = dict(field_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M)
+    defaults = dict(pointing_centre=FIELD_CENTRE, times=TIMES, freq=FREQ, l=L, m=M)
     defaults.update(kwargs)
     return bw.partition_mueller(**defaults)
 

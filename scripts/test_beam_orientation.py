@@ -141,7 +141,7 @@ def main() -> None:
 
     bw = BeamWizard(band="L")
     # Beam pointing centre = original dish pointing for this field (radians).
-    bw.set_field_centre(SkyCoord(*bundle.pointing_centre, unit="rad", frame="icrs"))
+    bw.set_pointing_centre(SkyCoord(*bundle.pointing_centre, unit="rad", frame="icrs"))
 
     for name in args.perturbations:
         signs, swap = PERTURBATIONS[name]

@@ -239,7 +239,7 @@ def image_path(tmp_path_factory):
 @pytest.mark.unit
 def test_partition_mueller_scale_evaluates_band_edge(bds_path):
     kw = dict(
-        field_centre=FIELD_CENTRE, times=TIMES, freq=0.95e9, l=np.linspace(-0.3, 0.3, 5), m=np.linspace(-0.3, 0.3, 5)
+        pointing_centre=FIELD_CENTRE, times=TIMES, freq=0.95e9, l=np.linspace(-0.3, 0.3, 5), m=np.linspace(-0.3, 0.3, 5)
     )
     block = _wizard(bds_path, freq_extrapolation="scale").partition_mueller(**kw)
     assert block.shape == (4, 1, 5, 5)
@@ -286,9 +286,9 @@ def test_time_freq_beam_scale_renders_band_edge(bds_path, image_path, tmp_path):
 def test_get_time_variable_beamgain_scale(bds_path, image_path):
     scale_bw = BeamWizard(bds_path, image_path, freq_extrapolation="scale")
     raise_bw = BeamWizard(bds_path, image_path)
-    on_axis = scale_bw.get_time_variable_beamgain(scale_bw.centre, freq=np.array([1.35e9]), times=TIMES)
+    on_axis = scale_bw.get_time_variable_beamgain(scale_bw.pointing_centre, freq=np.array([1.35e9]), times=TIMES)
     np.testing.assert_allclose(
-        on_axis, raise_bw.get_time_variable_beamgain(raise_bw.centre, freq=np.array([1.3e9]), times=TIMES)
+        on_axis, raise_bw.get_time_variable_beamgain(raise_bw.pointing_centre, freq=np.array([1.3e9]), times=TIMES)
     )
     off = SkyCoord(ra=RA0 + 0.3, dec=DEC0, unit="deg")
     above = scale_bw.get_time_variable_beamgain(off, freq=np.array([1.35e9]), times=TIMES)
