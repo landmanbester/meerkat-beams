@@ -808,12 +808,19 @@ class BeamWizard(object):
     def lm_to_pixel(self, l, m, angle=None) -> Tuple[np.ndarray, np.ndarray]:
         """Map ``(l, m)`` offsets from the pointing centre, in degrees, to BDS pixel coordinates.
 
-        With ``angle`` (radians, as returned by the parallactic-angle
-        computation) the sky-frame offsets are first rotated into the beam
-        frame. This is the only place that rotation and the degrees-to-pixel
-        scaling are written down: every method that evaluates the beam at sky
-        offsets goes through here, so the orientation convention (still
-        provisional, see ``docs/wiki/beam-orientation.md``) has one home.
+        With ``angle`` (radians, the parallactic angle) the sky-frame offsets
+        are first taken into the beam frame, ``(l, m) -> (m sin a - l cos a,
+        l sin a + m cos a)``. That map is a rotation combined with a flip of
+        ``l`` (its determinant is -1), so ``angle=0`` gives ``(-l, m)`` and is
+        NOT the same as ``angle=None``, which applies no transform at all.
+
+        This is the only place the sky-to-beam transform of the rendered beams
+        (``get_rotation_averaged_beam``, ``get_time_freq_beam``) and the
+        degrees-to-pixel scaling are written down. ``get_source_coordinates``
+        derives its beam-frame offsets separately, from a separation and
+        position angle, and uses this method for the scaling only. The
+        orientation convention is still provisional, see
+        ``docs/wiki/beam-orientation.md``.
 
         Returns ``(xp, yp)``, each shaped like its input, ready to be stacked
         into the ``xpyp`` argument of ``interpolate_beam``.
@@ -1689,7 +1696,7 @@ class BeamWizard(object):
             beam_2d = beam_vals.reshape((n_freq,) + compute_shape)
             if upsample_coords is not None:
                 beam_2d = _upsample_planes(beam_2d, upsample_coords, full_shape)
-            return beam_2d.astype(out_dtype)
+            return beam_2d.astype(out_dtype, copy=False)
 
         # Sequential computation across (time, ij); write to zarr after each plane
         done_count = 0

@@ -1216,25 +1216,40 @@ def test_lm_to_pixel_maps_degrees_onto_the_bds_grid(bw):
 
 
 @pytest.mark.unit
-def test_lm_to_pixel_rotation_preserves_distance_from_the_centre(bw):
-    """An angle rotates the offsets about the centre pixel: radii are unchanged, positions are not."""
+def test_lm_to_pixel_with_an_angle_pins_the_sky_to_beam_transform(bw):
+    """Literal values of (l, m) -> (m sin a - l cos a, l sin a + m cos a).
+
+    One pixel east of the centre lands one pixel *west* at angle 0 (the
+    transform flips l, so angle=0 differs from angle=None) and one pixel north
+    at 90 degrees; one pixel north stays put at 0 and lands one pixel east at
+    90 degrees. A sign change, an axis swap or a proper rotation all fail here.
+    """
     x0, y0, dx, dy = (bw.bds.attrs[k] for k in ("x0", "y0", "dx", "dy"))
-    l = np.array([0.3, -0.2, 0.0])
-    m = np.array([0.1, 0.4, 0.0])
-    xp, yp = bw.lm_to_pixel(l, m, angle=0.7)
-    np.testing.assert_allclose(np.hypot((xp - x0) * dx, (yp - y0) * dy), np.hypot(l, m), atol=1e-12)
-    assert xp[2] == x0 and yp[2] == y0
-    assert not np.allclose(xp[:2], bw.lm_to_pixel(l, m)[0][:2])
+    east, north = (np.array([dx]), np.array([0.0])), (np.array([0.0]), np.array([dy]))
+    np.testing.assert_allclose(bw.lm_to_pixel(*east, angle=0.0), [[x0 - 1], [y0]], atol=1e-12)
+    np.testing.assert_allclose(bw.lm_to_pixel(*east, angle=np.pi / 2), [[x0], [y0 + dx / dy]], atol=1e-12)
+    np.testing.assert_allclose(bw.lm_to_pixel(*north, angle=0.0), [[x0], [y0 + 1]], atol=1e-12)
+    np.testing.assert_allclose(bw.lm_to_pixel(*north, angle=np.pi / 2), [[x0 + dy / dx], [y0]], atol=1e-12)
+    np.testing.assert_allclose(bw.lm_to_pixel(*east), [[x0 + 1], [y0]], atol=1e-12)
 
 
 @pytest.mark.unit
-def test_rotation_averaged_beam_samples_the_beam_through_lm_to_pixel(bw, times):
-    """One time, no stepping: the averaged map is interpolate_beam at lm_to_pixel's coordinates."""
-    l = np.array([-0.4, 0.0, 0.3])
-    m = np.array([-0.2, 0.25])
-    mean, _ = bw.get_rotation_averaged_beam(l=l, m=m, times=times[:1], time_stepping=1, pixel_stepping=1, verbose=0)
-    ll, mm = np.meshgrid(l, m)
-    angle = bw._parallactic_angles(times[:1])[0]
-    xpyp = np.array(bw.lm_to_pixel(ll.ravel(), mm.ravel(), angle))
-    expected = bw.interpolate_beam(xpyp, bw.bds.coords["FREQ"].values, var="nstokes", i="I", j="I")
-    np.testing.assert_array_equal(mean, expected.reshape((-1,) + ll.shape))
+@pytest.mark.parametrize("lat_deg", [None, 52.9])
+def test_rotation_angle_is_the_textbook_parallactic_angle(bw, lat_deg):
+    """The angle the renders rotate by is q = atan2(sin H, tan(lat) cos(dec) - sin(dec) cos H).
+
+    Checked against the closed form to 1 degree (the form ignores precession
+    since J2000, worth ~0.3 degrees), at the default site and at a northern one
+    so that neither the sign nor the observer location can be dropped.
+    """
+    from astropy.coordinates import EarthLocation
+
+    loc = None if lat_deg is None else EarthLocation(lat=lat_deg * u.deg, lon=6.6 * u.deg, height=0 * u.m)
+    site = bw.default_location if loc is None else loc
+    t = Time("2024-01-01T00:00:00") + np.linspace(0, 6, 7) * u.hour
+    hour_angle = (t.sidereal_time("apparent", longitude=site.lon) - bw.centre.ra).rad
+    lat, dec = site.lat.rad, bw.centre.dec.rad
+    q = np.arctan2(np.sin(hour_angle), np.tan(lat) * np.cos(dec) - np.sin(dec) * np.cos(hour_angle))
+    diff = (bw._parallactic_angles(t, loc) - q + np.pi) % (2 * np.pi) - np.pi
+    assert np.abs(diff).max() < np.radians(1.0)
+    assert np.ptp(q) > np.radians(10.0)  # the track actually rotates, so a constant would fail
