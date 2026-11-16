@@ -2,8 +2,8 @@
 type: index
 title: meerkat-beams LLM wiki
 description: Progressive-disclosure listing of the in-repo knowledge bundle.
-timestamp: 2026-11-05T04:12:00Z
-last_verified_commit: 6a3ddc8
+timestamp: 2026-11-16T15:00:00Z
+last_verified_commit: 59485c2
 ---
 
 # meerkat-beams LLM wiki
@@ -16,8 +16,9 @@ table below points you at, and treat the rest of the codebase as ground truth
 when a page and the code disagree.
 
 **Verification contract:** every page's frontmatter carries
-`last_verified_commit` — the commit its claims were last checked against. To
-assess staleness: `git diff <stamp>..HEAD -- <files the page covers>`; a
+`last_verified_commit` — the last commit that changed the code the page covers
+(`log.md` covers no code and carries none; `CLAUDE.md` has the stamping
+procedure). To assess staleness: `git diff <stamp>..HEAD -- <files the page covers>`; a
 non-empty diff means re-verify the page before trusting it. Maintenance rule:
 if your change invalidates or extends a page, update the page and refresh its
 `timestamp`/`last_verified_commit` **in the same session**. Specs and plans

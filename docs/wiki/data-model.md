@@ -3,19 +3,17 @@ type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr, eidos FITS
 description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, the xradio primary-beam schema, and the eidos-compatible FITS output.
 tags: [mdv, bds, xradio, fits, eidos, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
-timestamp: 2026-11-05T04:12:00Z
-last_verified_commit: eed826f
+timestamp: 2026-11-16T15:00:00Z
+last_verified_commit: 59485c2
 ---
 
 # Data model — MdV npz, BDS zarr, xradio zarr, eidos FITS
 
-Four formats, four conversions: MdV `.npz` (raw archive data) →
+Four formats, three conversions: MdV `.npz` (raw archive data) →
 `mdv-beams-to-bds` → BDS zarr (the package's working format) →
 `bds-to-xradio` → xradio zarr (schema-compatible primary-beam image), or →
 `bds-to-fits` → eidos-compatible FITS beam cubes.
-`mdv-to-xradio` (deprecated, like `download-mdv-beams`: the package now
-works from mean-beam zarrs, not the ~35 GB raw `.npz`) shortcuts directly
-from `.npz` to xradio, skipping the BDS and the time axis. This page pins the field/variable names, dtypes, dims,
+This page pins the field/variable names, dtypes, dims,
 one input-handling asymmetry that is easy to get backwards, and the FITS
 header contract `bds-to-fits` writes.
 
@@ -117,7 +115,7 @@ built by those releases should be deleted and rebuilt.
 Every store the package writes — BDS and both xradio paths — is **zarr
 format 2**, whichever zarr-python is installed: `to_zarr(...,
 zarr_format=ZARR_FORMAT)` for the xarray writers, and
-`zarr_open_group`/`zarr_create_array` (`utils.py:70-159`) for
+`zarr_open_group`/`zarr_create_array` (`utils.py:71-160`) for
 `get_time_freq_beam`/`enrich_bds_xradio`'s raw writes. zarr is unpinned
 (design-decisions D18), so output stays readable by consumers still on
 zarr-python 2, which cannot read v3. Inputs are the other way round: a
@@ -378,8 +376,7 @@ unsliced one.
 
 ## xradio zarr
 
-Produced by `bds-to-xradio` (from a BDS) or the deprecated `mdv-to-xradio`
-(directly from an `.npz`, no time axis, no parallactic-angle rotation). Schema:
+Produced by `bds-to-xradio` from a BDS. Schema:
 `(time, frequency, polarization, l, m)`, with `l`/`m` in **radians** (BDS
 values are in degrees; `enrich_bds_xradio` converts) and a `direction`
 attribute block (`icrs` frame, `SIN` projection, reference = field

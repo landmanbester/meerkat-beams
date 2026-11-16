@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-16T12:00:00Z
+timestamp: 2026-11-16T15:00:00Z
 ---
 
 # Wiki changelog
@@ -579,3 +579,25 @@ descriptions are still accurate).
 - CLAUDE.md gained the matching convention: agents leave the container image
   tag at `:latest`; publishing and retagging a feature-branch image is a
   manual maintainer step.
+
+## 2026-11-16 — deprecated commands removed, dead-code sweep, agent files trimmed (verified at `59485c2`)
+
+- `download-mdv-beams` and `mdv-to-xradio` are gone (`725edae`): cab, CLI,
+  core function and tests for each, plus the `wget` dependency. Both had
+  warned since 0.3.0. `data-model.md` no longer describes the `.npz` →
+  xradio shortcut; D5 and D18 lost their references. The `.npz` input branch
+  of `mdv-beams-to-bds` is still there.
+- Dead-code sweep (`c607ad3`): `PowerBeam`, `BeamWizard`'s unused class
+  annotations, `scripts/bkp.py`, `scripts/pks1934_flux_scale.py`, the
+  always-skipping `test_bds_to_xradio_end_to_end_synthetic`, two
+  `test_mdv_beams_to_bds.py` unit tests duplicated by `test_zarr_format.py`,
+  and the unused `xarray-fits` dependency. The element-grammar tests now call
+  `resolve_elements` directly, and the Jones/Mueller algebra tests live in
+  `test_jones_mueller.py`. Every `utils.py:<line>` citation in
+  `beamwizard.md`, `beam-orientation.md`, `data-model.md` and
+  `design-decisions.md` was remapped to the new line numbers.
+- Agent files (`59485c2`): CLAUDE.md points at the wiki instead of restating
+  the `BeamWizard` contract and the test catalogue; domain terms moved to a
+  root `GLOSSARY.md`; two scripts no longer cite `docs/superpowers/`.
+  `index.md` now defines `last_verified_commit` the way CLAUDE.md does.
+- All five stamped pages re-stamped at `59485c2`.
