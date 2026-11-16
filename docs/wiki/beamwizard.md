@@ -3,8 +3,8 @@ type: reference
 title: BeamWizard interpolation and rendering internals
 description: beam_model (mdv/katbeam), group (MM/MPM/MPMP) and average (pa/azimuth) selectors, interpolate_beam prefilter/off-cube/spline-order/freq-guard semantics and the freq_extrapolation policy, get_source_coordinates transforms, the lm_to_pixel rotation kernel, optional-image paths, get_time_freq_beam canonical dim_names, enrich_bds_xradio, partition_mueller with the centre= override, and the nthreads/pa_tolerance/order speed options of get_rotation_averaged_beam.
 tags: [beamwizard, interpolation, scipy, zarr, xradio, utils, katbeam, baseline-groups, meerkat+, partition-mueller, mueller]
-timestamp: 2026-11-16T19:00:00Z
-last_verified_commit: ea2e231
+timestamp: 2026-11-17T08:00:00Z
+last_verified_commit: df3d627
 ---
 
 # BeamWizard interpolation and rendering internals
@@ -205,8 +205,10 @@ values of the transform, including the `l` flip) and
 `test_rotation_angle_is_the_textbook_parallactic_angle` (the angle against
 the closed form, at two sites). Before these, negating the angle, swapping
 the rotated axes or substituting a proper rotation passed the whole unit
-suite. The bilinear order of `_upsample_planes` is still unpinned: only its
-coordinates are, by `test_time_freq_beam_pixel_stepping_upsamples`.
+suite. The bilinear order of `_upsample_planes` is pinned by
+`test_pixel_stepping_upsample_is_bilinear` (a skipped pixel is exactly the
+mean of its two evaluated neighbours; orders 0 and 3 both fail it), and its
+coordinates by `test_time_freq_beam_pixel_stepping_upsamples`.
 
 One error message changed: with no times available,
 `get_rotation_averaged_beam` and `get_time_freq_beam` now raise "explicit

@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-16T19:00:00Z
+timestamp: 2026-11-17T08:00:00Z
 ---
 
 # Wiki changelog
@@ -619,3 +619,9 @@ descriptions are still accurate).
   supplied, since …").
 - `utils.py` line citations remapped in every page; all five stamped pages
   re-stamped at `ea2e231`.
+
+## 2026-11-17 — upsample order pinned (verified at `df3d627`)
+
+- `test_pixel_stepping_upsample_is_bilinear` pins `order=1` in
+  `_upsample_planes`, the gap the rotation-kernel review left open;
+  `beamwizard.md` says so. All five stamped pages re-stamped at `df3d627`.
