@@ -1349,9 +1349,9 @@ class BeamWizard(object):
         full_shape = ll.shape
         ll_flat, mm_flat, shape, upsample_coords = _coarsen_grid(ll, mm, pixel_stepping)
         # l/m are about the phase centre; the beam is about the pointing centre.
-        # The map is pointwise, so applying it after coarsening is exact.
+        # The map is pointwise, so applying it after coarsening (per chunk,
+        # below) is exact.
         rotation = self._phase_rotation(pointing_centre, phase_centre)
-        ll_flat, mm_flat = self._to_pointing_frame(ll_flat, mm_flat, rotation)
 
         if average == "pa":
             angles = self._parallactic_angles(times, loc, pointing_centre)
@@ -1405,8 +1405,10 @@ class BeamWizard(object):
             chunk_end = min(chunk_start + chunk_size, n_pixels)
             if verbose > 0:
                 self.log.info(f"processing chunk {chunk_idx + 1}/{n_chunks} (pixels {chunk_start}-{chunk_end})")
-            ll_chunk = ll_flat[chunk_start:chunk_end]
-            mm_chunk = mm_flat[chunk_start:chunk_end]
+            # mapped per chunk so the float64 temporaries stay inside chunk_size
+            ll_chunk, mm_chunk = self._to_pointing_frame(
+                ll_flat[chunk_start:chunk_end], mm_flat[chunk_start:chunk_end], rotation
+            )
 
             # Accumulate over time for this chunk
             chunk_sum = np.zeros(

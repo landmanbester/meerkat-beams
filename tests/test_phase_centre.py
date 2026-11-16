@@ -232,8 +232,10 @@ def test_bds_to_xradio_pointing_centre_moves_the_peak(tmp_path):
 
 
 @pytest.mark.unit
-def test_parse_pointing_centre_refuses_colons():
+def test_parse_pointing_centre_refuses_unitless_sexagesimal():
     assert parse_pointing_centre("05h21m09.9s +16d38m22s").ra.deg == pytest.approx(80.29125)
     assert parse_pointing_centre("80.29 16.64").dec.deg == pytest.approx(16.64)
-    with pytest.raises(ValueError, match="colons"):
-        parse_pointing_centre("05:21:09.9 +16:38:22")
+    assert parse_pointing_centre("80.29,16.64").ra.deg == pytest.approx(80.29)
+    for ambiguous in ("05:21:09.9 +16:38:22", "05 21 09.9 +16 38 22"):
+        with pytest.raises(ValueError, match="ambiguous"):
+            parse_pointing_centre(ambiguous)
