@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-17T08:00:00Z
+timestamp: 2026-11-17T10:00:00Z
 ---
 
 # Wiki changelog
@@ -625,3 +625,11 @@ descriptions are still accurate).
 - `test_pixel_stepping_upsample_is_bilinear` pins `order=1` in
   `_upsample_planes`, the gap the rotation-kernel review left open;
   `beamwizard.md` says so. All five stamped pages re-stamped at `df3d627`.
+
+## 2026-11-17 — xarray floor raised to 2025.8 (verified at `cd2af42`)
+
+- #47: xarray 2025.6–2025.7 cannot encode pandas 3's default string dtype.
+  The `[full]` floor is now `xarray>=2025.8` (3.10 keeps `>=2025.6`), and a
+  `floors` CI job tests at it. D18 in `design-decisions.md` records both
+  constraints behind the floor. All five stamped pages re-stamped at `cd2af42`
+  (the other four cite `pyproject.toml` or the CI jobs but needed no edit).

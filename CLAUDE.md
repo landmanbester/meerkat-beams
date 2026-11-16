@@ -106,7 +106,7 @@ zarr is **unpinned** so downstream applications choose zarr-python 2 or 3; every
 - `ZARR_COMPRESSOR` (Blosc zstd, no filter) is applied only when a core function is called with `compress=True`. Any new filter must be lossless.
 - In tests, assert codecs via the store's `.zarray` JSON, not `Array.compressor`.
 
-Rationale, the `xarray>=2025.6` floor and the zarr 2 expiry date: `docs/wiki/design-decisions.md` D18.
+Rationale, the `xarray>=2025.8` floor and the zarr 2 expiry date: `docs/wiki/design-decisions.md` D18.
 
 ## Domain concepts
 
@@ -146,7 +146,7 @@ uv run mbeams --help                  # CLI
 bash scripts/genfuncs.sh
 ```
 
-CI (`.github/workflows/ci.yml`) runs ruff + `MBEAMS_OFFLINE=1` pytest on Python 3.11–3.13, plus a `latest` job (newest xarray + zarr past the lock), a `zarr2` job (zarr-python 2), and a `lightweight` job that pins the 3.10 base-install guarantee (no test suite there — see the Python support policy above). The two jobs sync differently: lint uses `uv sync --group dev`, the test job uses `uv sync --group test --extra full` — **no `dev` group**. So anything a test needs must be in the `test` group, not just `dev`, or the test will skip silently in CI (this is why `katbeam` is listed in both). Commit message containing `[skip checks]` skips the CI job. Docker image built from `Dockerfile` (python:3.11-slim, installs `.[full]`; no `git` — the layer for the retired hip-cargo git-main pin is gone, see `docs/wiki/design-decisions.md` D8).
+CI (`.github/workflows/ci.yml`) runs ruff + `MBEAMS_OFFLINE=1` pytest on Python 3.11–3.13, plus a `latest` job (newest xarray + zarr past the lock), a `zarr2` job (zarr-python 2), a `floors` job (xarray pinned at its declared floor — keep the pin in step with `pyproject.toml`), and a `lightweight` job that pins the 3.10 base-install guarantee (no test suite there — see the Python support policy above). The two jobs sync differently: lint uses `uv sync --group dev`, the test job uses `uv sync --group test --extra full` — **no `dev` group**. So anything a test needs must be in the `test` group, not just `dev`, or the test will skip silently in CI (this is why `katbeam` is listed in both). Commit message containing `[skip checks]` skips the CI job. Docker image built from `Dockerfile` (python:3.11-slim, installs `.[full]`; no `git` — the layer for the retired hip-cargo git-main pin is gone, see `docs/wiki/design-decisions.md` D8).
 
 ## Tests
 

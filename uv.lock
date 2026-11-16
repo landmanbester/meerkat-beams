@@ -1477,7 +1477,8 @@ requires-dist = [
     { name = "numpy", marker = "extra == 'full'" },
     { name = "requests", marker = "extra == 'full'", specifier = ">=2.33.1" },
     { name = "scipy", marker = "extra == 'full'" },
-    { name = "xarray", marker = "extra == 'full'", specifier = ">=2025.6" },
+    { name = "xarray", marker = "python_full_version >= '3.11' and extra == 'full'", specifier = ">=2025.8" },
+    { name = "xarray", marker = "python_full_version < '3.11' and extra == 'full'", specifier = ">=2025.6" },
     { name = "zarr", marker = "extra == 'full'" },
 ]
 provides-extras = ["full"]

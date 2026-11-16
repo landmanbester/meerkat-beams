@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+, fits, eidos]
-timestamp: 2026-11-17T08:00:00Z
-last_verified_commit: df3d627
+timestamp: 2026-11-17T10:00:00Z
+last_verified_commit: cd2af42
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -715,10 +715,20 @@ co-install with it. Meanwhile consumers still on dask-ms need zarr 2.
 format only when creating (`"w"`/`"w-"`), so other modes open an existing
 store in its own format. Inputs may be either format (`is_zarr_group`); a v3
 input under zarr-python 2 fails early with a clear error
-(`require_readable_zarr`). The floor is `xarray>=2025.6`: `zarr_format=`
-arrived in 2024.10, but xarray 2024.10–2025.4 fail to write under zarr 3
-(reviewer bisect against zarr 3.1.6), and with zarr unbounded the resolver
-could otherwise pick that broken pair.
+(`require_readable_zarr`). The floor is `xarray>=2025.8` (#47). Two
+constraints set it. `zarr_format=` arrived in 2024.10, but xarray
+2024.10–2025.4 fail to write under zarr 3 (reviewer bisect against zarr
+3.1.6), which gave the original `>=2025.6`. Then pandas 3 made its new
+`StringDtype` the default for string data, and xarray 2025.6–2025.7 cannot
+encode it (`TypeError: Cannot interpret '<StringDtype(na_value=nan)>' as a
+data type`), so every BDS string coordinate failed to write: 25 failures and
+206 errors in the suite at 2025.7.1 with pandas 3.0.2, all passing at
+2025.8.0. pandas and zarr are both unbounded, so a lower floor lets the
+resolver pick a broken pair. CI's `floors` job runs the suite with xarray
+pinned at the floor and everything else as locked, because the other jobs
+only ever see the locked or the newest xarray. On Python 3.10 the extra keeps
+`xarray>=2025.6`, the last release there; `[full]` is unsupported on 3.10
+(D5) and that pair breaks with pandas 3.
 
 xarray has no **ceiling**, even though xarray>=2026.9 cannot drive
 zarr-python 2 (#44). Upstream dropped zarr 2 on purpose: 2026.4 raised
