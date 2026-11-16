@@ -113,7 +113,7 @@ bash scripts/genfuncs.sh                        # regenerate cli/*.py from cabs/
 
 There are three tiers.
 
-**CI** runs `MBEAMS_OFFLINE=1 uv run pytest` on Python 3.11–3.13, on the newest xarray and zarr releases, and on zarr-python 2 with the newest `xarray<2026.9`. `MBEAMS_OFFLINE=1` makes the run hermetic:
+**CI** runs `MBEAMS_OFFLINE=1 uv run pytest` on Python 3.11–3.13, on the newest xarray and zarr releases, on xarray at its declared floor, and on zarr-python 2 with the newest `xarray<2026.9`. `MBEAMS_OFFLINE=1` makes the run hermetic:
 
 - it skips the L-band cache warm-up in `tests/conftest.py`, so tests that need real beams skip;
 - it stops astropy downloading IERS Earth-orientation tables and uses the copy bundled with astropy, which is ample for parallactic angles. Without this, a failed download is retried by every test that computes a parallactic angle, at 30–75 s each, so an IERS outage stretches a one-minute CI run to hours.
