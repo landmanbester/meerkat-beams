@@ -236,6 +236,46 @@ def test_parse_pointing_centre_refuses_unitless_sexagesimal():
     assert parse_pointing_centre("05h21m09.9s +16d38m22s").ra.deg == pytest.approx(80.29125)
     assert parse_pointing_centre("80.29 16.64").dec.deg == pytest.approx(16.64)
     assert parse_pointing_centre("80.29,16.64").ra.deg == pytest.approx(80.29)
-    for ambiguous in ("05:21:09.9 +16:38:22", "05 21 09.9 +16 38 22"):
-        with pytest.raises(ValueError, match="ambiguous"):
+    assert parse_pointing_centre("80.29deg 16.64deg").ra.deg == pytest.approx(80.29)
+    # mixed forms: the Dec's unit letters must not vouch for a unitless RA (Greptile, #58)
+    for ambiguous in (
+        "05:21:09.9 +16:38:22",
+        "05 21 09.9 +16 38 22",
+        "05:21:09.9 +16d38m22s",
+        "80.29 +16d38m22s",
+        "05h21m09.9s 16.64",
+    ):
+        with pytest.raises(ValueError, match="ambiguous|needs a unit"):
             parse_pointing_centre(ambiguous)
+
+
+def _direction_reference(path):
+    return xarray.open_zarr(path).attrs["direction"]["reference"]["data"]
+
+
+@pytest.mark.unit
+def test_enrich_labels_the_grid_with_the_phase_centre_it_was_rendered_about(bds_path, image_path, tmp_path):
+    """get_time_freq_beam records its effective phase centre; enrich_bds_xradio uses it (Greptile, #58)."""
+    from meerkat_beams.utils import enrich_bds_xradio
+
+    other = _offset(200.0, 0.1)
+    l = np.linspace(-0.3, 0.3, 8)
+    kw = dict(l=l, m=l, times=TIMES[:2], pixel_stepping=1, verbose=0)
+
+    # bare wizard, centres only per call: used to raise in enrich
+    bare = BeamWizard(bds_path)
+    bare.get_time_freq_beam(str(tmp_path / "bare.zarr"), "SKY", pointing_centre=POINTING, phase_centre=other, **kw)
+    enrich_bds_xradio(str(tmp_path / "bare.zarr"), bare, "SKY", ["I"])
+    np.testing.assert_allclose(_direction_reference(tmp_path / "bare.zarr"), [other.ra.rad, other.dec.rad])
+    assert "phase_centre" not in xarray.open_zarr(tmp_path / "bare.zarr").attrs  # consumed
+
+    # image wizard with a per-call phase centre: used to be labelled with the image's
+    img = BeamWizard(bds_path, image_path)
+    img.get_time_freq_beam(str(tmp_path / "img.zarr"), "SKY", phase_centre=other, **kw)
+    enrich_bds_xradio(str(tmp_path / "img.zarr"), img, "SKY", ["I"])
+    np.testing.assert_allclose(_direction_reference(tmp_path / "img.zarr"), [other.ra.rad, other.dec.rad])
+
+    # an explicit argument wins over the record
+    bare.get_time_freq_beam(str(tmp_path / "arg.zarr"), "SKY", pointing_centre=POINTING, phase_centre=other, **kw)
+    enrich_bds_xradio(str(tmp_path / "arg.zarr"), bare, "SKY", ["I"], phase_centre=PHASE)
+    np.testing.assert_allclose(_direction_reference(tmp_path / "arg.zarr"), [PHASE.ra.rad, PHASE.dec.rad], atol=1e-12)

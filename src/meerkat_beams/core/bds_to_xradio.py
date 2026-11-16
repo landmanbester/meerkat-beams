@@ -8,10 +8,11 @@ from meerkat_beams.utils import ZARR_COMPRESSOR, BeamWizard, enrich_bds_xradio, 
 def parse_pointing_centre(text: str):
     """Parse ``--pointing-centre``: sexagesimal with unit letters, or two decimal degrees, in ICRS.
 
-    ``"05h21m09.9s +16d38m22s"`` and ``"80.29 16.64"`` are accepted. Sexagesimal
-    without unit letters (``"05:21:09.9 +16:38:22"``, ``"05 21 09.9 +16 38 22"``)
-    is refused: with no unit on the RA, astropy reads it as degrees, a 75 degree
-    error that would pass silently.
+    ``"05h21m09.9s +16d38m22s"``, ``"80.29deg 16.64deg"`` and ``"80.29 16.64"``
+    are accepted. Anything else with a component lacking its unit is refused --
+    ``"05:21:09.9 +16:38:22"``, ``"05 21 09.9 +16 38 22"``, and mixed forms such
+    as ``"05:21:09.9 +16d38m22s"`` -- because astropy would read a unitless RA as
+    degrees, a 75 degree error that would pass silently.
     """
     from astropy.coordinates import SkyCoord
 
@@ -25,7 +26,12 @@ def parse_pointing_centre(text: str):
         except ValueError:
             raise ValueError(f"pointing centre {text!r} is not two decimal numbers. {hint}") from None
         return SkyCoord(ra, dec, unit="deg", frame="icrs")
-    return SkyCoord(text, unit="deg", frame="icrs")
+    # Unit letters present: give astropy no default unit, so a component without its
+    # own ("05:21:09.9 +16d38m22s", "80.29 +16d38m22s") is refused rather than read as degrees.
+    try:
+        return SkyCoord(text, frame="icrs")
+    except ValueError as err:
+        raise ValueError(f"pointing centre {text!r}: every component needs a unit. {hint}") from err
 
 
 def bds_to_xradio(
