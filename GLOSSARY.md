@@ -52,6 +52,19 @@ _Avoid_: time-averaged beam, effective beam
 **Partition Mueller block**:
 The rotation-averaged Stokes beam for one partition of the data, used to turn an intrinsic Stokes model into an apparent one.
 
+### Geometry
+
+**Pointing centre**:
+The sky direction the dishes track. The beam is centred on it and turns about it with parallactic angle.
+_Avoid_: field centre, beam centre
+
+**Phase centre**:
+The tangent point of an image or model grid, from which its `l` and `m` are measured. It may differ from the pointing centre.
+_Avoid_: field centre, image centre
+
+**Feed-plane coordinates**:
+The coordinates of the MdV beam grids: direction cosines in the plane of the feed, expressed in degrees. They turn on the sky with parallactic angle because of the dish's alt-az mount.
+
 ### Stored forms
 
 **BDS (beam dataset)**:

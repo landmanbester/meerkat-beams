@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-17T14:00:00Z
+timestamp: 2026-11-16T16:55:18Z
 ---
 
 # Wiki changelog
@@ -646,3 +646,26 @@ descriptions are still accurate).
 - The xarray-floor and arm64 changes landed on separate branches, each
   stamped at its own commit. `3d1949b` is the merge that contains both; all five
   stamped pages re-stamped there. No page content changed.
+
+## 2026-11-16 — phase centre vs pointing centre, 0.4.0 rename (verified at `6a350b7`)
+
+Issue #57, first PR (exact path; the stored-map resampler follows separately).
+
+- `beamwizard.md`: new "Phase centre and pointing centre" section (the rename
+  table, defaults, the image-attached `pointing_centre=` consequence, the geometry
+  functions, why mapped coordinates beat reprojection for degridding, the tests);
+  the old `centre=` section renamed to `pointing_centre=`; optional-image,
+  `get_source_coordinates`, `_parallactic_angles` and `enrich_bds_xradio` text
+  updated; Sources extended.
+- `design-decisions.md`: D21 added (intro now D1–D21); D10 notes that breaking
+  commits are marked from the subject's `!` in `cliff.toml`.
+- `data-model.md`: BDS `dx`/`dy` are feed-plane direction cosines in degrees
+  (ska-sa/katbeam#5); xradio `direction` reference is the image phase centre;
+  `--pointing-centre`.
+- `beam-orientation.md`: `pointing_centre=`/`phase_centre=` in the rotation
+  averaging summary; "field centre" → "pointing centre".
+- `index.md`: beamwizard row mentions the phase/pointing split.
+- All `utils.py:N` line references in these pages remapped through the diff of
+  `utils.py` (geometry inserted near line 208 shifted everything below it).
+- `GLOSSARY.md`: new Geometry section (pointing centre, phase centre,
+  feed-plane coordinates).

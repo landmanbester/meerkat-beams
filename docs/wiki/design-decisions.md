@@ -2,15 +2,15 @@
 type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
-tags: [design, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+, fits, eidos]
-timestamp: 2026-11-17T14:00:00Z
-last_verified_commit: 3d1949b
+tags: [design, phase-centre, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+, fits, eidos]
+timestamp: 2026-11-16T16:55:18Z
+last_verified_commit: 6a350b7
 ---
 
 # Design decisions, conventions, and recurring gotchas
 
 Context/Decision/Rationale/Consequences ledger for load-bearing choices in
-`meerkat-beams`. Entries are numbered D1–D20 and are not chronological;
+`meerkat-beams`. Entries are numbered D1–D21 and are not chronological;
 cite the entry ID plus its Source when referring to one of these decisions
 elsewhere.
 
@@ -22,13 +22,13 @@ elsewhere.
 (once per source/time), so filtering on every call would be wasteful, and
 double-filtering would silently corrupt the interpolated values.
 
-**Decision:** `_get_prefilter` (`src/meerkat_beams/utils.py:769-806`) runs
+**Decision:** `_get_prefilter` (`src/meerkat_beams/utils.py:899-936`) runs
 `scipy.ndimage.spline_filter` once per `(var, i, j, order)` key and caches
-the result; `interpolate_beam` (`utils.py:920-967`) then calls
+the result; `interpolate_beam` (`utils.py:1050-1097`) then calls
 `map_coordinates` against that cached array with `prefilter=False`
-(`utils.py:960-967`). The cache's output dtype is **not** unconditionally
+(`utils.py:1090-1097`). The cache's output dtype is **not** unconditionally
 `float32` — it is chosen per variable kind: `np.complex64 if
-np.iscomplexobj(da) else np.float32` (`utils.py:795-799`). Complex
+np.iscomplexobj(da) else np.float32` (`utils.py:925-929`). Complex
 variables (`jones`, `njones`, `mueller`, `nmueller`) cache as `complex64`;
 real variables (`stokes`, `nstokes`) cache as `float32`. Passing a real
 dtype for complex input would make scipy implicitly promote it (a
@@ -48,7 +48,7 @@ their imaginary part without raising. See `beamwizard.md` for the full
 prefilter contract, including how the dtype rule propagates through
 `get_time_freq_beam`'s zarr writes.
 
-**Source:** `utils.py:769-806,960-967`; `test_subpixel_matches_direct_scipy`,
+**Source:** `utils.py:899-936,1090-1097`; `test_subpixel_matches_direct_scipy`,
 `test_prefilter_complex_var_is_complex64_without_warning`
 (`tests/test_beam_wizard.py`); commit `0f2a4f4` ("test: add tests for
 complex Mueller term" — landed the dtype-aware cache).
@@ -62,14 +62,14 @@ leaving it implicit means a future scipy version or a copy-pasted call
 site could silently change behavior (e.g. to nearest-edge extrapolation).
 
 **Decision:** `interpolate_beam` passes `mode="constant", cval=0.0`
-explicitly (`utils.py:965-966`) rather than relying on the scipy default.
+explicitly (`utils.py:1095-1096`) rather than relying on the scipy default.
 Out-of-cube coordinates return `0`, not a nearest-edge value or `NaN`.
 
 **Consequences:** Callers requesting positions well outside the beam
 support get zero gain, not an error or an extrapolated guess — relevant
 for sources near the edge of a wide field.
 
-**Source:** `utils.py:965-966`; `test_out_of_range_xy_returns_zero`
+**Source:** `utils.py:1095-1096`; `test_out_of_range_xy_returns_zero`
 (`tests/test_beam_wizard.py`).
 
 ## D3 — `get_time_freq_beam` accepts only canonical `dim_names`
@@ -81,7 +81,7 @@ array to match an arbitrary `dim_names` ordering is not implemented.
 
 **Decision:** Only the canonical xradio order
 `("time", "frequency", "polarization", "l", "m")` is accepted; any other
-tuple raises `ValueError` (`utils.py:1575-1580`).
+tuple raises `ValueError` (`utils.py:1731-1736`).
 
 **Rationale:** A non-canonical tuple would relabel the dims without
 reordering the underlying array — silent data corruption, not a
@@ -92,7 +92,7 @@ without implementing real permutation of the array first; a caller
 wanting a different axis order must transpose the opened dataset
 themselves after the fact.
 
-**Source:** `utils.py:1575-1580`; `test_time_freq_beam_rejects_non_canonical_dim_names`
+**Source:** `utils.py:1731-1736`; `test_time_freq_beam_rejects_non_canonical_dim_names`
 (`tests/test_beam_wizard.py`).
 
 ## D4 — Rotation-averaged maps are `(Y, X)` (FITS) order
@@ -106,7 +106,7 @@ hidden elsewhere because the MeerKAT rotation-averaged beam is nearly
 circularly symmetric, so a transpose barely changes it.
 
 **Decision:** `np.meshgrid(l, m)` (default `"xy"` indexing, not `"ij"`,
-`utils.py:1197`) now returns `(NY, NX)`-shaped maps natively, matching
+`utils.py:1334`) now returns `(NY, NX)`-shaped maps natively, matching
 FITS convention (axis 0 = m/north, axis 1 = l/east). Settled at commit
 `616906b`.
 
@@ -120,7 +120,7 @@ between this settled index-order question and the still-provisional
 physical orientation convention (D9-adjacent, not in this ledger's
 numbered list — see `beam-orientation.md`).
 
-**Source:** `utils.py:1189-1197`; `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
+**Source:** `utils.py:1326-1334`; `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
 `test_rotation_averaged_beam_map_indexes_as_y_x` (`tests/test_beam_wizard.py`);
 `beam-orientation.md`.
 
@@ -345,6 +345,11 @@ the `[[file]]` entry fought it. hip-cargo has the hook and no such entry.
   squash suffix, which the body template already renders as a linked
   reference. Both are no-ops for well-formed conventional commits, so they can
   stay indefinitely.
+- **Breaking changes are marked from the subject's `!`** (`refactor!: ...`),
+  added for 0.4.0 (D21). The body template prefixes such a commit with
+  `**BREAKING:**`, and `protect_breaking_commits = true` keeps a skip parser
+  from dropping it. A `BREAKING CHANGE:` footer alone is **not** enough here:
+  preprocessor (1) strips the body before git-cliff parses it.
 - Commits predating enforcement land under `### Other` in the changelog. This
   is cosmetic and self-limiting — it cannot be tidied by hand (see above), and
   new commits are gated.
@@ -608,10 +613,10 @@ you touch the fixtures.
 
 ## Sources
 
-- `src/meerkat_beams/utils.py:769-806,920-967` (`_get_prefilter`,
+- `src/meerkat_beams/utils.py:899-936,1050-1097` (`_get_prefilter`,
   `interpolate_beam`)
-- `src/meerkat_beams/utils.py:1058-1331` (`get_rotation_averaged_beam`)
-- `src/meerkat_beams/utils.py:1508-1580` (`get_time_freq_beam`,
+- `src/meerkat_beams/utils.py:1188-1472` (`get_rotation_averaged_beam`)
+- `src/meerkat_beams/utils.py:1656-1736` (`get_time_freq_beam`,
   `_CANONICAL_DIM_NAMES` guard)
 - `src/meerkat_beams/cache.py` (cache layout, `BAND_GDRIVE_IDS`,
   `ensure_band_bds`, `.partial` atomicity)
@@ -926,9 +931,9 @@ leakage terms the chord still helps (about 1.5×) and the λ/D slope does not.
 - D2 is the spatial counterpart: off-cube in X/Y returns 0, off-cube in
   frequency raises, or scales within the margin when asked.
 
-**Source:** `utils.py:564-575` (constructor validation), `utils.py:637-640`
-(default margin), `utils.py:888-918` (`freq_range`, `check_freqs`),
-`utils.py:932-954` (scaling); `tests/test_freq_extrapolation.py`,
+**Source:** `utils.py:648-659` (constructor validation), `utils.py:721-724`
+(default margin), `utils.py:1018-1048` (`freq_range`, `check_freqs`),
+`utils.py:1062-1084` (scaling); `tests/test_freq_extrapolation.py`,
 `tests/test_freq_extrapolation_integration.py`; issue #41.
 
 ## D20 — FITS output matches eidos's layout, with corrected CTYPEs
@@ -1050,3 +1055,72 @@ against the `../eidos` fork at identical geometry, are in `data-model.md`.
 `tests/test_cab_outputs.py`;
 `../eidos/eidos/util.py:51-183` (the `tmolteno/eidos` fork);
 `data-model.md` (FITS output section).
+
+## D21 — Phase centre ≠ pointing centre: evaluate at mapped coordinates, rename hard
+
+**Context.** Issue #57 (from ratt-ru/pfb-imaging#362). An image or model grid is
+measured from its tangent point, the **phase centre**. The beam is centred on, and
+turns about, where the dishes point, the **pointing centre**. They differ for a model
+imaged at a shifted phase centre and for mosaic fields. Until 0.3 the wizard had one
+`centre`, and its keyword names (`centre=`, `field_centre=`, `set_field_centre`) did
+not say which of the two they meant. pfb-imaging covered the gap two ways. Its
+`degrid` required the model's tangent point to be the field centre
+(`check_tangent_point`). Its `hci` reprojected a pointing-centred beam with
+`reproject_interp`, which spends most of its time in astropy's pixel-to-pixel
+mapping (18 s of a 28 s 3840² image, pfb-imaging#358).
+
+**Decision.**
+
+1. The phase→pointing geometry is written once, as two module-level functions:
+   `sky_rotation_matrix` (`M = R(pointing)ᵀ R(phase)`, exactly `np.eye(3)` for equal
+   centres) and `phase_to_pointing_lm` (float64, masks directions off the sky or on
+   the far hemisphere).
+2. The render methods (`get_rotation_averaged_beam`, `partition_mueller`,
+   `get_time_freq_beam`) take `phase_centre=` and evaluate the beam directly at the
+   mapped coordinates. There is no resampling step. `bds-to-xradio` gains
+   `--pointing-centre`.
+3. Hard rename in 0.4.0, with no deprecation aliases:
+   - `centre` → `pointing_centre`, and there is a new `phase_centre` property;
+   - `set_field_centre` → `set_pointing_centre`;
+   - the `centre=` and `field_centre=` keywords → `pointing_centre=`.
+
+   `attach_image` stores the image's reference direction as the phase centre, and
+   the pointing centre defaults to it.
+4. A fast resampler for beam maps that are already stored (pfb-imaging `hci`,
+   pfb-imaging#401) is a separate, later PR. It reuses (1). It uses numba only if
+   numba is faster or uses less memory than a numpy version.
+
+**Rationale.**
+- *Mapped coordinates rather than reprojection.* The degrid consumers already take a
+  coarse Mueller block on the model's own separable axes from `partition_mueller`
+  (pfb-model-spec's `BeamTerm` + `interp_mueller`). Evaluating there is one spline
+  evaluation, has no second interpolation error and needs no pfb-model-spec change.
+- *The map is exact, not flat-sky.* MdV confirmed the BDS grids are feed-plane
+  direction cosines in degrees (ska-sa/katbeam#5). The feed plane is the pointing's
+  SIN plane turned by parallactic angle, so a sky rotation followed by `lm_to_pixel`
+  composes exactly.
+- *Exact identity.* With `M = I` exactly, the single-field path is untouched and
+  bit-identical to 0.3, rather than "equal to round-off".
+- *Hard rename.* The owner maintains both known consumers (pfb-imaging,
+  pfb-model-spec) and judged a deprecation window not worth carrying. Names that say
+  which centre is meant are the point of the change.
+
+**Consequences.**
+- 0.4.0 breaks every caller of the old names. pfb-imaging must bump to
+  `meerkat-beams>=0.4.0` and rename, and it can then drop `check_tangent_point` by
+  passing `phase_centre=`.
+- On a wizard with an attached image, a per-call `pointing_centre=` now means "the
+  image grid seen from that pointing". In 0.3, `centre=` moved the grid's origin.
+  BDS-only wizards are unaffected.
+- `OFF_SKY_DEG` (1e6 deg) is the sentinel for masked directions. Any new
+  interpolation path must treat it as off-cube, as `map_coordinates` with
+  `mode="constant"` does (D2).
+- Neither D16 nor D2 changes: nothing is fused, and off-coverage is 0.
+- `interpolate_beam` and `get_source_coordinates` take absolute positions or BDS
+  pixels, so they have no `phase_centre=`.
+
+**Source:** `src/meerkat_beams/utils.py` (`sky_rotation_matrix`,
+`phase_to_pointing_lm`, `BeamWizard._phase_rotation`, `_to_pointing_frame`, the
+`pointing_centre`/`phase_centre` properties), `core/bds_to_xradio.py`
+(`parse_pointing_centre`), `tests/test_phase_centre.py`, `beamwizard.md` ("Phase
+centre and pointing centre"), issue #57, ska-sa/katbeam#5.

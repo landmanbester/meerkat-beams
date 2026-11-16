@@ -67,15 +67,17 @@ Two generators, inverse of each other:
 | command | core | purpose |
 |---|---|---|
 | `mbeams mdv-beams-to-bds` | `core/mdv_beams_to_bds.py` | convert MdV `.npz` (or per-antenna mean-beam zarr) to a BDS (zarr) holding `jones`/`njones`/`stokes`/`nstokes` plus `mueller`/`nmueller` — see `docs/wiki/data-model.md` |
-| `mbeams bds-to-xradio` | `core/bds_to_xradio.py` | render a BDS into a full `(time, frequency, polarization, l, m)` xradio zarr by interpolating the beam along parallactic-angle-rotated tracks, using a WCS image for pointing/time |
+| `mbeams bds-to-xradio` | `core/bds_to_xradio.py` | render a BDS into a full `(time, frequency, polarization, l, m)` xradio zarr by interpolating the beam along parallactic-angle-rotated tracks, using a WCS image for the phase centre/time (`--pointing-centre` when the dishes pointed elsewhere) |
 | `mbeams bds-to-fits` | `core/bds_to_fits.py` | render a BDS to **eidos-compatible** FITS beam cubes: `<prefix>_re.fits`/`_im.fits` hypercube (or `<prefix>_{ij}_{re,im}.fits` with `--output-eight`), on the BDS grid or a `--pixels`/`--diameter` resample; no image and no time axis — header contract in `docs/wiki/data-model.md` |
 
 ## Key abstractions in `utils.py`
 
 `BeamWizard` attaches to a beam dataset and, optionally, an image (FITS or
-xradio zarr), and provides beam interpolation, time-variable beam gain,
-rotation-averaged beam maps, per-partition Mueller blocks (`partition_mueller`)
-and full time/frequency zarr rendering. Downstream packages (`pfb-imaging`,
+xradio zarr), and distinguishes the pointing centre (where the dishes track)
+from the phase centre (the image/model grid's tangent point). It provides beam
+interpolation, time-variable beam gain, rotation-averaged beam maps,
+per-partition Mueller blocks (`partition_mueller`) and full time/frequency zarr
+rendering. Downstream packages (`pfb-imaging`,
 `QuartiCal`) call its public methods, so a method with no in-repo caller is not
 dead code. Read these before touching it:
 
