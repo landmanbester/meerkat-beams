@@ -1253,3 +1253,26 @@ def test_rotation_angle_is_the_textbook_parallactic_angle(bw, lat_deg):
     diff = (bw._parallactic_angles(t, loc) - q + np.pi) % (2 * np.pi) - np.pi
     assert np.abs(diff).max() < np.radians(1.0)
     assert np.ptp(q) > np.radians(10.0)  # the track actually rotates, so a constant would fail
+
+
+@pytest.mark.unit
+def test_pixel_stepping_upsample_is_bilinear(bw, times):
+    """pixel_stepping evaluates every other pixel and fills the rest bilinearly.
+
+    A skipped pixel midway between two evaluated ones must be exactly their
+    mean. Nearest-neighbour would copy one of them and a cubic would overshoot
+    the mean on a curved beam, so this pins order=1; the last assertion shows
+    the beam is curved enough here for the three to differ.
+    """
+    l = np.linspace(-0.8, 0.8, 9)
+    m = np.linspace(-0.6, 0.6, 7)
+    kw = dict(l=l, m=m, times=times, time_stepping=1, freq=FREQS[:1], verbose=0)
+    full, _ = bw.get_rotation_averaged_beam(pixel_stepping=1, **kw)
+    stepped, _ = bw.get_rotation_averaged_beam(pixel_stepping=2, **kw)
+
+    coarse = full[::2, ::2]
+    np.testing.assert_allclose(stepped[::2, ::2], coarse, rtol=1e-12)
+    np.testing.assert_allclose(stepped[1::2, ::2], 0.5 * (coarse[:-1] + coarse[1:]), rtol=1e-12)
+    np.testing.assert_allclose(stepped[::2, 1::2], 0.5 * (coarse[:, :-1] + coarse[:, 1:]), rtol=1e-12)
+    assert np.abs(stepped[1::2, ::2] - full[1::2, ::2]).max() > 1e-3
+    assert np.abs(stepped[1::2, ::2] - coarse[:-1]).max() > 1e-3
