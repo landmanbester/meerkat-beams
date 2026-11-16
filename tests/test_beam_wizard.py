@@ -1199,3 +1199,42 @@ def test_chunk_size_bounds_the_pixels_in_flight_across_threads(bw, times, monkey
     monkeypatch.setattr(bw, "interpolate_beam", recording)
     _grid_average(bw, times, nthreads=4, chunk_size=20)  # 63 pixels
     assert max(sizes) == 5
+
+
+# ---------------------------------------------------------------------------
+# lm_to_pixel: the one place sky offsets become BDS pixel coordinates
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_lm_to_pixel_maps_degrees_onto_the_bds_grid(bw):
+    """Without an angle: the pointing centre is the BDS centre pixel, one dx per pixel."""
+    x0, y0, dx, dy = (bw.bds.attrs[k] for k in ("x0", "y0", "dx", "dy"))
+    xp, yp = bw.lm_to_pixel(np.array([0.0, dx, 0.0]), np.array([0.0, 0.0, -2 * dy]))
+    np.testing.assert_allclose(xp, [x0, x0 + 1, x0])
+    np.testing.assert_allclose(yp, [y0, y0, y0 - 2])
+
+
+@pytest.mark.unit
+def test_lm_to_pixel_rotation_preserves_distance_from_the_centre(bw):
+    """An angle rotates the offsets about the centre pixel: radii are unchanged, positions are not."""
+    x0, y0, dx, dy = (bw.bds.attrs[k] for k in ("x0", "y0", "dx", "dy"))
+    l = np.array([0.3, -0.2, 0.0])
+    m = np.array([0.1, 0.4, 0.0])
+    xp, yp = bw.lm_to_pixel(l, m, angle=0.7)
+    np.testing.assert_allclose(np.hypot((xp - x0) * dx, (yp - y0) * dy), np.hypot(l, m), atol=1e-12)
+    assert xp[2] == x0 and yp[2] == y0
+    assert not np.allclose(xp[:2], bw.lm_to_pixel(l, m)[0][:2])
+
+
+@pytest.mark.unit
+def test_rotation_averaged_beam_samples_the_beam_through_lm_to_pixel(bw, times):
+    """One time, no stepping: the averaged map is interpolate_beam at lm_to_pixel's coordinates."""
+    l = np.array([-0.4, 0.0, 0.3])
+    m = np.array([-0.2, 0.25])
+    mean, _ = bw.get_rotation_averaged_beam(l=l, m=m, times=times[:1], time_stepping=1, pixel_stepping=1, verbose=0)
+    ll, mm = np.meshgrid(l, m)
+    angle = bw._parallactic_angles(times[:1])[0]
+    xpyp = np.array(bw.lm_to_pixel(ll.ravel(), mm.ravel(), angle))
+    expected = bw.interpolate_beam(xpyp, bw.bds.coords["FREQ"].values, var="nstokes", i="I", j="I")
+    np.testing.assert_array_equal(mean, expected.reshape((-1,) + ll.shape))
