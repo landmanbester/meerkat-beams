@@ -23,13 +23,6 @@ def test_help():
 
 
 @pytest.mark.unit
-def test_download_mdv_beams_help():
-    result = run_cli("download-mdv-beams", "--help")
-    assert result.returncode == 0
-    assert "Downloads MdV-format primary beams" in result.stdout
-
-
-@pytest.mark.unit
 def test_mdv_beams_to_bds_help():
     result = run_cli("mdv-beams-to-bds", "--help")
     assert result.returncode == 0
@@ -41,13 +34,6 @@ def test_bds_to_xradio_help():
     result = run_cli("bds-to-xradio", "--help")
     assert result.returncode == 0
     assert "Renders a beam dataset" in result.stdout
-
-
-@pytest.mark.unit
-def test_mdv_to_xradio_help():
-    result = run_cli("mdv-to-xradio", "--help")
-    assert result.returncode == 0
-    assert "Converts raw MdV beam npz" in result.stdout
 
 
 @pytest.mark.unit

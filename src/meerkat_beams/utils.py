@@ -3,16 +3,17 @@ Shared utilities for meerkat-beams.
 
 Contains:
 - Logging setup (log, LOGGER, set_console_logging_level)
-- PowerBeam dataclass
+- Zarr compression defaults and zarr-python 2/3 compatibility helpers
+- Jones / Mueller / Stokes algebra
+- Baseline-group (MM / MPM / MPMP) dataset assembly
+- resolve_elements, the element grammar shared by the rendering commands
 - BeamWizard class for beam interpolation
 - xradio zarr enrichment helpers
-- Zarr compression defaults
 """
 
 import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
@@ -166,20 +167,6 @@ def zarr_compressor_encoding(compressor) -> dict:
     spelling, while xarray under zarr-python 2 needs ``compressor`` (#44).
     """
     return {"compressors" if _zarr_major() >= 3 else "compressor": compressor}
-
-
-# ---------------------------------------------------------------------------
-# PowerBeam dataclass
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class PowerBeam(object):
-    """Power beam info"""
-
-    I: np.ndarray  # Stokes I beam, of shape NFREQ x NDEG x NDEG
-    deg: np.ndarray  # coordinates in beam
-    freq: np.ndarray  # frequencies
 
 
 # ---------------------------------------------------------------------------
@@ -521,16 +508,6 @@ class BeamWizard(object):
     is refused for ``beam_model="katbeam"``. ``freq_range`` and ``check_freqs``
     expose the evaluable range so callers can validate up front.
     """
-
-    Eband: np.ndarray  # per-band power beam
-    Emean: np.ndarray  # mean MFS beam
-    band_weights: np.ndarray  # per-band weights
-    freqs: np.ndarray  # band frequencies
-    x0: int  # center pixel of beam
-    y0: int
-    delta: float  # degrees per pixel
-    ra0: float  # field centre in degrees
-    dec0: float
 
     def __init__(
         self,

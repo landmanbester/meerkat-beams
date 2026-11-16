@@ -21,8 +21,7 @@ Working in the coherency frame (rather than converting the visibilities to
 Stokes up front) keeps the data in its native basis and uses the complex
 Mueller directly; the recovered Stokes spectrum is identical either way.
 
-The spec for this script is in
-docs/superpowers/specs/2026-05-15-beam-orientation-test-design.md.
+The experiment this script runs is described in docs/wiki/beam-orientation.md.
 """
 
 import argparse

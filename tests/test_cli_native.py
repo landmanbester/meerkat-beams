@@ -51,23 +51,6 @@ def test_bds_to_xradio(tmp_path):
     assert xarray.open_zarr(out)["SKY"].sizes["time"] == 3
 
 
-def test_download_mdv_beams_to_dest(tmp_path):
-    src = tmp_path / "MeerKAT_L_band_primary_beam.npz"
-    src.write_bytes(b"not really a beam")
-    out = tmp_path / "fetched.npz"
-    result = run_cli("download-mdv-beams", "--source", src.as_uri(), "--dest", str(out))
-    assert_ok(result, out)
-    assert out.read_bytes() == b"not really a beam"
-    assert "deprecated" in (result.stdout + result.stderr).lower()
-
-
-def test_mdv_to_xradio(tmp_path):
-    out = tmp_path / "mx.zarr"
-    result = run_cli("mdv-to-xradio", "--npz-path", str(build_synthetic_npz(tmp_path)), "--output", str(out))
-    assert_ok(result, out)
-    assert "deprecated" in (result.stdout + result.stderr).lower()
-
-
 def test_bds_to_fits(tmp_path):
     bds = build_synthetic_bds(tmp_path / "in.bds.zarr")
     prefix = tmp_path / "beam"

@@ -241,4 +241,4 @@ jobs:
       - name: Smoke test CLI
         run: |
           uv run --no-sync mbeams --help
-          uv run --no-sync mbeams download-mdv-beams --help
+          uv run --no-sync mbeams bds-to-fits --help

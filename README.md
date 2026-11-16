@@ -10,7 +10,7 @@ MeerKAT primary-beam modelling based on the holographic beam models of [M. de Vi
 pip install meerkat-beams[full]
 ```
 
-The `[full]` extra pulls in the scientific stack (`xarray`, `xarray-fits`, `zarr`, `numcodecs`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask`, `wget`, `gdown`, `requests`, `katbeam` for the analytic beam model, plus `hip-cargo[s3]` for `s3://` paths). Use plain `meerkat-beams` only if you need the CLI metadata for Stimela without running the implementations locally. Every store the package writes is zarr format 2, whether zarr-python 2 or 3 is installed, so its output stays readable by either. zarr-python 2 needs `xarray<2026.9`: xarray 2026.9 removed its zarr-python 2 support, so with zarr 2 install `meerkat-beams[full]` together with `"zarr<3" "xarray<2026.9"`; meerkat-beams raises an error naming this pin if it finds the incompatible pair.
+The `[full]` extra pulls in the scientific stack (`xarray`, `zarr`, `numcodecs`, `astropy`, `scipy`, `numpy`, `matplotlib`, `dask`, `gdown`, `requests`, `katbeam` for the analytic beam model, plus `hip-cargo[s3]` for `s3://` paths). Use plain `meerkat-beams` only if you need the CLI metadata for Stimela without running the implementations locally. Every store the package writes is zarr format 2, whether zarr-python 2 or 3 is installed, so its output stays readable by either. zarr-python 2 needs `xarray<2026.9`: xarray 2026.9 removed its zarr-python 2 support, so with zarr 2 install `meerkat-beams[full]` together with `"zarr<3" "xarray<2026.9"`; meerkat-beams raises an error naming this pin if it finds the incompatible pair.
 
 ### Python support
 
@@ -92,11 +92,6 @@ mbeams bds-to-fits --bds-path MeerKAT_L.bds.zarr --prefix beam_l8 --pixels 256 -
 
 `bds-to-xradio` needs a zarr image cube with a `TIME` coordinate; a FITS image has no time axis to render along. `bds-to-fits` needs no image at all: it writes the beam as `<prefix>_re.fits`/`<prefix>_im.fits` (plus `<prefix>_{ij}_{re,im}.fits` with `--output-eight`) in the layout `eidos` produces, so DDFacet/killMS-style `Beam.Model: FITS` consumers read either interchangeably. `--pixels`/`--diameter` resample the grid, `--beam-type` picks the BDS variable (`njones` by default), `--freqs` (Hz) or `--num-freq` select channels, and `--freq-extrapolation scale` reaches up to one BDS channel past the band edge. The header contract, and the four header corrections relative to eidos, are in [`docs/wiki/data-model.md`](docs/wiki/data-model.md). Each command accepts `--help`.
 
-Two commands are **deprecated** and will be removed in a future release. Both work only with the raw MdV `.npz` files (about 35 GB per band), which the package no longer needs:
-
-- `download-mdv-beams` fetches a raw `.npz` from the SARAO archive. `BeamWizard(band=...)` downloads the mean-beam zarr (about 420 MB) itself.
-- `mdv-to-xradio` dumps one Jones element of a raw `.npz` straight to an xradio zarr. Use `mdv-beams-to-bds` followed by `bds-to-xradio` instead.
-
 ## Development
 
 ```bash
@@ -151,5 +146,4 @@ uv run pytest -rs        # -rs lists every skip with its reason
 Even with everything set, some tests always skip:
 
 - the S0–S4 conversion regressions: S0 and S4 have published inputs but no reference BDS, and S1–S3 have no inputs;
-- `test_bds_to_xradio_end_to_end_synthetic`: `bds_to_xradio` cannot render a FITS image, which has no time axis;
 - one `test_zarr_format.py` test, which applies only under the other zarr-python major.

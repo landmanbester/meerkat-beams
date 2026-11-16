@@ -30,14 +30,12 @@ full = [
     # v2, but 2024.10-2025.4 fail to write under zarr 3). zarr is unbounded,
     # so a lower xarray floor would let the resolver pick a broken pair.
     "xarray>=2025.6",
-    "xarray-fits",
     "zarr",
     "numcodecs",
     "astropy",
     "numpy",
     "scipy",
     "matplotlib",
-    "wget",
     "gdown>=5.0.0",
     "requests>=2.33.1",
     # s3:// support for the CLI's parse_upath paths (s3fs). This used to arrive
@@ -125,8 +123,8 @@ dev = [
 # Test deps are 3.11+ only: tests never run on 3.10 (lightweight-install-only).
 test = [
     "pytest>=8.0.0",
-    # Also brings arcae, which scripts/beam_orientation/ms_io.py and
-    # scripts/pks1934_flux_scale.py use to read Measurement Sets.
+    # Also brings arcae, which scripts/beam_orientation/ms_io.py uses to read
+    # Measurement Sets.
     "xarray-ms>=0.5.4; python_version >= '3.11'",
     "msv4-utils>=0.0.3; python_version >= '3.11'",
     # Also in the dev group (see the note there for why it is a git pin).

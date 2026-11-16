@@ -6,7 +6,7 @@ This repo is single-context. It keeps its decisions in the LLM wiki's design led
 
 ## Before exploring, read these
 
-- **`GLOSSARY.md`** at the repo root. If it doesn't exist, **proceed silently**: don't flag its absence or suggest creating it upfront. The `/domain-modeling` skill creates it lazily when terms actually get resolved.
+- **`GLOSSARY.md`** at the repo root: the domain terms. It holds definitions only; schemas, dtypes and other implementation detail belong in `docs/wiki/data-model.md`.
 - **`docs/wiki/index.md`**, then the pages it routes to for the area you're about to work in.
 - **`docs/wiki/design-decisions.md`**: this repo's ADRs, a Context/Decision/Rationale/Consequences ledger of `D<n>` entries. Read the entries that touch the area you're about to work in. There is no `docs/adr/`; do not create one.
 
