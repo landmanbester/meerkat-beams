@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-16T15:00:00Z
+timestamp: 2026-11-17T08:00:00Z
 ---
 
 # Wiki changelog
@@ -601,3 +601,27 @@ descriptions are still accurate).
   root `GLOSSARY.md`; two scripts no longer cite `docs/superpowers/`.
   `index.md` now defines `last_verified_commit` the way CLAUDE.md does.
 - All five stamped pages re-stamped at `59485c2`.
+
+## 2026-11-16 — rotation kernel given one owner (verified at `ea2e231`)
+
+- `beamwizard.md`: new section on `lm_to_pixel` (public) and the private
+  `_parallactic_angles`, `_resolve_times`, `_coarsen_grid` and
+  `_upsample_planes` (`117b664`). The renders' sky-to-beam transform and the
+  degrees-to-pixel scaling were written out in four places and are now in
+  one; outputs are bit-identical. `get_time_freq_beam` lost its `dim_names`
+  dict indirection (D3 already made the order constant).
+- An adversarial review found the first `lm_to_pixel` tests held for any
+  orthogonal map; `ea2e231` replaces them with literal values of the
+  transform and a check of the angle against the closed-form parallactic
+  angle. The page now says that the `angle` path flips `l` (so `angle=0` is
+  not `angle=None`), that `get_source_coordinates` keeps its own beam-frame
+  mapping, and that one error message changed ("explicit times must be
+  supplied, since …").
+- `utils.py` line citations remapped in every page; all five stamped pages
+  re-stamped at `ea2e231`.
+
+## 2026-11-17 — upsample order pinned (verified at `df3d627`)
+
+- `test_pixel_stepping_upsample_is_bilinear` pins `order=1` in
+  `_upsample_planes`, the gap the rotation-kernel review left open;
+  `beamwizard.md` says so. All five stamped pages re-stamped at `df3d627`.

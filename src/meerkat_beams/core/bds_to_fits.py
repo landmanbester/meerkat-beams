@@ -327,8 +327,7 @@ def bds_to_fits(
     x0_b, y0_b = float(bw.bds.attrs["x0"]), float(bw.bds.attrs["y0"])
     dx_b, dy_b = float(bw.bds.attrs["dx"]), float(bw.bds.attrs["dy"])
     nx_b, ny_b = int(bw.bds.sizes["X"]), int(bw.bds.sizes["Y"])
-    # BeamWizard works in BDS pixel coordinates: x = l/dx + x0.
-    xp, yp = l / dx_b + x0_b, m / dy_b + y0_b
+    xp, yp = bw.lm_to_pixel(l, m)  # BDS pixel coordinates of the target grid
     grid_x, grid_y = np.meshgrid(xp, yp)  # (n_y, n_x), x fastest -- C order below
     xpyp = np.stack([grid_x.ravel(), grid_y.ravel()])
 

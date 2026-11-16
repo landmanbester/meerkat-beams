@@ -1,10 +1,10 @@
 ---
 type: reference
 title: BeamWizard interpolation and rendering internals
-description: beam_model (mdv/katbeam), group (MM/MPM/MPMP) and average (pa/azimuth) selectors, interpolate_beam prefilter/off-cube/spline-order/freq-guard semantics and the freq_extrapolation policy, get_source_coordinates transforms, optional-image paths, get_time_freq_beam canonical dim_names, enrich_bds_xradio, partition_mueller with the centre= override, and the nthreads/pa_tolerance/order speed options of get_rotation_averaged_beam.
+description: beam_model (mdv/katbeam), group (MM/MPM/MPMP) and average (pa/azimuth) selectors, interpolate_beam prefilter/off-cube/spline-order/freq-guard semantics and the freq_extrapolation policy, get_source_coordinates transforms, the lm_to_pixel rotation kernel, optional-image paths, get_time_freq_beam canonical dim_names, enrich_bds_xradio, partition_mueller with the centre= override, and the nthreads/pa_tolerance/order speed options of get_rotation_averaged_beam.
 tags: [beamwizard, interpolation, scipy, zarr, xradio, utils, katbeam, baseline-groups, meerkat+, partition-mueller, mueller]
-timestamp: 2026-11-16T15:00:00Z
-last_verified_commit: 59485c2
+timestamp: 2026-11-17T08:00:00Z
+last_verified_commit: df3d627
 ---
 
 # BeamWizard interpolation and rendering internals
@@ -20,7 +20,7 @@ caller who changes a default without reading the inline comments.
 
 ## `interpolate_beam` — the prefilter contract
 
-`_get_prefilter` (`src/meerkat_beams/utils.py:733-770`) runs
+`_get_prefilter` (`src/meerkat_beams/utils.py:769-806`) runs
 `scipy.ndimage.spline_filter` once per `(var, i, j, order)` key and caches
 the result in `self._prefilters`. The cache's output dtype is **chosen by
 variable kind, not unconditionally `float32`**:
@@ -29,7 +29,7 @@ variable kind, not unconditionally `float32`**:
 out_dtype = np.complex64 if np.iscomplexobj(da) else np.float32
 ```
 
-(`utils.py:759-763`). Complex variables (`jones`, `njones`, `mueller`,
+(`utils.py:795-799`). Complex variables (`jones`, `njones`, `mueller`,
 `nmueller`) cache as `complex64`; real variables (`stokes`, `nstokes`)
 cache as `float32`. Passing a real output dtype for complex input would
 make scipy implicitly promote it (a version-dependent `UserWarning`), so
@@ -39,9 +39,9 @@ unconditionally `float32` — that was true before the Mueller-term work
 landed (commit `0f2a4f4`, "test: add tests for complex Mueller term") and
 is no longer accurate; treat the dtype-aware rule above as current.
 
-`interpolate_beam` (`utils.py:840-887`) calls `map_coordinates` against this
+`interpolate_beam` (`utils.py:920-967`) calls `map_coordinates` against this
 cached, already-filtered array with **`prefilter=False`**
-(`utils.py:884`) — an inline comment at `utils.py:878` spells out why:
+(`utils.py:964`) — an inline comment at `utils.py:958` spells out why:
 `_get_prefilter` already applied `spline_filter`, so flipping
 `prefilter` back to `True` would double-filter the data. Do not do this.
 
@@ -63,13 +63,13 @@ all keep values complex when the source variable is complex. Pinned by
 ### Off-cube policy
 
 `map_coordinates` passes `mode="constant", cval=0.0` explicitly
-(`utils.py:885-886`) — coordinates outside the X/Y cube return `0`, not a
+(`utils.py:965-966`) — coordinates outside the X/Y cube return `0`, not a
 nearest-edge value or a NaN. Pinned by `test_out_of_range_xy_returns_zero`.
 
 ### Spline order
 
 `_get_prefilter(order=3)` includes `order` in its cache key (`key = var,
-i, j, order`, `utils.py:736`), since `spline_filter` coefficients depend
+i, j, order`, `utils.py:772`), since `spline_filter` coefficients depend
 on the requested order and callers requesting different orders must not
 collide in the cache. `interpolate_beam` forwards its own `order`
 parameter to both `_get_prefilter` and the `map_coordinates` call.
@@ -82,9 +82,9 @@ works; before #39 it raised "spline order not supported". Pinned by
 
 ### Frequency guard and the extrapolation policy
 
-`interpolate_beam` first calls `check_freqs` (`utils.py:817-838`), which
+`interpolate_beam` first calls `check_freqs` (`utils.py:897-918`), which
 raises `ValueError` for any non-finite frequency, and — reporting both the
-requested and available ranges in MHz — for any frequency outside `freq_range` (`utils.py:808-815`). Both are
+requested and available ranges in MHz — for any frequency outside `freq_range` (`utils.py:888-895`). Both are
 public so callers can validate up front (pfb-imaging checks every chunk on its
 driver before starting workers). What `freq_range` is depends on the wizard's
 policy, set once in the constructor:
@@ -97,7 +97,7 @@ policy, set once in the constructor:
   BDS), with 1 kHz (`FREQ_MATCH_ATOL_HZ`) of slack on the widened bounds
   because the 2026 bottom edge lands exactly on the margin. A frequency `nu`
   beyond the edge plane `nu_e` is evaluated on that plane with the pixel
-  offsets from `(x0, y0)` scaled by `nu / nu_e` (`utils.py:852-874`), and one
+  offsets from `(x0, y0)` scaled by `nu / nu_e` (`utils.py:932-954`), and one
   `log.warning` per wizard names the requested range, the BDS range and the
   margin. The error message beyond the margin gains
   `(extrapolation margin ±X MHz)`.
@@ -122,7 +122,7 @@ override. Rationale and measured accuracy: `design-decisions.md` D19. Tests:
 def get_source_coordinates(self, srcpos, times=None, loc=None, signs=(1, 1), swap=False):
 ```
 
-(`utils.py:772-778`). For each requested time, transforms `srcpos` and the
+(`utils.py:859-865`). For each requested time, transforms `srcpos` and the
 field centre to `AltAz`, then computes the source's separation and
 position angle relative to the centre. Those are converted to beam-pixel
 offsets via the BDS's `dx`/`dy`/`x0`/`y0` attrs:
@@ -132,11 +132,10 @@ x = signs[0] * seps.deg * np.sin(angles.rad)
 y = signs[1] * seps.deg * np.cos(angles.rad)
 if swap:
     x, y = y, x
-xp = x / self.bds.attrs["dx"] + self.bds.attrs["x0"]
-yp = y / self.bds.attrs["dy"] + self.bds.attrs["y0"]
+return np.array(self.lm_to_pixel(x, y)), seps, angles
 ```
 
-(`utils.py:800-805`). The `signs`/`swap` keyword arguments are not dead
+(`utils.py:882-886`); the degrees-to-pixel step is `lm_to_pixel`, below. The `signs`/`swap` keyword arguments are not dead
 parameters — they are the exact lever the beam-orientation validation
 tooling's `flip_x`/`flip_y`/`swap_xy` perturbations twiddle (see
 `beam-orientation.md`); mirroring or transposing the sky→pixel map this
@@ -152,6 +151,74 @@ missing attribute. Pinned by
 `test_source_coordinates_at_field_centre` (the latter also confirms a
 source exactly at the field centre resolves to `(x0, y0)` with `sep=0`).
 
+## `lm_to_pixel` — the rotation kernel
+
+```python
+def lm_to_pixel(self, l, m, angle=None) -> Tuple[np.ndarray, np.ndarray]:
+    if angle is not None:
+        l, m = m * np.sin(angle) - l * np.cos(angle), l * np.sin(angle) + m * np.cos(angle)
+    xp = l / self.bds.attrs["dx"] + self.bds.attrs["x0"]
+    yp = m / self.bds.attrs["dy"] + self.bds.attrs["y0"]
+    return xp, yp
+```
+
+(`utils.py:808-832`). Public. It maps `(l, m)` offsets from the pointing
+centre, in degrees, to BDS pixel coordinates. With `angle` (the parallactic
+angle, radians) the sky-frame offsets are first taken into the beam frame.
+That transform is a rotation **combined with a flip of `l`** (determinant
+−1): `angle=0` gives `(-l, m)`, so it is not the same as `angle=None`, which
+applies no transform. The two renders (`get_rotation_averaged_beam`,
+`get_time_freq_beam`) use the `angle` path; `core/bds_to_fits.py` and
+`get_source_coordinates` use the plain scaling.
+
+This is the only place the renders' sky-to-beam transform and the
+degrees-to-pixel scaling are written. It is **not** the whole orientation
+convention: `get_source_coordinates` derives its beam-frame offsets
+separately, from a separation and position angle with its own
+`signs`/`swap`, so a change of convention (still provisional —
+`beam-orientation.md`) is two edits, here and there, rather than four. It
+returns a tuple rather than a stacked array because `bds_to_fits` passes 1-D
+`l` and `m` of different lengths; callers stack with `np.array(...)` to get
+`interpolate_beam`'s `xpyp`.
+
+Three private helpers complete the kernel:
+
+- `_parallactic_angles(times, loc=None, centre=None)` (`utils.py:844-857`) —
+  the position angle from the pointing centre to the north celestial pole in
+  `AltAz`, in radians. `centre=None` is the wizard's own centre; a supplied
+  one is used for that call only (see `centre=` below).
+- `_resolve_times(times)` (`utils.py:834-842`) — `times`, else the attached
+  image's time axis, else the documented `RuntimeError`.
+- `_coarsen_grid` / `_upsample_planes` (`utils.py:177-205`, module level) —
+  `pixel_stepping`: subsample the l/m grid, then bilinearly interpolate the
+  coarse planes back (`order=1, mode="nearest"`).
+
+The extraction was behaviour-preserving: 55 output arrays from every caller
+(real, complex, stepped, `pa_tolerance`, `azimuth`, `centre=`, FITS native
+and resampled) were bit-identical before and after. What each caller still
+owns is its `meshgrid` indexing — `"xy"` in `get_rotation_averaged_beam`
+(D4), `"ij"` in `get_time_freq_beam` (xradio `l`, `m` order).
+
+Pinned by `test_lm_to_pixel_maps_degrees_onto_the_bds_grid` (the scaling),
+`test_lm_to_pixel_with_an_angle_pins_the_sky_to_beam_transform` (literal
+values of the transform, including the `l` flip) and
+`test_rotation_angle_is_the_textbook_parallactic_angle` (the angle against
+the closed form, at two sites). Before these, negating the angle, swapping
+the rotated axes or substituting a proper rotation passed the whole unit
+suite. The bilinear order of `_upsample_planes` is pinned by
+`test_pixel_stepping_upsample_is_bilinear` (a skipped pixel is exactly the
+mean of its two evaluated neighbours; orders 0 and 3 both fail it), and its
+coordinates by `test_time_freq_beam_pixel_stepping_upsamples`.
+
+One error message changed: with no times available,
+`get_rotation_averaged_beam` and `get_time_freq_beam` now raise "explicit
+times must be supplied, since …" (was "times must be supplied, since …"),
+the text `get_source_coordinates` already used.
+
+`get_time_freq_beam` still lacks the `order=`, `centre=` and `nthreads`
+options of `get_rotation_averaged_beam`; with one kernel they are now a
+matter of passing arguments through.
+
 ## Optional-image construction
 
 `image_name` is optional at construction time. Without it, `BeamWizard` is
@@ -160,12 +227,12 @@ BDS-only: `interpolate_beam` still works (it only needs the BDS), but the
 and `times` returns `None` rather than raising. Two methods populate
 image-derived state after the fact:
 
-- `attach_image(image_name)` (`utils.py:673`) — attaches a FITS or xradio
+- `attach_image(image_name)` (`utils.py:709`) — attaches a FITS or xradio
   zarr image (any path-like, including the CLI's `UPath`, since #38) after construction (or swaps the image on an existing
   wizard), populating the field centre, WCS, default l/m grid, and time
   axis (the latter only for xradio-zarr images; FITS images still leave
   `times` as `None`).
-- `set_field_centre(centre, times=None)` (`utils.py:718`) — supplies just
+- `set_field_centre(centre, times=None)` (`utils.py:754`) — supplies just
   a pointing centre (and optionally a time axis) without attaching an
   image at all. This is the image-free path used by
   `scripts/test_beam_orientation.py`; the WCS and default l/m grid remain
@@ -183,7 +250,7 @@ Pinned by `test_construct_without_image`, `test_no_image_attrs_raise`,
 
 ## `get_time_freq_beam` — canonical `dim_names` only
 
-`get_time_freq_beam` (`utils.py:1483`) writes the full `(ij, time, freq,
+`get_time_freq_beam` (`utils.py:1508`) writes the full `(ij, time, freq,
 x, y)` beam cube to a zarr store, computing each time/ij plane by rotating
 the l/m grid by the parallactic angle and calling `interpolate_beam`.
 
@@ -198,14 +265,14 @@ if tuple(dim_names) != _CANONICAL_DIM_NAMES:
     raise ValueError(...)
 ```
 
-(`utils.py:1548-1555`). Real permutation of the data layout is not
+(`utils.py:1573-1580`). Real permutation of the data layout is not
 implemented — passing a differently-ordered tuple would relabel the dims
 without reordering the underlying array (silent corruption), so any
 non-canonical tuple raises `ValueError` instead. Pinned by
 `test_time_freq_beam_rejects_non_canonical_dim_names`.
 
 Both the beam-variable dataset and the coordinate datasets are created
-with `fill_value=None` (`utils.py:1698` and `:1729`) rather than zarr's
+with `fill_value=None` (`utils.py:1680` and `:1681`) rather than zarr's
 default `fill_value=0`. With the default, `xarray.open_zarr`'s
 `mask_and_scale=True` treats stored `0.0` as "unwritten" and masks it to
 `NaN` on read — which corrupts genuine zero coordinates (e.g. `l=0.0`) or
@@ -228,7 +295,7 @@ cache does: `complex64` for complex beams, `float32` for real ones — see
 ## `enrich_bds_xradio`
 
 `enrich_bds_xradio(zarr_path, bw, output_var, polarizations)`
-(`utils.py:1753`) post-processes a zarr store already written by
+(`utils.py:1720`) post-processes a zarr store already written by
 `get_time_freq_beam` into xradio schema:
 
 - converts the `l`/`m` coordinate arrays from degrees to radians in place;
@@ -448,19 +515,21 @@ it is not what `partition_mueller` does.
 
 ## Sources
 
-- `src/meerkat_beams/utils.py:733-770` (`_get_prefilter`)
-- `src/meerkat_beams/utils.py:772-806` (`get_source_coordinates`)
-- `src/meerkat_beams/utils.py:840-887` (`interpolate_beam`)
-- `src/meerkat_beams/utils.py:808-838` (`freq_range`, `check_freqs`)
-- `src/meerkat_beams/utils.py:673-716` (`attach_image`)
+- `src/meerkat_beams/utils.py:769-806` (`_get_prefilter`)
+- `src/meerkat_beams/utils.py:859-886` (`get_source_coordinates`)
+- `src/meerkat_beams/utils.py:177-205,808-857` (`_coarsen_grid`, `_upsample_planes`,
+  `lm_to_pixel`, `_resolve_times`, `_parallactic_angles`)
+- `src/meerkat_beams/utils.py:920-967` (`interpolate_beam`)
+- `src/meerkat_beams/utils.py:888-918` (`freq_range`, `check_freqs`)
+- `src/meerkat_beams/utils.py:709-752` (`attach_image`)
 - `src/meerkat_beams/utils.py` (`GROUP_TELESCOPES`, `_build_group_bds`,
   `_align_group_freqs`, `_check_group_grids`, the `group` branch of `__init__`)
 - `src/meerkat_beams/cache.py` (`ensure_group_bds`, `GROUP_PRODUCTS`)
 - `tests/test_beam_wizard_group.py`, `tests/test_group_bds.py`
-- `src/meerkat_beams/utils.py:718-731` (`set_field_centre`)
-- `src/meerkat_beams/utils.py:1483-1745` (`get_time_freq_beam`)
-- `src/meerkat_beams/utils.py:1548-1555` (`_CANONICAL_DIM_NAMES` guard)
-- `src/meerkat_beams/utils.py:1753-1824` (`enrich_bds_xradio`)
+- `src/meerkat_beams/utils.py:754-767` (`set_field_centre`)
+- `src/meerkat_beams/utils.py:1508-1712` (`get_time_freq_beam`)
+- `src/meerkat_beams/utils.py:1573-1580` (`_CANONICAL_DIM_NAMES` guard)
+- `src/meerkat_beams/utils.py:1720-1791` (`enrich_bds_xradio`)
 - commit `0f2a4f4` ("test: add tests for complex Mueller term" — landed the
   dtype-aware prefilter cache)
 - `tests/test_beam_wizard.py`: `test_prefilter_is_cached`,

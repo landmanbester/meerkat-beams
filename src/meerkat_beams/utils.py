@@ -170,6 +170,42 @@ def zarr_compressor_encoding(compressor) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Pixel-stepping helpers shared by the rotation-averaged and time/freq renders
+# ---------------------------------------------------------------------------
+
+
+def _coarsen_grid(ll: np.ndarray, mm: np.ndarray, pixel_stepping: int):
+    """Subsample a 2-D l/m grid by ``pixel_stepping`` along both axes.
+
+    Returns ``(ll_flat, mm_flat, coarse_shape, upsample_coords)``. The flat
+    arrays are the coarse grid, ravelled. ``upsample_coords`` are the fractional
+    coarse-grid coordinates of every full-resolution pixel, for
+    ``_upsample_planes``; it is None when the coarse grid is the full grid.
+    """
+    full_shape = ll.shape
+    if pixel_stepping > 1:
+        ll = ll[::pixel_stepping, ::pixel_stepping]
+        mm = mm[::pixel_stepping, ::pixel_stepping]
+    coarse_shape = ll.shape
+    if pixel_stepping > 1 and coarse_shape != full_shape:
+        fi = np.arange(full_shape[0]) / pixel_stepping
+        fj = np.arange(full_shape[1]) / pixel_stepping
+        fi2d, fj2d = np.meshgrid(fi, fj, indexing="ij")
+        upsample_coords = np.array([fi2d.ravel(), fj2d.ravel()])
+    else:
+        upsample_coords = None
+    return ll.ravel(), mm.ravel(), coarse_shape, upsample_coords
+
+
+def _upsample_planes(planes: np.ndarray, upsample_coords: np.ndarray, full_shape: Tuple[int, int]) -> np.ndarray:
+    """Bilinearly interpolate coarse ``(..., ny, nx)`` planes back to ``full_shape``."""
+    out = np.empty(planes.shape[:-2] + tuple(full_shape), dtype=planes.dtype)
+    for idx in np.ndindex(planes.shape[:-2]):
+        out[idx] = map_coordinates(planes[idx], upsample_coords, order=1, mode="nearest").reshape(full_shape)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # BeamWizard
 # ---------------------------------------------------------------------------
 
@@ -769,6 +805,57 @@ class BeamWizard(object):
                 self._prefilters[key] = spline_filter(da.sel(**sel), order=order, output=out_dtype)
         return self._prefilters[key]
 
+    def lm_to_pixel(self, l, m, angle=None) -> Tuple[np.ndarray, np.ndarray]:
+        """Map ``(l, m)`` offsets from the pointing centre, in degrees, to BDS pixel coordinates.
+
+        With ``angle`` (radians, the parallactic angle) the sky-frame offsets
+        are first taken into the beam frame, ``(l, m) -> (m sin a - l cos a,
+        l sin a + m cos a)``. That map is a rotation combined with a flip of
+        ``l`` (its determinant is -1), so ``angle=0`` gives ``(-l, m)`` and is
+        NOT the same as ``angle=None``, which applies no transform at all.
+
+        This is the only place the sky-to-beam transform of the rendered beams
+        (``get_rotation_averaged_beam``, ``get_time_freq_beam``) and the
+        degrees-to-pixel scaling are written down. ``get_source_coordinates``
+        derives its beam-frame offsets separately, from a separation and
+        position angle, and uses this method for the scaling only. The
+        orientation convention is still provisional, see
+        ``docs/wiki/beam-orientation.md``.
+
+        Returns ``(xp, yp)``, each shaped like its input, ready to be stacked
+        into the ``xpyp`` argument of ``interpolate_beam``.
+        """
+        if angle is not None:
+            l, m = m * np.sin(angle) - l * np.cos(angle), l * np.sin(angle) + m * np.cos(angle)
+        xp = l / self.bds.attrs["dx"] + self.bds.attrs["x0"]
+        yp = m / self.bds.attrs["dy"] + self.bds.attrs["y0"]
+        return xp, yp
+
+    def _resolve_times(self, times: Optional[Time]) -> Time:
+        """``times`` if given, else the attached image's time axis; raises if there is neither."""
+        if times is None:
+            if self.times is None:
+                raise RuntimeError(
+                    "explicit times must be supplied, since BeamWizard was constructed without observational time info"
+                )
+            times = self.times
+        return times
+
+    def _parallactic_angles(
+        self, times: Time, loc: Optional[EarthLocation] = None, centre: Optional[SkyCoord] = None
+    ) -> np.ndarray:
+        """Parallactic angle of the pointing centre at each time, in radians.
+
+        ``centre=None`` uses the wizard's own pointing centre (which raises if
+        no image is attached). A supplied centre is used here and nowhere else:
+        nothing is stored, so one wizard can serve many pointings.
+        """
+        frame = AltAz(obstime=times, location=self.default_location if loc is None else loc)
+        altaz_centre = (self.centre if centre is None else centre).transform_to(frame)
+        # position angle from the centre to the north celestial pole
+        ncp = SkyCoord(ra=0 * u.deg, dec=90 * u.deg)
+        return altaz_centre.position_angle(ncp.transform_to(frame)).rad
+
     def get_source_coordinates(
         self,
         srcpos: SkyCoord,
@@ -782,12 +869,7 @@ class BeamWizard(object):
         """
         if loc is None:
             loc = self.default_location
-        if times is None:
-            if self.times is None:
-                raise RuntimeError(
-                    "explicit times must be supplied, since BeamWizard was constructed without observational time info"
-                )
-            times = self.times
+        times = self._resolve_times(times)
         # convert positions to alt-az
         frame = AltAz(obstime=times, location=loc)
         altaz_src = srcpos.transform_to(frame)
@@ -801,9 +883,7 @@ class BeamWizard(object):
         y = signs[1] * seps.deg * np.cos(angles.rad)
         if swap:
             x, y = y, x
-        xp = x / self.bds.attrs["dx"] + self.bds.attrs["x0"]
-        yp = y / self.bds.attrs["dy"] + self.bds.attrs["y0"]
-        return np.array([xp, yp]), seps, angles
+        return np.array(self.lm_to_pixel(x, y)), seps, angles
 
     @property
     def freq_range(self) -> Tuple[float, float]:
@@ -1095,15 +1175,7 @@ class BeamWizard(object):
                 )
             angles = np.linspace(0, 2 * np.pi, num_angles, endpoint=False)
         else:
-            if loc is None:
-                loc = self.default_location
-            if times is None:
-                available_times = getattr(self, "times", None)
-                if available_times is None:
-                    raise RuntimeError(
-                        "times must be supplied, since BeamWizard was constructed without observational time info"
-                    )
-                times = available_times
+            times = self._resolve_times(times)
             if time_stepping > 1:
                 times = times[::time_stepping]
 
@@ -1136,34 +1208,12 @@ class BeamWizard(object):
                 "Both must be either 1D (to form a meshgrid) or 2D (pre-constructed grid with matching shapes)."
             )
 
+        # Pixel stepping: evaluate on a subsampled grid, interpolate back at the end
         full_shape = ll.shape
-
-        # Apply pixel stepping: subsample the grid for cheaper computation
-        if pixel_stepping > 1:
-            ll_compute = ll[::pixel_stepping, ::pixel_stepping]
-            mm_compute = mm[::pixel_stepping, ::pixel_stepping]
-        else:
-            ll_compute = ll
-            mm_compute = mm
-
-        shape = ll_compute.shape
-        ll_flat = ll_compute.ravel()
-        mm_flat = mm_compute.ravel()
+        ll_flat, mm_flat, shape, upsample_coords = _coarsen_grid(ll, mm, pixel_stepping)
 
         if average == "pa":
-            # Compute parallactic angles at each time for the field center
-            frame = AltAz(obstime=times, location=loc)
-            # centre=None falls back to the wizard's own pointing centre (which
-            # raises if no image is attached). A supplied centre is used here and
-            # nowhere else: nothing is stored, so one wizard can serve many
-            # partitions with different pointings.
-            pa_centre = self.centre if centre is None else centre
-            altaz_centre = pa_centre.transform_to(frame)
-
-            # Get position angle to NCP (north celestial pole) to determine parallactic angle
-            ncp = SkyCoord(ra=0 * u.deg, dec=90 * u.deg)
-            altaz_ncp = ncp.transform_to(frame)
-            angles = altaz_centre.position_angle(altaz_ncp).rad
+            angles = self._parallactic_angles(times, loc, centre)
 
         n_times = len(angles)
         if pa_tolerance > 0:
@@ -1225,15 +1275,8 @@ class BeamWizard(object):
             chunk_sum_sq = np.zeros_like(chunk_sum, dtype=float)
 
             for pa_t, w in zip(angles, weights):
-                l_rot = mm_chunk * np.sin(pa_t) - ll_chunk * np.cos(pa_t)
-                m_rot = ll_chunk * np.sin(pa_t) + mm_chunk * np.cos(pa_t)
-
-                # Convert to beam pixel coordinates
-                xp = l_rot / self.bds.attrs["dx"] + self.bds.attrs["x0"]
-                yp = m_rot / self.bds.attrs["dy"] + self.bds.attrs["y0"]
-
-                # Interpolate beam at these coordinates
-                xpyp = np.array([xp, yp])
+                # Rotate into the beam frame and interpolate the beam there
+                xpyp = np.array(self.lm_to_pixel(ll_chunk, mm_chunk, pa_t))
                 beam_vals = self.interpolate_beam(xpyp, freq, var=var, i=i, j=j, order=order)
 
                 # Average over frequency if spectral index is given
@@ -1281,27 +1324,9 @@ class BeamWizard(object):
             beam_var = beam_var.reshape((len(freq),) + shape)
 
         # Interpolate back to full resolution if pixel_stepping was applied
-        if pixel_stepping > 1 and shape != full_shape:
-            # Fractional coarse-grid coordinates for each full-resolution pixel
-            fi = np.arange(full_shape[0]) / pixel_stepping
-            fj = np.arange(full_shape[1]) / pixel_stepping
-            fi2d, fj2d = np.meshgrid(fi, fj, indexing="ij")
-            coords = np.array([fi2d.ravel(), fj2d.ravel()])
-            if beam_mean.ndim == 2:
-                beam_mean = map_coordinates(beam_mean, coords, order=1, mode="nearest").reshape(full_shape)
-                beam_var = map_coordinates(beam_var, coords, order=1, mode="nearest").reshape(full_shape)
-            else:
-                mean_full = np.empty((len(freq),) + full_shape, dtype=beam_mean.dtype)
-                var_full = np.empty((len(freq),) + full_shape)  # variance is real
-                for f_idx in range(len(freq)):
-                    mean_full[f_idx] = map_coordinates(beam_mean[f_idx], coords, order=1, mode="nearest").reshape(
-                        full_shape
-                    )
-                    var_full[f_idx] = map_coordinates(beam_var[f_idx], coords, order=1, mode="nearest").reshape(
-                        full_shape
-                    )
-                beam_mean = mean_full
-                beam_var = var_full
+        if upsample_coords is not None:
+            beam_mean = _upsample_planes(beam_mean, upsample_coords, full_shape)
+            beam_var = _upsample_planes(beam_var, upsample_coords, full_shape)
 
         return beam_mean, beam_var
 
@@ -1557,8 +1582,6 @@ class BeamWizard(object):
 
         dim_time, dim_freq, dim_ij, dim_x, dim_y = dim_names
 
-        if loc is None:
-            loc = self.default_location
         if ij_list is None:
             ij_list = [("I", "I")]
 
@@ -1588,13 +1611,7 @@ class BeamWizard(object):
             else:
                 times = Time(ds.coords[dim_time].values, format="mjd")
         else:
-            if times is None:
-                available_times = getattr(self, "times", None)
-                if available_times is None:
-                    raise RuntimeError(
-                        "times must be supplied, since BeamWizard was constructed without observational time info"
-                    )
-                times = available_times
+            times = self._resolve_times(times)
             if l is None:
                 l = self.l_grid
             if m is None:
@@ -1616,34 +1633,9 @@ class BeamWizard(object):
 
         full_shape = ll.shape
         nx, ny = full_shape
+        ll_flat, mm_flat, compute_shape, upsample_coords = _coarsen_grid(ll, mm, pixel_stepping)
 
-        # Apply pixel stepping
-        if pixel_stepping > 1:
-            ll_compute = ll[::pixel_stepping, ::pixel_stepping]
-            mm_compute = mm[::pixel_stepping, ::pixel_stepping]
-        else:
-            ll_compute = ll
-            mm_compute = mm
-
-        compute_shape = ll_compute.shape
-        ll_flat = ll_compute.ravel()
-        mm_flat = mm_compute.ravel()
-
-        # Precompute upsampling coordinates
-        if pixel_stepping > 1 and compute_shape != full_shape:
-            fi = np.arange(full_shape[0]) / pixel_stepping
-            fj = np.arange(full_shape[1]) / pixel_stepping
-            fi2d, fj2d = np.meshgrid(fi, fj, indexing="ij")
-            upsample_coords = np.array([fi2d.ravel(), fj2d.ravel()])
-        else:
-            upsample_coords = None
-
-        # Compute parallactic angles
-        frame = AltAz(obstime=times, location=loc)
-        altaz_centre = self.centre.transform_to(frame)
-        ncp = SkyCoord(ra=0 * u.deg, dec=90 * u.deg)
-        altaz_ncp = ncp.transform_to(frame)
-        pa = altaz_centre.position_angle(altaz_ncp)
+        pa = self._parallactic_angles(times, loc)
 
         n_times = len(times)
         n_freq = len(freq)
@@ -1655,7 +1647,7 @@ class BeamWizard(object):
         if verbose > 0:
             self.log.info(
                 f"computing time-freq beam: {n_ij} ij elements, {n_times} times, "
-                f"PA range {pa.min().deg:.1f} to {pa.max().deg:.1f} deg, "
+                f"PA range {np.degrees(pa.min()):.1f} to {np.degrees(pa.max()):.1f} deg, "
                 f"{n_freq} freqs, {nx}x{ny} pixels"
                 f"{f', pixel_stepping={pixel_stepping}' if pixel_stepping > 1 else ''}"
             )
@@ -1664,27 +1656,17 @@ class BeamWizard(object):
         for ii, jj in ij_list:
             self._get_prefilter(var, ii, jj)
 
-        # Build shape, chunks and coords in dim_names
-        dim_sizes = {dim_ij: n_ij, dim_time: n_times, dim_freq: n_freq, dim_x: nx, dim_y: ny}
-        dim_chunks = {dim_ij: 1, dim_time: chunks_time, dim_freq: chunks_freq, dim_x: chunks_x, dim_y: chunks_y}
-        ij_labels = [f"{ii}{jj}" for ii, jj in ij_list]
-        dim_coords = {
-            dim_ij: ij_labels,
+        # Shape, chunks and coordinates in the canonical (time, frequency,
+        # polarization, l, m) order that dim_names was checked against above
+        shape = (n_times, n_freq, n_ij, nx, ny)
+        chunks = tuple(min(int(c), n) for c, n in zip((chunks_time, chunks_freq, 1, chunks_x, chunks_y), shape))
+        coords = {
             dim_time: times.mjd,
             dim_freq: freq,
+            dim_ij: [f"{ii}{jj}" for ii, jj in ij_list],
             dim_x: l if l.ndim == 1 else np.arange(nx),
             dim_y: m if m.ndim == 1 else np.arange(ny),
         }
-
-        shape = tuple(dim_sizes[d] for d in dim_names)
-        # Clamp chunk sizes so they do not exceed the corresponding dimension lengths
-        clamped_dim_chunks = {d: min(int(dim_chunks[d]), int(dim_sizes[d])) for d in dim_names}
-        chunks = tuple(clamped_dim_chunks[d] for d in dim_names)
-        coords = {d: dim_coords[d] for d in dim_names}
-
-        # Determine axis positions for ij and time dimensions in output layout
-        ij_axis = list(dim_names).index(dim_ij)
-        time_axis = list(dim_names).index(dim_time)
 
         # Create zarr store directly (no dask dependency)
         if ds is None:
@@ -1701,7 +1683,7 @@ class BeamWizard(object):
             )
             store[var_name].attrs["_ARRAY_DIMENSIONS"] = list(dim_names)
             # Write coordinate arrays
-            for dim_idx, dim in enumerate(dim_names):
+            for dim in dim_names:
                 coord_data = np.asarray(coords[dim])
                 zarr_create_array(store, dim, data=coord_data, overwrite=True, fill_value=None)
                 store[dim].attrs["_ARRAY_DIMENSIONS"] = [dim]
@@ -1709,37 +1691,22 @@ class BeamWizard(object):
 
         def compute_plane(pa_t, ii, jj):
             """Compute beam for the full spatial plane at one time/ij, with upsampling."""
-            l_rot = mm_flat * np.sin(pa_t) - ll_flat * np.cos(pa_t)
-            m_rot = ll_flat * np.sin(pa_t) + mm_flat * np.cos(pa_t)
-            xp = l_rot / self.bds.attrs["dx"] + self.bds.attrs["x0"]
-            yp = m_rot / self.bds.attrs["dy"] + self.bds.attrs["y0"]
-            xpyp = np.array([xp, yp])
+            xpyp = np.array(self.lm_to_pixel(ll_flat, mm_flat, pa_t))
             beam_vals = self.interpolate_beam(xpyp, freq, var=var, i=ii, j=jj)
             beam_2d = beam_vals.reshape((n_freq,) + compute_shape)
-
             if upsample_coords is not None:
-                beam_full = np.empty((n_freq,) + full_shape, dtype=out_dtype)
-                for f_idx in range(n_freq):
-                    beam_full[f_idx] = map_coordinates(
-                        beam_2d[f_idx], upsample_coords, order=1, mode="nearest"
-                    ).reshape(full_shape)
-                return beam_full
-
-            return beam_2d.astype(out_dtype)
+                beam_2d = _upsample_planes(beam_2d, upsample_coords, full_shape)
+            return beam_2d.astype(out_dtype, copy=False)
 
         # Sequential computation across (time, ij); write to zarr after each plane
         done_count = 0
         total = n_times * n_ij
         zarr_arr = zarr.open(filename, mode="r+")[var_name]
         for t_idx in range(n_times):
-            pa_t = pa[t_idx].rad
+            pa_t = pa[t_idx]
             for ij_idx, (ii, jj) in enumerate(ij_list):
-                plane = compute_plane(pa_t, ii, jj)  # shape: (n_freq, nx, ny)
-                # Build index tuple to write plane into correct position
-                idx = [slice(None)] * 5
-                idx[time_axis] = t_idx
-                idx[ij_axis] = ij_idx
-                zarr_arr[tuple(idx)] = plane
+                # plane is (n_freq, nx, ny): one time, one ij element
+                zarr_arr[t_idx, :, ij_idx] = compute_plane(pa_t, ii, jj)
                 done_count += 1
                 if (done_count % max(1, total // 10) == 0 or done_count == total) and verbose > 0:
                     self.log.info(f"  written {done_count}/{total} planes")

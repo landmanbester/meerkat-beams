@@ -1199,3 +1199,80 @@ def test_chunk_size_bounds_the_pixels_in_flight_across_threads(bw, times, monkey
     monkeypatch.setattr(bw, "interpolate_beam", recording)
     _grid_average(bw, times, nthreads=4, chunk_size=20)  # 63 pixels
     assert max(sizes) == 5
+
+
+# ---------------------------------------------------------------------------
+# lm_to_pixel: the one place sky offsets become BDS pixel coordinates
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_lm_to_pixel_maps_degrees_onto_the_bds_grid(bw):
+    """Without an angle: the pointing centre is the BDS centre pixel, one dx per pixel."""
+    x0, y0, dx, dy = (bw.bds.attrs[k] for k in ("x0", "y0", "dx", "dy"))
+    xp, yp = bw.lm_to_pixel(np.array([0.0, dx, 0.0]), np.array([0.0, 0.0, -2 * dy]))
+    np.testing.assert_allclose(xp, [x0, x0 + 1, x0])
+    np.testing.assert_allclose(yp, [y0, y0, y0 - 2])
+
+
+@pytest.mark.unit
+def test_lm_to_pixel_with_an_angle_pins_the_sky_to_beam_transform(bw):
+    """Literal values of (l, m) -> (m sin a - l cos a, l sin a + m cos a).
+
+    One pixel east of the centre lands one pixel *west* at angle 0 (the
+    transform flips l, so angle=0 differs from angle=None) and one pixel north
+    at 90 degrees; one pixel north stays put at 0 and lands one pixel east at
+    90 degrees. A sign change, an axis swap or a proper rotation all fail here.
+    """
+    x0, y0, dx, dy = (bw.bds.attrs[k] for k in ("x0", "y0", "dx", "dy"))
+    east, north = (np.array([dx]), np.array([0.0])), (np.array([0.0]), np.array([dy]))
+    np.testing.assert_allclose(bw.lm_to_pixel(*east, angle=0.0), [[x0 - 1], [y0]], atol=1e-12)
+    np.testing.assert_allclose(bw.lm_to_pixel(*east, angle=np.pi / 2), [[x0], [y0 + dx / dy]], atol=1e-12)
+    np.testing.assert_allclose(bw.lm_to_pixel(*north, angle=0.0), [[x0], [y0 + 1]], atol=1e-12)
+    np.testing.assert_allclose(bw.lm_to_pixel(*north, angle=np.pi / 2), [[x0 + dy / dx], [y0]], atol=1e-12)
+    np.testing.assert_allclose(bw.lm_to_pixel(*east), [[x0 + 1], [y0]], atol=1e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("lat_deg", [None, 52.9])
+def test_rotation_angle_is_the_textbook_parallactic_angle(bw, lat_deg):
+    """The angle the renders rotate by is q = atan2(sin H, tan(lat) cos(dec) - sin(dec) cos H).
+
+    Checked against the closed form to 1 degree (the form ignores precession
+    since J2000, worth ~0.3 degrees), at the default site and at a northern one
+    so that neither the sign nor the observer location can be dropped.
+    """
+    from astropy.coordinates import EarthLocation
+
+    loc = None if lat_deg is None else EarthLocation(lat=lat_deg * u.deg, lon=6.6 * u.deg, height=0 * u.m)
+    site = bw.default_location if loc is None else loc
+    t = Time("2024-01-01T00:00:00") + np.linspace(0, 6, 7) * u.hour
+    hour_angle = (t.sidereal_time("apparent", longitude=site.lon) - bw.centre.ra).rad
+    lat, dec = site.lat.rad, bw.centre.dec.rad
+    q = np.arctan2(np.sin(hour_angle), np.tan(lat) * np.cos(dec) - np.sin(dec) * np.cos(hour_angle))
+    diff = (bw._parallactic_angles(t, loc) - q + np.pi) % (2 * np.pi) - np.pi
+    assert np.abs(diff).max() < np.radians(1.0)
+    assert np.ptp(q) > np.radians(10.0)  # the track actually rotates, so a constant would fail
+
+
+@pytest.mark.unit
+def test_pixel_stepping_upsample_is_bilinear(bw, times):
+    """pixel_stepping evaluates every other pixel and fills the rest bilinearly.
+
+    A skipped pixel midway between two evaluated ones must be exactly their
+    mean. Nearest-neighbour would copy one of them and a cubic would overshoot
+    the mean on a curved beam, so this pins order=1; the last assertion shows
+    the beam is curved enough here for the three to differ.
+    """
+    l = np.linspace(-0.8, 0.8, 9)
+    m = np.linspace(-0.6, 0.6, 7)
+    kw = dict(l=l, m=m, times=times, time_stepping=1, freq=FREQS[:1], verbose=0)
+    full, _ = bw.get_rotation_averaged_beam(pixel_stepping=1, **kw)
+    stepped, _ = bw.get_rotation_averaged_beam(pixel_stepping=2, **kw)
+
+    coarse = full[::2, ::2]
+    np.testing.assert_allclose(stepped[::2, ::2], coarse, rtol=1e-12)
+    np.testing.assert_allclose(stepped[1::2, ::2], 0.5 * (coarse[:-1] + coarse[1:]), rtol=1e-12)
+    np.testing.assert_allclose(stepped[::2, 1::2], 0.5 * (coarse[:, :-1] + coarse[:, 1:]), rtol=1e-12)
+    assert np.abs(stepped[1::2, ::2] - full[1::2, ::2]).max() > 1e-3
+    assert np.abs(stepped[1::2, ::2] - coarse[:-1]).max() > 1e-3
