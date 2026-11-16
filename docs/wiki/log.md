@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-16T17:34:02Z
+timestamp: 2026-11-16T17:45:25Z
 ---
 
 # Wiki changelog
@@ -718,3 +718,8 @@ Issue #57, second PR.
 - `data-model.md`: `--pointing-centre` refuses mixed-unit forms too.
 - `utils.py` line references re-mapped through `594a9dd..43ca7a5`; all five
   stamped pages re-stamped.
+
+## 2026-11-16 — merge of the #58 Greptile fixes into the beam_on_grid branch (verified at `b0d64db`)
+
+- No content change. `utils.py` line references re-mapped through the merge;
+  all five stamped pages re-stamped at the merge commit.

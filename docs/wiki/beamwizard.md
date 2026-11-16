@@ -3,8 +3,8 @@ type: reference
 title: BeamWizard interpolation and rendering internals
 description: beam_model (mdv/katbeam), group (MM/MPM/MPMP) and average (pa/azimuth) selectors, interpolate_beam prefilter/off-cube/spline-order/freq-guard semantics and the freq_extrapolation policy, get_source_coordinates transforms, the lm_to_pixel rotation kernel, optional-image paths, get_time_freq_beam canonical dim_names, enrich_bds_xradio, partition_mueller and the pointing_centre= override, phase centre vs pointing centre (phase_centre=, sky_rotation_matrix, phase_to_pointing_lm), the numba beam_on_grid resampler for stored maps with its accuracy-vs-spacing table, and the nthreads/pa_tolerance/order speed options of get_rotation_averaged_beam.
 tags: [beamwizard, phase-centre, pointing-centre, interpolation, scipy, zarr, xradio, utils, katbeam, baseline-groups, meerkat+, partition-mueller, mueller]
-timestamp: 2026-11-16T17:34:02Z
-last_verified_commit: 689f453
+timestamp: 2026-11-16T17:45:25Z
+last_verified_commit: b0d64db
 ---
 
 # BeamWizard interpolation and rendering internals
