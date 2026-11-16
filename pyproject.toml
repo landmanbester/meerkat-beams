@@ -56,6 +56,9 @@ full = [
     # vs 856-1712 MHz), so S-band katbeam works only in a dev checkout. See
     # docs/wiki/design-decisions.md.
     "katbeam",
+    # beam_on_grid's resampling kernel (#57): 7-11x faster than row-blocked
+    # numpy at 3840^2-8748^2 and holds no temporaries beyond the output (D22).
+    "numba",
 ]
 
 [project.urls]
