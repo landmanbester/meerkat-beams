@@ -7,13 +7,8 @@ Set MBEAMS_OFFLINE=1 to skip the download (for air-gapped CI).
 """
 
 import os
-from pathlib import Path
 
 from meerkat_beams import cache
-
-test_root_path = Path(__file__).resolve().parent
-test_data_path = test_root_path / "data"
-test_data_path.mkdir(parents=True, exist_ok=True)
 
 # Kept for fixtures that pair the BDS with a test measurement set.
 # https://drive.google.com/file/d/1mCTrC3IbMUqu0Adu1DWOjhwvzQS6gseo/view?usp=drive_link

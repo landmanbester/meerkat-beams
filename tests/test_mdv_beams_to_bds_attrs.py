@@ -5,6 +5,7 @@ import pytest
 import xarray
 
 from meerkat_beams.core.mdv_beams_to_bds import PROVENANCE_ATTRS, mdv_beams_to_bds
+from tests._synthetic import build_synthetic_npz
 
 N_XY = 9
 N_FREQ = 3
@@ -72,12 +73,7 @@ def test_missing_provenance_attrs_are_skipped(tmp_path):
 @pytest.mark.unit
 def test_npz_input_carries_no_provenance(tmp_path):
     """The .npz path has no attrs to copy and must not invent any."""
-    degs = (np.arange(N_XY) - N_XY // 2) * 0.1
-    beam = np.zeros((4, 2, N_FREQ, N_XY, N_XY), dtype=np.complex64)
-    beam[0] = 1.0
-    beam[3] = 1.0
-    npz = tmp_path / "in.npz"
-    np.savez(npz, beam=beam, margin_deg=degs, freq_MHz=np.linspace(1000.0, 1200.0, N_FREQ))
+    npz = build_synthetic_npz(tmp_path)
     out = tmp_path / "out.bds.zarr"
     mdv_beams_to_bds(str(npz), str(out))
     bds = xarray.open_zarr(str(out))

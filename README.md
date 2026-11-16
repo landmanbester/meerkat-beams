@@ -151,5 +151,4 @@ uv run pytest -rs        # -rs lists every skip with its reason
 Even with everything set, some tests always skip:
 
 - the S0–S4 conversion regressions: S0 and S4 have published inputs but no reference BDS, and S1–S3 have no inputs;
-- `test_bds_to_xradio_end_to_end_synthetic`: `bds_to_xradio` cannot render a FITS image, which has no time axis;
 - one `test_zarr_format.py` test, which applies only under the other zarr-python major.
