@@ -328,7 +328,13 @@ def beam_on_grid(
         out: Optional caller-owned ``(..., NY, NX)`` C-contiguous buffer to write
              into, with ``beam``'s leading shape and a dtype that holds
              ``beam``'s values (complex for a complex beam). Returned.
-        nthreads: Threads over output rows (default 1).
+        nthreads: Threads over output rows (default 1, clamped to numba's
+                  maximum). With 1 the kernel runs on the calling thread and
+                  many Python threads may call at once. Above 1 it launches a
+                  numba parallel region; concurrent such calls are serialised
+                  by a process-wide lock, because numba's ``workqueue``
+                  threading layer (the fallback without TBB or OpenMP, as in
+                  this package's slim container) aborts the process otherwise.
 
     Returns:
         ``(..., NY, NX)`` in (Y, X) order and ``beam``'s dtype (or ``out``).
@@ -337,7 +343,7 @@ def beam_on_grid(
         outside the beam grid (fractional index outside ``[0, n - 1]``), as the
         wizard's off-cube policy (D2). No ``1/n`` term: that is the caller's.
     """
-    from meerkat_beams._resample import bilinear_on_rotated_grid
+    from meerkat_beams import _resample
 
     beam = np.asarray(beam)
     if beam.ndim < 2:
@@ -373,14 +379,21 @@ def beam_on_grid(
     target = out.reshape((-1, m_out.size, l_out.size))  # a view: out is C-contiguous
     rotation = sky_rotation_matrix(pointing_centre, phase_centre)
 
-    import numba
-
-    previous = numba.get_num_threads()
-    numba.set_num_threads(min(nthreads, numba.config.NUMBA_NUM_THREADS))
-    try:
-        bilinear_on_rotated_grid(planes, l0b, dlb, m0b, dmb, rotation, np.deg2rad(l_out), np.deg2rad(m_out), target)
-    finally:
-        numba.set_num_threads(previous)
+    args = (planes, l0b, dlb, m0b, dmb, rotation, np.deg2rad(l_out), np.deg2rad(m_out), target)
+    nthreads = min(nthreads, _resample.numba.config.NUMBA_NUM_THREADS)
+    if nthreads == 1:
+        # no parallel region: safe from any number of concurrent Python threads
+        _resample.bilinear_serial(*args)
+        return out
+    numba = _resample.numba
+    # numba's workqueue layer aborts the process on concurrent parallel launches
+    with _resample.PARALLEL_LOCK:
+        previous = numba.get_num_threads()
+        numba.set_num_threads(nthreads)
+        try:
+            _resample.bilinear_parallel(*args)
+        finally:
+            numba.set_num_threads(previous)
     return out
 
 

@@ -1,5 +1,10 @@
 """beam_on_grid: stored beam maps about the pointing centre onto a grid about the phase centre (#57)."""
 
+import os
+import subprocess
+import sys
+import textwrap
+
 import astropy.units as u
 import numpy as np
 import pytest
@@ -12,8 +17,6 @@ from scipy.ndimage import map_coordinates
 
 from meerkat_beams.utils import BeamWizard, beam_on_grid
 from tests._synthetic import DEC0, RA0, build_synthetic_bds
-
-pytest.importorskip("numba")
 
 PHASE = SkyCoord(ra=RA0, dec=DEC0, unit="deg")
 POINTING = PHASE.directional_offset_by(-35 * u.deg, 0.8 * u.deg)
@@ -156,3 +159,38 @@ def test_the_far_hemisphere_gets_no_beam():
     antipode = SkyCoord(ra=PHASE.ra + 180 * u.deg, dec=-PHASE.dec)
     beam = _lopsided()
     assert not np.any(beam_on_grid(beam, L_BEAM, M_BEAM, antipode, PHASE, L_OUT, M_OUT))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("layer", ["workqueue", "default"])
+def test_concurrent_callers_do_not_abort(layer, tmp_path):
+    """dask workers and thread pools call from many Python threads at once. Under numba's
+    workqueue layer two concurrent parallel launches abort the process, so run in a
+    subprocess and require a clean exit and correct results for serial and threaded calls."""
+    script = tmp_path / "many_callers.py"  # not concurrent.py: that shadows the stdlib package
+    script.write_text(
+        textwrap.dedent(
+            """
+            from concurrent.futures import ThreadPoolExecutor
+            import numpy as np
+            from astropy.coordinates import SkyCoord
+            from meerkat_beams.utils import beam_on_grid
+            P = SkyCoord(0, -30, unit="deg"); Q = SkyCoord(0.5, -30.2, unit="deg")
+            ax = np.linspace(-2, 2, 64); out_ax = np.linspace(-1, 1, 300)
+            beam = np.random.default_rng(0).standard_normal((4, 64, 64)).astype(np.float32)
+            ref = beam_on_grid(beam, ax, ax, Q, P, out_ax, out_ax)
+            with ThreadPoolExecutor(8) as pool:
+                call = lambda k: beam_on_grid(beam, ax, ax, Q, P, out_ax, out_ax, nthreads=1 + k % 3)
+                res = list(pool.map(call, range(48)))
+            assert all(np.array_equal(r, ref) for r in res)
+            print("ok")
+            """
+        )
+    )
+    env = dict(os.environ)
+    env.pop("NUMBA_THREADING_LAYER", None)
+    if layer != "default":
+        env["NUMBA_THREADING_LAYER"] = layer
+    proc = subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True, timeout=600)
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert proc.stdout.strip().endswith("ok")
