@@ -199,3 +199,17 @@ implementation-level detail in
 [`docs/wiki/beamwizard.md`](docs/wiki/beamwizard.md). Unit coverage lives in
 `tests/test_beam_wizard.py` (hermetic — synthetic BDS + FITS in
 `tmp_path`). No open issues in this section as of this commit.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for `landmanbester/meerkat-beams` (`gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default triage labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context, with decisions in the wiki ledger (`docs/wiki/design-decisions.md`) instead of `docs/adr/`. See `docs/agents/domain.md`.
