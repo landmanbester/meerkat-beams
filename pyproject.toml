@@ -37,7 +37,6 @@ full = [
     "numpy",
     "scipy",
     "matplotlib",
-    "wget",
     "gdown>=5.0.0",
     "requests>=2.33.1",
     # s3:// support for the CLI's parse_upath paths (s3fs). This used to arrive

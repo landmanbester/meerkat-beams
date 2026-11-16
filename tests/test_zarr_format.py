@@ -6,7 +6,6 @@ cannot read v3. These tests run under whichever zarr the environment resolved;
 CI runs them under both.
 """
 
-import contextlib
 import json
 
 import astropy.units as u
@@ -18,7 +17,6 @@ from astropy.time import Time
 from numcodecs import Shuffle
 
 from meerkat_beams.core.mdv_beams_to_bds import mdv_beams_to_bds
-from meerkat_beams.core.mdv_to_xradio import mdv_to_xradio
 from meerkat_beams.utils import (
     ZARR_COMPRESSOR,
     BeamWizard,
@@ -79,14 +77,6 @@ def test_get_time_freq_beam_and_enrich_write_v2(tmp_path, compress):
     assert_zarr_v2(out, compressed_vars=("SKY",) if compress else ())
     # The polarization coordinate is rewritten by enrich_bds_xradio; it must stay v2 too.
     assert json.loads((out / "polarization" / ".zarray").read_text())["zarr_format"] == 2
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("compress", [False, True])
-def test_mdv_to_xradio_writes_v2(tmp_path, compress):
-    out = tmp_path / "mx.zarr"
-    mdv_to_xradio(str(build_synthetic_npz(tmp_path)), str(out), part="abs", compress=compress)
-    assert_zarr_v2(out, compressed_vars=("SKY",) if compress else ())
 
 
 @pytest.mark.unit
@@ -204,7 +194,7 @@ def _no_download(*args, **kwargs):
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "entry_point",
-    ["mdv_beams_to_bds", "mdv_to_xradio", "bds_name", "band", "group", "image_zarr"],
+    ["mdv_beams_to_bds", "bds_name", "band", "group", "image_zarr"],
 )
 def test_every_xarray_zarr_entry_point_is_guarded(tmp_path, monkeypatch, incompatible_stack, entry_point):
     """Each path into xarray's zarr backend raises the clear error, before any work or download."""
@@ -216,7 +206,6 @@ def test_every_xarray_zarr_entry_point_is_guarded(tmp_path, monkeypatch, incompa
     out = tmp_path / "out.zarr"
     calls = {
         "mdv_beams_to_bds": lambda: mdv_beams_to_bds(mdv_beams=npz, bds=str(out)),
-        "mdv_to_xradio": lambda: mdv_to_xradio(npz_path=npz, output=str(out)),
         "bds_name": lambda: BeamWizard(bds_name=str(build_synthetic_bds(tmp_path / "in.bds.zarr"))),
         "band": lambda: BeamWizard(band="L"),
         "group": lambda: BeamWizard(band="L", group="MM"),
@@ -229,9 +218,8 @@ def test_every_xarray_zarr_entry_point_is_guarded(tmp_path, monkeypatch, incompa
             image_name=str(build_synthetic_image_zarr(tmp_path / "img.zarr")),
         ),
     }
-    with pytest.warns(DeprecationWarning) if entry_point == "mdv_to_xradio" else contextlib.nullcontext():
-        with pytest.raises(IncompatibleZarrStackError):
-            calls[entry_point]()
+    with pytest.raises(IncompatibleZarrStackError):
+        calls[entry_point]()
     assert not out.exists()
 
 

@@ -16,14 +16,6 @@ def callback() -> None:
 
 
 # Register subcommands below. Imports go here (bottom) to avoid circular imports.
-from meerkat_beams.cli.download_mdv_beams import download_mdv_beams  # noqa: E402
-
-app.command(name="download-mdv-beams")(download_mdv_beams)
-
-from meerkat_beams.cli.mdv_to_xradio import mdv_to_xradio  # noqa: E402
-
-app.command(name="mdv-to-xradio")(mdv_to_xradio)
-
 from meerkat_beams.cli.mdv_beams_to_bds import mdv_beams_to_bds  # noqa: E402
 
 app.command(name="mdv-beams-to-bds")(mdv_beams_to_bds)
