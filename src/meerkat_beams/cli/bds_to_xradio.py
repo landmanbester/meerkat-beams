@@ -48,6 +48,13 @@ def bds_to_xradio(
             metavar="IMAGE_PATH",
         ),
     ],
+    pointing_centre: Annotated[
+        str | None,
+        typer.Option(
+            help="where the dishes point, as a SkyCoord string in ICRS (e.g. "
+            '"05h21m09.9s +16d38m22s" or "80.29 16.64" in degrees); default is the image phase centre',
+        ),
+    ] = None,
     output_var: Annotated[
         str,
         typer.Option(
@@ -164,6 +171,7 @@ def bds_to_xradio(
                 dict(
                     bds_path=bds_path,
                     image_path=image_path,
+                    pointing_centre=pointing_centre,
                     output_var=output_var,
                     pixel_stepping=pixel_stepping,
                     time_stepping=time_stepping,
@@ -188,6 +196,7 @@ def bds_to_xradio(
                 bds_path,
                 image_path,
                 output,
+                pointing_centre=pointing_centre,
                 output_var=output_var,
                 pixel_stepping=pixel_stepping,
                 time_stepping=time_stepping,
@@ -219,6 +228,7 @@ def bds_to_xradio(
         dict(
             bds_path=bds_path,
             image_path=image_path,
+            pointing_centre=pointing_centre,
             output_var=output_var,
             pixel_stepping=pixel_stepping,
             time_stepping=time_stepping,

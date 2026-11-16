@@ -32,18 +32,18 @@ from astropy.time import Time
 from meerkat_beams.utils import BeamWizard
 
 bw = BeamWizard(band="L", image_name="my_image.fits")
-src = bw.centre.directional_offset_by(45 * u.deg, 0.5 * u.deg)  # a source 0.5 deg from the pointing centre
+src = bw.pointing_centre.directional_offset_by(45 * u.deg, 0.5 * u.deg)  # a source 0.5 deg from the pointing centre
 times = Time("2024-01-01T18:00:00") + np.linspace(0, 8, 33) * u.hour
 gain = bw.get_time_variable_beamgain(src, times=times, freq=np.array([1.0e9, 1.4e9]))
 # gain.shape == (2, 33): centre-normalised Stokes I beam per frequency and time
 ```
 
-The image supplies the pointing centre and the l/m grid from its WCS. It can be either of two things:
+The image supplies the phase centre (its reference direction, which is also the default pointing centre) and the l/m grid from its WCS. It can be either of two things:
 
 - **A FITS image** carries no time axis, so pass `times=` to every method that tracks the parallactic angle, as above. Without it they raise.
 - **A zarr image cube** with a `TIME` coordinate and a `fits_header` attribute, such as a pfb-imaging `hci` output, gives the wizard its times, so `times=` becomes optional. `bds-to-xradio` needs this kind of image.
 
-The image is optional. Without one, pass the pointing centre and times explicitly (`set_field_centre`, or `centre=` and `times=` on the methods that take them). Frequencies default to every BDS channel.
+The image is optional. Without one, pass the pointing centre and times explicitly (`set_pointing_centre`, or `pointing_centre=` and `times=` on the methods that take them). When the image or model grid's phase centre is not the pointing centre, pass `phase_centre=` as well (or `pointing_centre=` to a wizard with an attached image, whose reference direction is the phase centre). Frequencies default to every BDS channel.
 
 Supported bands: `U`, `L`, `S0`, `S4`. There are no S1, S2 or S3 beams: neither the mean-beam mirror nor the SARAO archive has them. To use a BDS you built yourself, pass `bds_name=` instead of `band=`.
 

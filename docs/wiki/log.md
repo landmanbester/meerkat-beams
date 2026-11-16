@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-17T14:00:00Z
+timestamp: 2026-11-16T17:43:51Z
 ---
 
 # Wiki changelog
@@ -646,3 +646,45 @@ descriptions are still accurate).
 - The xarray-floor and arm64 changes landed on separate branches, each
   stamped at its own commit. `3d1949b` is the merge that contains both; all five
   stamped pages re-stamped there. No page content changed.
+
+## 2026-11-16 — phase centre vs pointing centre, 0.4.0 rename (verified at `6a350b7`)
+
+Issue #57, first PR (exact path; the stored-map resampler follows separately).
+
+- `beamwizard.md`: new "Phase centre and pointing centre" section (the rename
+  table, defaults, the image-attached `pointing_centre=` consequence, the geometry
+  functions, why mapped coordinates beat reprojection for degridding, the tests);
+  the old `centre=` section renamed to `pointing_centre=`; optional-image,
+  `get_source_coordinates`, `_parallactic_angles` and `enrich_bds_xradio` text
+  updated; Sources extended.
+- `design-decisions.md`: D21 added (intro now D1–D21); D10 notes that breaking
+  commits are marked from the subject's `!` in `cliff.toml`.
+- `data-model.md`: BDS `dx`/`dy` are feed-plane direction cosines in degrees
+  (ska-sa/katbeam#5); xradio `direction` reference is the image phase centre;
+  `--pointing-centre`.
+- `beam-orientation.md`: `pointing_centre=`/`phase_centre=` in the rotation
+  averaging summary; "field centre" → "pointing centre".
+- `index.md`: beamwizard row mentions the phase/pointing split.
+- All `utils.py:N` line references in these pages remapped through the diff of
+  `utils.py` (geometry inserted near line 208 shifted everything below it).
+- `GLOSSARY.md`: new Geometry section (pointing centre, phase centre,
+  feed-plane coordinates).
+
+## 2026-11-16 — pointing-centre parser and per-chunk mapping (verified at `594a9dd`)
+
+- `--pointing-centre` refuses unitless sexagesimal in both colon and space form
+  (`data-model.md` updated); `get_rotation_averaged_beam` maps phase-centre l/m
+  per chunk. `utils.py` line references re-mapped; all five stamped pages
+  re-stamped. Bit-identity with 0.3 for coincident centres was measured: eight
+  render outputs (image grid default/stepped/complex/azimuth, bare wizard with an
+  explicit pointing, `partition_mueller`, xradio data and attrs) hash-equal to
+  `afa59cf`.
+
+## 2026-11-16 — Greptile review of #58 (verified at `43ca7a5`)
+
+- `beamwizard.md` (`enrich_bds_xradio`): the direction reference is the
+  argument, else the phase centre `get_time_freq_beam` recorded, else the
+  wizard's; the record is consumed.
+- `data-model.md`: `--pointing-centre` refuses mixed-unit forms too.
+- `utils.py` line references re-mapped through `594a9dd..43ca7a5`; all five
+  stamped pages re-stamped.

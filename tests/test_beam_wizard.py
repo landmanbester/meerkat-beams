@@ -172,9 +172,9 @@ def test_interpolate_beam_complex_var_preserves_imaginary(bw):
 
 
 @pytest.mark.unit
-def test_source_coordinates_at_field_centre(bw, times):
+def test_source_coordinates_at_pointing_centre(bw, times):
     """Source at the field centre → xpyp equals (x0, y0) and sep = 0."""
-    xpyp, seps, _ = bw.get_source_coordinates(bw.centre, times=times)
+    xpyp, seps, _ = bw.get_source_coordinates(bw.pointing_centre, times=times)
     assert xpyp.shape == (2, len(times))
     np.testing.assert_allclose(xpyp[0], bw.bds.attrs["x0"], atol=1e-6)
     np.testing.assert_allclose(xpyp[1], bw.bds.attrs["y0"], atol=1e-6)
@@ -184,7 +184,7 @@ def test_source_coordinates_at_field_centre(bw, times):
 @pytest.mark.unit
 def test_time_variable_beamgain_at_centre(bw, times):
     """Normalised beam gain at field centre is 1 at every time/frequency."""
-    vals = bw.get_time_variable_beamgain(bw.centre, times=times, var="nstokes", i="I", j="I")
+    vals = bw.get_time_variable_beamgain(bw.pointing_centre, times=times, var="nstokes", i="I", j="I")
     assert vals.shape == (len(FREQS), len(times))
     np.testing.assert_allclose(vals, 1.0, atol=1e-5)
 
@@ -475,7 +475,7 @@ def test_no_image_attrs_raise(no_image_paths):
     """Image-derived attrs raise a clear RuntimeError; times is None."""
     bds, _ = no_image_paths
     bw = BeamWizard(bds_name=bds)
-    for attr in ("centre", "wcs", "l_grid", "m_grid"):
+    for attr in ("pointing_centre", "phase_centre", "wcs", "l_grid", "m_grid"):
         with pytest.raises(RuntimeError, match="without an image"):
             getattr(bw, attr)
     assert bw.times is None
@@ -483,7 +483,7 @@ def test_no_image_attrs_raise(no_image_paths):
 
 @pytest.mark.unit
 def test_no_image_get_source_coordinates_raises(no_image_paths, times):
-    """get_source_coordinates needs a centre; without one it raises RuntimeError."""
+    """get_source_coordinates needs a pointing centre; without one it raises RuntimeError."""
     bds, _ = no_image_paths
     bw = BeamWizard(bds_name=bds)
     src = SkyCoord(RA0, DEC0, unit="deg", frame="icrs")
@@ -492,13 +492,13 @@ def test_no_image_get_source_coordinates_raises(no_image_paths, times):
 
 
 @pytest.mark.unit
-def test_set_field_centre_unblocks_source_coordinates(no_image_paths, times):
-    """After set_field_centre, get_source_coordinates works without an image;
+def test_set_pointing_centre_unblocks_source_coordinates(no_image_paths, times):
+    """After set_pointing_centre, get_source_coordinates works without an image;
     the l/m grid stays unavailable."""
     bds, _ = no_image_paths
     bw = BeamWizard(bds_name=bds)
     centre = SkyCoord(RA0, DEC0, unit="deg", frame="icrs")
-    bw.set_field_centre(centre)
+    bw.set_pointing_centre(centre)
     xpyp, seps, _ = bw.get_source_coordinates(centre, times=times)
     assert xpyp.shape == (2, len(times))
     np.testing.assert_allclose(xpyp[0], bw.bds.attrs["x0"], atol=1e-6)
@@ -515,7 +515,7 @@ def test_attach_image_unblocks_grid_methods(no_image_paths, times):
     bw = BeamWizard(bds_name=bds)
     bw.attach_image(img)
     assert bw.l_grid is not None and bw.m_grid is not None
-    xpyp, seps, _ = bw.get_source_coordinates(bw.centre, times=times)
+    xpyp, seps, _ = bw.get_source_coordinates(bw.pointing_centre, times=times)
     np.testing.assert_allclose(xpyp[0], bw.bds.attrs["x0"], atol=1e-6)
     np.testing.assert_allclose(seps.deg, 0.0, atol=1e-6)
 
@@ -554,7 +554,7 @@ def test_fits_branch_sets_times_none_raises_runtimeerror(bw):
     """
     assert bw.times is None
     with pytest.raises(RuntimeError, match="explicit times must be supplied"):
-        bw.get_source_coordinates(bw.centre)
+        bw.get_source_coordinates(bw.pointing_centre)
 
 
 @pytest.mark.unit
@@ -1119,7 +1119,7 @@ def test_azimuthal_matches_pa_average_given_full_pa_coverage():
     sweep.
     """
     bwk = BeamWizard(band="L", **KATBEAM_KWARGS)
-    bwk.set_field_centre(SkyCoord(ra=0 * u.deg, dec=-89 * u.deg))
+    bwk.set_pointing_centre(SkyCoord(ra=0 * u.deg, dec=-89 * u.deg))
 
     l = m = np.linspace(-1.5, 1.5, 7)
     times = Time(60000.0, format="mjd") + np.linspace(0, 0.9972, 256) * u.day
@@ -1247,8 +1247,8 @@ def test_rotation_angle_is_the_textbook_parallactic_angle(bw, lat_deg):
     loc = None if lat_deg is None else EarthLocation(lat=lat_deg * u.deg, lon=6.6 * u.deg, height=0 * u.m)
     site = bw.default_location if loc is None else loc
     t = Time("2024-01-01T00:00:00") + np.linspace(0, 6, 7) * u.hour
-    hour_angle = (t.sidereal_time("apparent", longitude=site.lon) - bw.centre.ra).rad
-    lat, dec = site.lat.rad, bw.centre.dec.rad
+    hour_angle = (t.sidereal_time("apparent", longitude=site.lon) - bw.pointing_centre.ra).rad
+    lat, dec = site.lat.rad, bw.pointing_centre.dec.rad
     q = np.arctan2(np.sin(hour_angle), np.tan(lat) * np.cos(dec) - np.sin(dec) * np.cos(hour_angle))
     diff = (bw._parallactic_angles(t, loc) - q + np.pi) % (2 * np.pi) - np.pi
     assert np.abs(diff).max() < np.radians(1.0)

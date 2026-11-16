@@ -51,6 +51,14 @@ def test_bds_to_xradio(tmp_path):
     assert xarray.open_zarr(out)["SKY"].sizes["time"] == 3
 
 
+def test_bds_to_xradio_pointing_centre(tmp_path):
+    bds = build_synthetic_bds(tmp_path / "in.bds.zarr")
+    img = build_synthetic_image_zarr(tmp_path / "img.zarr")
+    out = tmp_path / "rendered.zarr"
+    args = ("--bds-path", str(bds), "--image-path", str(img), "--output", str(out), "--pixel-stepping", "1")
+    assert_ok(run_cli("bds-to-xradio", *args, "--pointing-centre", "0.1 -30.05"), out)
+
+
 def test_bds_to_fits(tmp_path):
     bds = build_synthetic_bds(tmp_path / "in.bds.zarr")
     prefix = tmp_path / "beam"

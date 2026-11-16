@@ -3,8 +3,8 @@ type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr, eidos FITS
 description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, the xradio primary-beam schema, and the eidos-compatible FITS output.
 tags: [mdv, bds, xradio, fits, eidos, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
-timestamp: 2026-11-17T14:00:00Z
-last_verified_commit: 3d1949b
+timestamp: 2026-11-16T17:43:51Z
+last_verified_commit: 43ca7a5
 ---
 
 # Data model — MdV npz, BDS zarr, xradio zarr, eidos FITS
@@ -90,7 +90,11 @@ Additional dataset-level attrs (`mdv_beams_to_bds.py:126-128`):
   `NAXIS{1,2,3}`, `CRPIX{1,2,3}`, `CRVAL{1,2,3}`, `CDELT{1,2,3}`,
   `CTYPE{1,2,3}`, `CUNIT{1,2,3}`).
 - `x0`, `y0` — centre pixel index (both equal `len(degs) // 2`).
-- `dx`, `dy` — degrees/pixel (both equal `degs[1] - degs[0]`).
+- `dx`, `dy` — degrees/pixel (both equal `degs[1] - degs[0]`). The grid is in
+  **feed-plane coordinates**: direction cosines in the feed plane expressed
+  in degrees (`rad2deg` of the cosine, not an angular offset), per MdV
+  (ska-sa/katbeam#5). The phase→pointing geometry in `beamwizard.md` relies
+  on this.
 - `freqs` — the frequency axis in Hz.
 - provenance attrs copied from a zarr input — see "Provenance attrs on a
   single-telescope BDS" below.
@@ -379,8 +383,14 @@ unsliced one.
 Produced by `bds-to-xradio` from a BDS. Schema:
 `(time, frequency, polarization, l, m)`, with `l`/`m` in **radians** (BDS
 values are in degrees; `enrich_bds_xradio` converts) and a `direction`
-attribute block (`icrs` frame, `SIN` projection, reference = field
-centre). Rendering internals (interpolation, dim-name canonicalisation,
+attribute block (`icrs` frame, `SIN` projection, reference = the input
+image's phase centre, the tangent point of `l`/`m`). `--pointing-centre`
+(a `SkyCoord` string, `"05h21m09.9s +16d38m22s"` or decimal degrees
+`"80.29 16.64"`; a component without its own unit is refused — unitless
+sexagesimal, colon- or space-separated, and mixed forms such as
+`"05:21:09.9 +16d38m22s"` — because astropy would read a unitless RA as
+degrees) sets where the dishes point when that is not the image's phase
+centre; the default is the phase centre, which reproduces 0.3 exactly. Rendering internals (interpolation, dim-name canonicalisation,
 `enrich_bds_xradio`) live in `beamwizard.md`.
 
 `bds_to_xradio`'s `beam_type` parameter selects the source BDS variable,
