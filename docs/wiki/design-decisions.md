@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, phase-centre, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+, fits, eidos]
-timestamp: 2026-11-16T17:19:55Z
-last_verified_commit: f9d3120
+timestamp: 2026-11-16T17:34:02Z
+last_verified_commit: 689f453
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -22,13 +22,13 @@ elsewhere.
 (once per source/time), so filtering on every call would be wasteful, and
 double-filtering would silently corrupt the interpolated values.
 
-**Decision:** `_get_prefilter` (`src/meerkat_beams/utils.py:1004-1041`) runs
+**Decision:** `_get_prefilter` (`src/meerkat_beams/utils.py:1017-1054`) runs
 `scipy.ndimage.spline_filter` once per `(var, i, j, order)` key and caches
-the result; `interpolate_beam` (`utils.py:1155-1202`) then calls
+the result; `interpolate_beam` (`utils.py:1168-1215`) then calls
 `map_coordinates` against that cached array with `prefilter=False`
-(`utils.py:1195-1202`). The cache's output dtype is **not** unconditionally
+(`utils.py:1208-1215`). The cache's output dtype is **not** unconditionally
 `float32` — it is chosen per variable kind: `np.complex64 if
-np.iscomplexobj(da) else np.float32` (`utils.py:1030-1034`). Complex
+np.iscomplexobj(da) else np.float32` (`utils.py:1043-1047`). Complex
 variables (`jones`, `njones`, `mueller`, `nmueller`) cache as `complex64`;
 real variables (`stokes`, `nstokes`) cache as `float32`. Passing a real
 dtype for complex input would make scipy implicitly promote it (a
@@ -48,7 +48,7 @@ their imaginary part without raising. See `beamwizard.md` for the full
 prefilter contract, including how the dtype rule propagates through
 `get_time_freq_beam`'s zarr writes.
 
-**Source:** `utils.py:1004-1041,1195-1202`; `test_subpixel_matches_direct_scipy`,
+**Source:** `utils.py:1017-1054,1208-1215`; `test_subpixel_matches_direct_scipy`,
 `test_prefilter_complex_var_is_complex64_without_warning`
 (`tests/test_beam_wizard.py`); commit `0f2a4f4` ("test: add tests for
 complex Mueller term" — landed the dtype-aware cache).
@@ -62,14 +62,14 @@ leaving it implicit means a future scipy version or a copy-pasted call
 site could silently change behavior (e.g. to nearest-edge extrapolation).
 
 **Decision:** `interpolate_beam` passes `mode="constant", cval=0.0`
-explicitly (`utils.py:1200-1201`) rather than relying on the scipy default.
+explicitly (`utils.py:1213-1214`) rather than relying on the scipy default.
 Out-of-cube coordinates return `0`, not a nearest-edge value or `NaN`.
 
 **Consequences:** Callers requesting positions well outside the beam
 support get zero gain, not an error or an extrapolated guess — relevant
 for sources near the edge of a wide field.
 
-**Source:** `utils.py:1200-1201`; `test_out_of_range_xy_returns_zero`
+**Source:** `utils.py:1213-1214`; `test_out_of_range_xy_returns_zero`
 (`tests/test_beam_wizard.py`).
 
 ## D3 — `get_time_freq_beam` accepts only canonical `dim_names`
@@ -81,7 +81,7 @@ array to match an arbitrary `dim_names` ordering is not implemented.
 
 **Decision:** Only the canonical xradio order
 `("time", "frequency", "polarization", "l", "m")` is accepted; any other
-tuple raises `ValueError` (`utils.py:1838-1843`).
+tuple raises `ValueError` (`utils.py:1851-1856`).
 
 **Rationale:** A non-canonical tuple would relabel the dims without
 reordering the underlying array — silent data corruption, not a
@@ -92,7 +92,7 @@ without implementing real permutation of the array first; a caller
 wanting a different axis order must transpose the opened dataset
 themselves after the fact.
 
-**Source:** `utils.py:1838-1843`; `test_time_freq_beam_rejects_non_canonical_dim_names`
+**Source:** `utils.py:1851-1856`; `test_time_freq_beam_rejects_non_canonical_dim_names`
 (`tests/test_beam_wizard.py`).
 
 ## D4 — Rotation-averaged maps are `(Y, X)` (FITS) order
@@ -106,7 +106,7 @@ hidden elsewhere because the MeerKAT rotation-averaged beam is nearly
 circularly symmetric, so a transpose barely changes it.
 
 **Decision:** `np.meshgrid(l, m)` (default `"xy"` indexing, not `"ij"`,
-`utils.py:1439`) now returns `(NY, NX)`-shaped maps natively, matching
+`utils.py:1452`) now returns `(NY, NX)`-shaped maps natively, matching
 FITS convention (axis 0 = m/north, axis 1 = l/east). Settled at commit
 `616906b`.
 
@@ -120,7 +120,7 @@ between this settled index-order question and the still-provisional
 physical orientation convention (D9-adjacent, not in this ledger's
 numbered list — see `beam-orientation.md`).
 
-**Source:** `utils.py:1431-1439`; `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
+**Source:** `utils.py:1444-1452`; `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
 `test_rotation_averaged_beam_map_indexes_as_y_x` (`tests/test_beam_wizard.py`);
 `beam-orientation.md`.
 
@@ -613,10 +613,10 @@ you touch the fixtures.
 
 ## Sources
 
-- `src/meerkat_beams/utils.py:1004-1041,1155-1202` (`_get_prefilter`,
+- `src/meerkat_beams/utils.py:1017-1054,1168-1215` (`_get_prefilter`,
   `interpolate_beam`)
-- `src/meerkat_beams/utils.py:1293-1579` (`get_rotation_averaged_beam`)
-- `src/meerkat_beams/utils.py:1763-1843` (`get_time_freq_beam`,
+- `src/meerkat_beams/utils.py:1306-1592` (`get_rotation_averaged_beam`)
+- `src/meerkat_beams/utils.py:1776-1856` (`get_time_freq_beam`,
   `_CANONICAL_DIM_NAMES` guard)
 - `src/meerkat_beams/cache.py` (cache layout, `BAND_GDRIVE_IDS`,
   `ensure_band_bds`, `.partial` atomicity)
@@ -931,9 +931,9 @@ leakage terms the chord still helps (about 1.5×) and the λ/D slope does not.
 - D2 is the spatial counterpart: off-cube in X/Y returns 0, off-cube in
   frequency raises, or scales within the margin when asked.
 
-**Source:** `utils.py:753-764` (constructor validation), `utils.py:826-829`
-(default margin), `utils.py:1123-1153` (`freq_range`, `check_freqs`),
-`utils.py:1167-1189` (scaling); `tests/test_freq_extrapolation.py`,
+**Source:** `utils.py:766-777` (constructor validation), `utils.py:839-842`
+(default margin), `utils.py:1136-1166` (`freq_range`, `check_freqs`),
+`utils.py:1180-1202` (scaling); `tests/test_freq_extrapolation.py`,
 `tests/test_freq_extrapolation_integration.py`; issue #41.
 
 ## D20 — FITS output matches eidos's layout, with corrected CTYPEs
@@ -1139,8 +1139,10 @@ it is faster or uses less memory than numpy.
 
 **Decision.** `utils.beam_on_grid(beam, l_beam, m_beam, pointing_centre,
 phase_centre, l_out, m_out, out=None, nthreads=1)` is a plain module-level
-function with a numba `parallel=True, cache=True` kernel over output rows, in
-`_resample.py`. The kernel is imported only inside the call. numba joins the
+function over numba kernels in `_resample.py`, imported only inside the call.
+There are two kernels over one inlined row function:
+- `nthreads=1` runs a plain `nogil` kernel;
+- `nthreads > 1` runs a `parallel=True` kernel under a process-wide lock. numba joins the
 `[full]` extra. The interpolation is bilinear. A pixel is 0 when it is off the
 sky, on the far hemisphere, or when its fractional index leaves `[0, n − 1]`.
 
@@ -1171,8 +1173,9 @@ bite there.
   arrays should not have to open a BDS.
 - *Lazy import.* `import meerkat_beams.utils` stays free of numba and LLVM, so a
   wizard user who never resamples pays nothing.
-- *Bilinear only.* The error is measured, not assumed: ≈ `1.07·h²` of peak at
-  1284 MHz (table in `beamwizard.md`). A caller that needs more accuracy stores
+- *Bilinear only.* The error is measured, not assumed: ≈ `(h/(λ/D))²` of peak at
+  both 1284 and 1700 MHz. That is the rule pfb-imaging's `beam_grid` already
+  sizes its axis by (table in `beamwizard.md`). A caller that needs more accuracy stores
   a denser map or uses the exact path of D21. A cubic gather would cost 16 taps
   per pixel instead of 4, and would bring back the prefilter questions of D1.
 
@@ -1182,12 +1185,25 @@ bite there.
 - The study showed that "the native BDS grid needs no oversampling" (the #57
   issue comment) is wrong at the 0.4% level. The stored step is a budget
   decision for the caller.
-- `numba.set_num_threads` is thread-local, and is restored after the call.
-  `nthreads` is clamped to `NUMBA_NUM_THREADS`.
+- **Concurrency is part of the contract.** Callers sit in dask workers and
+  thread pools. numba's `workqueue` threading layer (the fallback without TBB
+  or OpenMP, and what our `python:3.11-slim` container gets) aborts the whole
+  process when two Python threads launch parallel regions at once. That
+  happened even at `nthreads=1` while every call went through `parallel=True`.
+  It was caught in review before merge, and is now pinned by a subprocess test
+  under `workqueue` and checked in the built image. The cost of the lock is
+  that concurrent *threaded* calls queue. The default serial path never takes
+  the lock.
+- The serial kernel loses `parallel=True`'s optimisation passes, so the row
+  function hoists its loop invariants by hand: 0.86 s serial at 8748², against
+  0.81 s for the parallel kernel at one thread.
+- `numba.set_num_threads` is thread-local, and is set and restored inside the
+  lock. `nthreads` is clamped to `NUMBA_NUM_THREADS`.
 - The kernel's on-disk cache lives in the package's `__pycache__`. Where that is
   read-only, as in some containers, numba falls back to its user cache
   directory.
 
 **Source:** `src/meerkat_beams/utils.py` (`beam_on_grid`),
-`src/meerkat_beams/_resample.py`, `tests/test_beam_on_grid.py`,
+`src/meerkat_beams/_resample.py`, `tests/test_beam_on_grid.py`
+(`test_concurrent_callers_do_not_abort`),
 `scripts/beam_on_grid_accuracy.py`, `pyproject.toml` (`[full]`), issue #57.

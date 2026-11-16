@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-16T17:19:55Z
+timestamp: 2026-11-16T17:34:02Z
 ---
 
 # Wiki changelog
@@ -695,3 +695,17 @@ Issue #57, second PR.
   and `beam-orientation.md` re-stamped for that reason alone, content unchanged.
 - `CLAUDE.md` architecture tree gains `_resample.py`; README lists `phase_centre=`
   and `beam_on_grid`.
+
+## 2026-11-16 — beam_on_grid concurrency fix, accuracy rule (verified at `689f453`)
+
+- `beamwizard.md` "beam_on_grid": serial `nogil` kernel for `nthreads=1`,
+  parallel kernel under `PARALLEL_LOCK` otherwise (numba's `workqueue` layer,
+  used in our slim container, aborts on concurrent parallel launches); hand-hoisted
+  invariants; new timings; the error rule measured at 1700 MHz too and stated as
+  `(h/(λ/D))²`, matching pfb-imaging's `beam_grid` sizing (the earlier "1024²
+  over ±4°" and "1.8× at 1712 MHz" lines were inferred and are replaced).
+- `design-decisions.md` D22: the two-kernel decision and its concurrency
+  consequence; the error rule.
+- `utils.py` line references re-mapped through `f9d3120..689f453`; all five
+  stamped pages re-stamped (`data-model.md`, `beam-orientation.md`, `index.md`
+  for the shift only).
