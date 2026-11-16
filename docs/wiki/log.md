@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-16T15:00:00Z
+timestamp: 2026-11-16T17:00:00Z
 ---
 
 # Wiki changelog
@@ -601,3 +601,14 @@ descriptions are still accurate).
   root `GLOSSARY.md`; two scripts no longer cite `docs/superpowers/`.
   `index.md` now defines `last_verified_commit` the way CLAUDE.md does.
 - All five stamped pages re-stamped at `59485c2`.
+
+## 2026-11-16 — rotation kernel given one owner (verified at `117b664`)
+
+- `beamwizard.md`: new section on `lm_to_pixel` (public) and the private
+  `_parallactic_angles`, `_resolve_times`, `_coarsen_grid` and
+  `_upsample_planes`. The sky-to-beam rotation and degrees-to-pixel scaling
+  were written out in four places and are now in one; outputs are
+  bit-identical. `get_time_freq_beam` lost its `dim_names` dict indirection
+  (D3 already made the order constant).
+- `utils.py` and `bds_to_fits.py` line citations remapped in every page; all
+  five stamped pages re-stamped at `117b664`.
