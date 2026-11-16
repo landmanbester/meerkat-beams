@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-16T17:45:25Z
+timestamp: 2026-11-16T17:55:14Z
 ---
 
 # Wiki changelog
@@ -723,3 +723,13 @@ Issue #57, second PR.
 
 - No content change. `utils.py` line references re-mapped through the merge;
   all five stamped pages re-stamped at the merge commit.
+
+## 2026-11-16 — Greptile review of #60 (verified at `0935424`)
+
+- `beamwizard.md` "beam_on_grid": the edge rule now has a 1e-6 pixel rounding
+  tolerance (a strict bound zeroed the last row and column when resampling onto
+  the beam grid itself); `out=beam` is allowed and copied first; uniform-axis
+  check uses the end-point step and the axis's own precision (float32 axes were
+  rejected); the three regression tests named.
+- `utils.py` line references re-mapped through `84a0110..0935424`; all five
+  stamped pages re-stamped.
