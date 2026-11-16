@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-16T17:00:34Z
+timestamp: 2026-11-16T17:19:55Z
 ---
 
 # Wiki changelog
@@ -679,3 +679,19 @@ Issue #57, first PR (exact path; the stored-map resampler follows separately).
   render outputs (image grid default/stepped/complex/azimuth, bare wizard with an
   explicit pointing, `partition_mueller`, xradio data and attrs) hash-equal to
   `afa59cf`.
+
+## 2026-11-16 — beam_on_grid, the numba resampler for stored maps (verified at `f9d3120`)
+
+Issue #57, second PR.
+
+- `beamwizard.md`: new "beam_on_grid" section (interface, edge and coverage rules,
+  lazy numba import, the measured error-vs-stored-step table at L band, tests);
+  Sources extended. The D21 pointer now names `beam_on_grid`.
+- `design-decisions.md`: D22 (numba vs numpy benchmark table, module-level,
+  lazy import, bilinear only); intro now D1–D22.
+- `index.md`: beamwizard row mentions `beam_on_grid`.
+- `utils.py` line references in all four content pages re-mapped through the
+  `594a9dd..f9d3120` diff (`beam_on_grid` inserted at line 282); `data-model.md`
+  and `beam-orientation.md` re-stamped for that reason alone, content unchanged.
+- `CLAUDE.md` architecture tree gains `_resample.py`; README lists `phase_centre=`
+  and `beam_on_grid`.

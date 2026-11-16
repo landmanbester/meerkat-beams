@@ -52,6 +52,8 @@ Supported bands: `U`, `L`, `S0`, `S4`. There are no S1, S2 or S3 beams: neither 
 - `get_rotation_averaged_beam`: the beam averaged over the observation's parallactic angles, or over a full turn with `average="azimuth"`.
 - `partition_mueller`: the rotation-averaged Stokes-basis Mueller block for one data partition, for imagers and calibrators that apply the full polarised beam.
 - `get_time_freq_beam`: render a full `(time, frequency, polarization, l, m)` xradio zarr; `bds-to-xradio` wraps it together with the module-level `enrich_bds_xradio`.
+- `phase_centre=` on the render methods, and `pointing_centre=` / `set_pointing_centre`: beams for an image or model whose phase centre is not where the dishes pointed.
+- `beam_on_grid` (module-level): place beam maps you already hold, centred on the pointing, onto an image grid about a phase centre. It is fast (numba, bilinear); the wiki tabulates how dense the stored map must be for a given error.
 - `beam_model="katbeam"`: the analytic katbeam model instead of the MdV holographic beams. Nothing is downloaded.
 - `group="MM" | "MPM" | "MPMP"` (L band only): the baseline-group beams for a mixed MeerKAT / MeerKAT+ array, built from the 2026 MdV MeerKAT and MeerKAT+ products. These are not on the download mirrors yet, so stage them first with `scripts/stage_group_cache.py`.
 - `freq_extrapolation="scale"`: evaluate frequencies up to one BDS channel past the BDS range by scaling the edge plane with λ/D, so data out to the receiver band edges can be modelled. `freq_range` and `check_freqs` let you validate frequencies up front. The default, `"raise"`, refuses anything outside the BDS range.
