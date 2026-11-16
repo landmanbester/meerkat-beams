@@ -709,3 +709,12 @@ Issue #57, second PR.
 - `utils.py` line references re-mapped through `f9d3120..689f453`; all five
   stamped pages re-stamped (`data-model.md`, `beam-orientation.md`, `index.md`
   for the shift only).
+
+## 2026-11-16 — Greptile review of #58 (verified at `43ca7a5`)
+
+- `beamwizard.md` (`enrich_bds_xradio`): the direction reference is the
+  argument, else the phase centre `get_time_freq_beam` recorded, else the
+  wizard's; the record is consumed.
+- `data-model.md`: `--pointing-centre` refuses mixed-unit forms too.
+- `utils.py` line references re-mapped through `594a9dd..43ca7a5`; all five
+  stamped pages re-stamped.

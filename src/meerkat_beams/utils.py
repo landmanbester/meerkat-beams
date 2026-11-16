@@ -1007,6 +1007,16 @@ class BeamWizard(object):
         pointing = self.pointing_centre if pointing_centre is None else pointing_centre
         return sky_rotation_matrix(pointing, phase_centre)
 
+    def _effective_phase_centre(
+        self, pointing_centre: Optional[SkyCoord], phase_centre: Optional[SkyCoord]
+    ) -> SkyCoord:
+        """The phase centre a render's l/m are about: the argument, else the stored one, else the pointing."""
+        if phase_centre is not None:
+            return phase_centre
+        if self._phase_centre is not None:
+            return self._phase_centre
+        return self.pointing_centre if pointing_centre is None else pointing_centre
+
     def _to_pointing_frame(self, ll: np.ndarray, mm: np.ndarray, rotation: np.ndarray):
         """``phase_to_pointing_lm`` without the mask, and a no-op (same arrays) for the identity."""
         if np.array_equal(rotation, np.eye(3)):
@@ -1912,6 +1922,8 @@ class BeamWizard(object):
         ll_flat, mm_flat, compute_shape, upsample_coords = _coarsen_grid(ll, mm, pixel_stepping)
         rotation = self._phase_rotation(pointing_centre, phase_centre)
         ll_flat, mm_flat = self._to_pointing_frame(ll_flat, mm_flat, rotation)
+        # recorded in the store so enrich_bds_xradio labels l/m with the centre they are about
+        grid_centre = self._effective_phase_centre(pointing_centre, phase_centre).icrs
 
         pa = self._parallactic_angles(times, loc, pointing_centre)
 
@@ -1989,19 +2001,39 @@ class BeamWizard(object):
                 if (done_count % max(1, total // 10) == 0 or done_count == total) and verbose > 0:
                     self.log.info(f"  written {done_count}/{total} planes")
 
+        root = zarr_open_group(filename, mode="r+")
+        root.attrs["phase_centre"] = {
+            "frame": "icrs",
+            "ra_rad": float(grid_centre.ra.rad),
+            "dec_rad": float(grid_centre.dec.rad),
+        }
+        zarr.consolidate_metadata(filename)
+
 
 # ---------------------------------------------------------------------------
 # xradio zarr enrichment helper
 # ---------------------------------------------------------------------------
 
 
-def enrich_bds_xradio(zarr_path: str, bw: BeamWizard, output_var: str, polarizations: List[str]):
+def enrich_bds_xradio(
+    zarr_path: str,
+    bw: BeamWizard,
+    output_var: str,
+    polarizations: List[str],
+    phase_centre: Optional[SkyCoord] = None,
+):
     """Post-process zarr store for xradio compatibility.
 
     - Converts l/m from degrees to radians
     - Fixes polarization labels
     - Reorders dimensions to (time, frequency, polarization, l, m)
     - Adds direction attributes matching xradio schema
+
+    The direction reference is the phase centre the l/m axes are about:
+    ``phase_centre`` if given, else the one ``get_time_freq_beam`` recorded in
+    the store (the per-call ``phase_centre=`` it rendered with), else
+    ``bw.phase_centre``. The recorded attribute is consumed, so the output
+    carries only the xradio ``direction`` block.
     """
     import zarr
 
@@ -2023,11 +2055,16 @@ def enrich_bds_xradio(zarr_path: str, bw: BeamWizard, output_var: str, polarizat
     store[output_var].attrs["_ARRAY_DIMENSIONS"] = ["time", "frequency", "polarization", "l", "m"]
 
     # Dataset-level attributes: direction block matching reference schema
-    # the l/m axes are the image's, so the direction reference is its phase centre
-    ra0 = float(bw.phase_centre.ra.rad)
-    dec0 = float(bw.phase_centre.dec.rad)
-
     existing_attrs = dict(store.attrs)
+    recorded = existing_attrs.pop("phase_centre", None)
+    if phase_centre is not None:
+        centre = phase_centre.icrs
+        ra0, dec0 = float(centre.ra.rad), float(centre.dec.rad)
+    elif recorded is not None:
+        ra0, dec0 = float(recorded["ra_rad"]), float(recorded["dec_rad"])
+    else:
+        ra0, dec0 = float(bw.phase_centre.ra.rad), float(bw.phase_centre.dec.rad)
+
     existing_attrs["direction"] = {
         "reference": {
             "attrs": {"frame": "icrs", "type": "sky_coord", "units": "rad"},
