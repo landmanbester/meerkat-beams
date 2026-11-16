@@ -25,11 +25,16 @@ dependencies = [
 [project.optional-dependencies]
 # Full scientific stack
 full = [
-    # >=2025.6: the first xarray whose zarr writes work under zarr-python 3
-    # (2024.10 added to_zarr(zarr_format=...), which pins our output to zarr
-    # v2, but 2024.10-2025.4 fail to write under zarr 3). zarr is unbounded,
-    # so a lower xarray floor would let the resolver pick a broken pair.
-    "xarray>=2025.6",
+    # >=2025.8: the first xarray that can encode pandas 3's default string
+    # dtype, which every BDS string coordinate (receptor / Stokes labels) hits
+    # (#47); pandas is unbounded, so a lower floor lets the resolver pick a
+    # broken pair. It also clears the older zarr constraint: 2024.10-2025.4
+    # fail to write under zarr-python 3. CI's `floors` job tests at this floor.
+    "xarray>=2025.8; python_version >= '3.11'",
+    # xarray 2025.6 is the last release for Python 3.10, where [full] is
+    # neither tested nor supported (lightweight-only); this keeps the extra
+    # resolvable there. It breaks with pandas 3.
+    "xarray>=2025.6; python_version < '3.11'",
     "zarr",
     "numcodecs",
     "astropy",

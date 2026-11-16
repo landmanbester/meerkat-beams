@@ -161,6 +161,57 @@ jobs:
         # --no-sync: a plain `uv run` would re-sync the lock and restore the pinned versions.
         run: uv run --no-sync pytest -v
 
+  # The declared xarray floor, with everything else as locked (in particular
+  # pandas 3). A floor that has stopped working is invisible to the jobs above,
+  # which run the locked or the newest xarray; this is what a downstream
+  # environment holding xarray back gets (#47). 2025.8.0 is the floor in
+  # pyproject.toml's [full] extra; keep the two in step.
+  floors:
+    name: Tests (xarray floor)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for skip checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          MSG=$(gh api repos/${{ github.repository }}/commits/$COMMIT_SHA --jq '.commit.message')
+          if echo "$MSG" | grep -qF '[skip checks]'; then
+            echo "SKIP_CHECKS=true" >> "$GITHUB_ENV"
+            echo "Skipping checks because [skip checks] was found in the commit message."
+          fi
+
+      - name: Check out code
+        if: env.SKIP_CHECKS != 'true'
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        if: env.SKIP_CHECKS != 'true'
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        if: env.SKIP_CHECKS != 'true'
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies with xarray at its floor
+        if: env.SKIP_CHECKS != 'true'
+        run: |
+          uv sync --group test --extra full
+          uv pip install 'xarray==2025.8.0'
+          uv pip check
+          uv run --no-sync python -c "import pandas, xarray; print('xarray', xarray.__version__, 'pandas', pandas.__version__); assert xarray.__version__ == '2025.8.0'; assert int(pandas.__version__.split('.')[0]) >= 3, pandas.__version__"
+
+      - name: Run tests
+        if: env.SKIP_CHECKS != 'true'
+        env:
+          MBEAMS_OFFLINE: "1"
+        # --no-sync: a plain `uv run` would re-sync the lock and restore the locked xarray.
+        run: uv run --no-sync pytest -v
+
   # zarr is unpinned (the lock resolves zarr 3, which the test matrix above
   # covers), but downstream applications may still hold zarr-python 2. Our
   # writers emit zarr v2 under either major version; this job pins the zarr 2
