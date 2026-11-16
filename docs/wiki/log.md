@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-17T10:00:00Z
+timestamp: 2026-11-17T14:00:00Z
 ---
 
 # Wiki changelog
@@ -633,3 +633,16 @@ descriptions are still accurate).
   `floors` CI job tests at it. D18 in `design-decisions.md` records both
   constraints behind the floor. All five stamped pages re-stamped at `cd2af42`
   (the other four cite `pyproject.toml` or the CI jobs but needed no edit).
+
+## 2026-11-17 — arm64 test job and multi-arch container (verified at `246d9cc`)
+
+- #43: `ci.yml` gained one arm64 test job (`ubuntu-24.04-arm`, Python 3.12)
+  and `publish-container.yml` builds `linux/amd64` + `linux/arm64` under one
+  tag via QEMU. Recorded as a D10 consequence in `design-decisions.md`,
+  re-stamped at `246d9cc`.
+
+## 2026-11-17 — stamps after merging the floor and arm changes (verified at `3d1949b`)
+
+- The xarray-floor and arm64 changes landed on separate branches, each
+  stamped at its own commit. `3d1949b` is the merge that contains both; all five
+  stamped pages re-stamped there. No page content changed.

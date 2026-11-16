@@ -56,15 +56,25 @@ jobs:
         run: uv run ruff check .
 
   test:
-    name: Tests
-    runs-on: ubuntu-latest
+    # Spelled out so the x86 jobs keep their names ("Tests (3.12)") now that
+    # the matrix has a second axis; branch protection refers to them by name.
+    name: Tests (${{ matrix.python-version }}${{ matrix.arch-label }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         # 3.10 is deliberately absent: it is supported only for the
         # lightweight base install (see the lightweight job below), not for
         # the [full] scientific stack the tests exercise. Do not add it back.
         python-version: ["3.11", "3.12", "3.13"]
+        include:
+          # One arm64 job, not a second matrix: it is there to catch a
+          # dependency without an aarch64 wheel or an architecture-dependent
+          # numerical difference, which one Python version is enough for (#43).
+          - os: ubuntu-24.04-arm
+            python-version: "3.12"
+            arch-label: ", arm64"
 
     steps:
       - name: Check for skip checks
