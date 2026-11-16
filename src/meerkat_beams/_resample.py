@@ -26,6 +26,10 @@ _DEG = np.pi / 180.0
 
 PARALLEL_LOCK = threading.Lock()
 
+# Fractional indices this close outside [0, n - 1] are rounding, not "outside":
+# resampling onto the beam's own grid lands its last sample at 47.000000000000014.
+EDGE_TOLERANCE_PIX = 1e-6
+
 
 @numba.njit(nogil=True, cache=True, inline="always")
 def _fill_row(i, beam, l0b, dlb, m0b, dmb, rot, lr, mr, out):  # pragma: no cover - compiled
@@ -36,7 +40,7 @@ def _fill_row(i, beam, l0b, dlb, m0b, dmb, rot, lr, mr, out):  # pragma: no cove
     output axes in radians of direction cosine, about the phase centre; ``rot``
     is ``sky_rotation_matrix(pointing, phase)``. Pixels off the sky, on the
     pointing's far hemisphere, or whose fractional beam index leaves
-    ``[0, n - 1]`` on either axis get 0.
+    ``[0, n - 1]`` on either axis by more than ``EDGE_TOLERANCE_PIX`` get 0.
     """
     nplane, nyb, nxb = beam.shape
     # loop invariants, hoisted by hand: the serial kernel gets no parallel=True passes
@@ -57,6 +61,14 @@ def _fill_row(i, beam, l0b, dlb, m0b, dmb, rot, lr, mr, out):  # pragma: no cove
             sz = r20 * l + r21 * m + r22 * n
             fx = (r00 * l + r01 * m + r02 * n) * sx - ox
             fy = (r10 * l + r11 * m + r12 * n) * sy - oy
+            if -EDGE_TOLERANCE_PIX <= fx < 0.0:
+                fx = 0.0
+            elif nxb - 1 < fx <= nxb - 1 + EDGE_TOLERANCE_PIX:
+                fx = nxb - 1.0
+            if -EDGE_TOLERANCE_PIX <= fy < 0.0:
+                fy = 0.0
+            elif nyb - 1 < fy <= nyb - 1 + EDGE_TOLERANCE_PIX:
+                fy = nyb - 1.0
             inside = sz > 0.0 and fx >= 0.0 and fx <= nxb - 1 and fy >= 0.0 and fy <= nyb - 1
         if not inside:
             for p in range(nplane):

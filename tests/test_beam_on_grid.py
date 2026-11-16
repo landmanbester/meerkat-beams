@@ -194,3 +194,35 @@ def test_concurrent_callers_do_not_abort(layer, tmp_path):
     proc = subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True, timeout=600)
     assert proc.returncode == 0, proc.stderr[-2000:]
     assert proc.stdout.strip().endswith("ok")
+
+
+# --- Greptile review of #60 -------------------------------------------------
+
+
+@pytest.mark.unit
+def test_resampling_onto_the_beam_grid_itself_keeps_every_sample():
+    """linspace axes put the last index at 47.000000000000014: rounding must not zero the edges."""
+    beam = _lopsided(dtype=np.float64)
+    same = beam_on_grid(beam, L_BEAM, M_BEAM, PHASE, PHASE, L_BEAM, M_BEAM)
+    np.testing.assert_allclose(same, beam, rtol=0, atol=1e-12)
+
+
+@pytest.mark.unit
+def test_out_may_be_the_input():
+    """out=beam with a reordered output grid must not read samples it has already overwritten."""
+    beam = _lopsided(nplanes=2, dtype=np.float64)
+    expected = beam[..., ::-1].copy()
+    returned = beam_on_grid(beam, L_BEAM, M_BEAM, PHASE, PHASE, L_BEAM[::-1], M_BEAM, out=beam)
+    assert returned is beam
+    np.testing.assert_allclose(beam, expected, rtol=0, atol=1e-12)
+
+
+@pytest.mark.unit
+def test_float32_axes_are_uniform():
+    beam = _lopsided()
+    f64 = beam_on_grid(beam, L_BEAM, M_BEAM, POINTING, PHASE, L_OUT, M_OUT)
+    f32 = beam_on_grid(beam, L_BEAM.astype(np.float32), M_BEAM.astype(np.float32), POINTING, PHASE, L_OUT, M_OUT)
+    np.testing.assert_allclose(f32, f64, rtol=0, atol=1e-5)
+    beam_on_grid(
+        np.ones((4, 4)), np.array([1.0, 1.1, 1.2, 1.3], np.float32), np.arange(4.0), PHASE, PHASE, [1.1], [1.0]
+    )

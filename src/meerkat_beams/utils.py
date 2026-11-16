@@ -280,14 +280,25 @@ def phase_to_pointing_lm(l, m, rotation: np.ndarray) -> Tuple[np.ndarray, np.nda
 
 
 def _uniform_axis(axis, name: str) -> Tuple[float, float]:
-    """``(start, step)`` of a uniform 1-D axis with at least two points; raises otherwise."""
-    axis = np.asarray(axis, dtype=float)
-    if axis.ndim != 1 or axis.size < 2:
-        raise ValueError(f"{name} must be 1-D with at least two points, got shape {axis.shape}")
-    steps = np.diff(axis)
-    if steps[0] == 0 or not np.allclose(steps, steps[0], rtol=1e-6, atol=0.0):
+    """``(start, step)`` of a uniform 1-D axis with at least two points; raises otherwise.
+
+    The step spans the whole axis, ``(last - first) / (n - 1)``, so the end points
+    land on integer indices. Uniformity is judged against that line, allowing for
+    the axis's own storage precision: a float32 ``linspace`` is uniform even though
+    its rounded intervals differ by ~1e-7 (Greptile review of #60).
+    """
+    raw = np.asarray(axis)
+    values = raw.astype(float)
+    if values.ndim != 1 or values.size < 2:
+        raise ValueError(f"{name} must be 1-D with at least two points, got shape {values.shape}")
+    step = (values[-1] - values[0]) / (values.size - 1)
+    if step == 0:
+        raise ValueError(f"{name} must be uniformly spaced: its end points are equal")
+    eps = np.finfo(raw.dtype if np.issubdtype(raw.dtype, np.floating) else float).eps
+    tolerance = 1e-6 * abs(step) + 4 * eps * np.abs(values).max()
+    if np.abs(values - (values[0] + step * np.arange(values.size))).max() > tolerance:
         raise ValueError(f"{name} must be uniformly spaced: bilinear indexing assumes a regular grid")
-    return float(axis[0]), float(steps[0])
+    return float(values[0]), float(step)
 
 
 def beam_on_grid(
@@ -327,7 +338,8 @@ def beam_on_grid(
         m_out: ``(NY,)`` degrees, North positive, about the phase centre.
         out: Optional caller-owned ``(..., NY, NX)`` C-contiguous buffer to write
              into, with ``beam``'s leading shape and a dtype that holds
-             ``beam``'s values (complex for a complex beam). Returned.
+             ``beam``'s values (complex for a complex beam). Returned. It may be
+             ``beam`` itself (the input is then copied first).
         nthreads: Threads over output rows (default 1, clamped to numba's
                   maximum). With 1 the kernel runs on the calling thread and
                   many Python threads may call at once. Above 1 it launches a
@@ -340,7 +352,8 @@ def beam_on_grid(
         ``(..., NY, NX)`` in (Y, X) order and ``beam``'s dtype (or ``out``).
         Degrees are ``rad2deg`` of the SIN direction cosine throughout. A pixel
         is 0 where it is off the sky, on the pointing's far hemisphere, or
-        outside the beam grid (fractional index outside ``[0, n - 1]``), as the
+        outside the beam grid (fractional index outside ``[0, n - 1]`` by more
+        than 1e-6 pixel, so rounding never drops an edge sample), as the
         wizard's off-cube policy (D2). No ``1/n`` term: that is the caller's.
     """
     from meerkat_beams import _resample
@@ -377,6 +390,9 @@ def beam_on_grid(
 
     planes = np.ascontiguousarray(beam.reshape((-1, nyb, nxb)))
     target = out.reshape((-1, m_out.size, l_out.size))  # a view: out is C-contiguous
+    if np.shares_memory(planes, target):
+        # out=beam: writing a pixel could overwrite a beam sample a later pixel reads
+        planes = planes.copy()
     rotation = sky_rotation_matrix(pointing_centre, phase_centre)
 
     args = (planes, l0b, dlb, m0b, dmb, rotation, np.deg2rad(l_out), np.deg2rad(m_out), target)
