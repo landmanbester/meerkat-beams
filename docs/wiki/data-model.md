@@ -3,8 +3,8 @@ type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr, eidos FITS
 description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, the xradio primary-beam schema, and the eidos-compatible FITS output.
 tags: [mdv, bds, xradio, fits, eidos, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
-timestamp: 2026-11-16T17:00:34Z
-last_verified_commit: 594a9dd
+timestamp: 2026-11-16T17:43:51Z
+last_verified_commit: 43ca7a5
 ---
 
 # Data model — MdV npz, BDS zarr, xradio zarr, eidos FITS
@@ -386,8 +386,10 @@ values are in degrees; `enrich_bds_xradio` converts) and a `direction`
 attribute block (`icrs` frame, `SIN` projection, reference = the input
 image's phase centre, the tangent point of `l`/`m`). `--pointing-centre`
 (a `SkyCoord` string, `"05h21m09.9s +16d38m22s"` or decimal degrees
-`"80.29 16.64"`; sexagesimal without unit letters, colon- or
-space-separated, is refused because astropy would read its RA as degrees) sets where the dishes point when that is not the image's phase
+`"80.29 16.64"`; a component without its own unit is refused — unitless
+sexagesimal, colon- or space-separated, and mixed forms such as
+`"05:21:09.9 +16d38m22s"` — because astropy would read a unitless RA as
+degrees) sets where the dishes point when that is not the image's phase
 centre; the default is the phase centre, which reproduces 0.3 exactly. Rendering internals (interpolation, dim-name canonicalisation,
 `enrich_bds_xradio`) live in `beamwizard.md`.
 

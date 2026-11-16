@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-16T17:00:34Z
+timestamp: 2026-11-16T17:43:51Z
 ---
 
 # Wiki changelog
@@ -679,3 +679,12 @@ Issue #57, first PR (exact path; the stored-map resampler follows separately).
   render outputs (image grid default/stepped/complex/azimuth, bare wizard with an
   explicit pointing, `partition_mueller`, xradio data and attrs) hash-equal to
   `afa59cf`.
+
+## 2026-11-16 — Greptile review of #58 (verified at `43ca7a5`)
+
+- `beamwizard.md` (`enrich_bds_xradio`): the direction reference is the
+  argument, else the phase centre `get_time_freq_beam` recorded, else the
+  wizard's; the record is consumed.
+- `data-model.md`: `--pointing-centre` refuses mixed-unit forms too.
+- `utils.py` line references re-mapped through `594a9dd..43ca7a5`; all five
+  stamped pages re-stamped.
