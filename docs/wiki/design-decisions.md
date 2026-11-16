@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, phase-centre, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+, fits, eidos]
-timestamp: 2026-11-16T16:55:18Z
-last_verified_commit: 6a350b7
+timestamp: 2026-11-16T17:00:34Z
+last_verified_commit: 594a9dd
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -81,7 +81,7 @@ array to match an arbitrary `dim_names` ordering is not implemented.
 
 **Decision:** Only the canonical xradio order
 `("time", "frequency", "polarization", "l", "m")` is accepted; any other
-tuple raises `ValueError` (`utils.py:1731-1736`).
+tuple raises `ValueError` (`utils.py:1733-1738`).
 
 **Rationale:** A non-canonical tuple would relabel the dims without
 reordering the underlying array — silent data corruption, not a
@@ -92,7 +92,7 @@ without implementing real permutation of the array first; a caller
 wanting a different axis order must transpose the opened dataset
 themselves after the fact.
 
-**Source:** `utils.py:1731-1736`; `test_time_freq_beam_rejects_non_canonical_dim_names`
+**Source:** `utils.py:1733-1738`; `test_time_freq_beam_rejects_non_canonical_dim_names`
 (`tests/test_beam_wizard.py`).
 
 ## D4 — Rotation-averaged maps are `(Y, X)` (FITS) order
@@ -615,8 +615,8 @@ you touch the fixtures.
 
 - `src/meerkat_beams/utils.py:899-936,1050-1097` (`_get_prefilter`,
   `interpolate_beam`)
-- `src/meerkat_beams/utils.py:1188-1472` (`get_rotation_averaged_beam`)
-- `src/meerkat_beams/utils.py:1656-1736` (`get_time_freq_beam`,
+- `src/meerkat_beams/utils.py:1188-1474` (`get_rotation_averaged_beam`)
+- `src/meerkat_beams/utils.py:1658-1738` (`get_time_freq_beam`,
   `_CANONICAL_DIM_NAMES` guard)
 - `src/meerkat_beams/cache.py` (cache layout, `BAND_GDRIVE_IDS`,
   `ensure_band_bds`, `.partial` atomicity)

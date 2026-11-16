@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-16T16:55:18Z
+timestamp: 2026-11-16T17:00:34Z
 ---
 
 # Wiki changelog
@@ -669,3 +669,13 @@ Issue #57, first PR (exact path; the stored-map resampler follows separately).
   `utils.py` (geometry inserted near line 208 shifted everything below it).
 - `GLOSSARY.md`: new Geometry section (pointing centre, phase centre,
   feed-plane coordinates).
+
+## 2026-11-16 — pointing-centre parser and per-chunk mapping (verified at `594a9dd`)
+
+- `--pointing-centre` refuses unitless sexagesimal in both colon and space form
+  (`data-model.md` updated); `get_rotation_averaged_beam` maps phase-centre l/m
+  per chunk. `utils.py` line references re-mapped; all five stamped pages
+  re-stamped. Bit-identity with 0.3 for coincident centres was measured: eight
+  render outputs (image grid default/stepped/complex/azimuth, bare wizard with an
+  explicit pointing, `partition_mueller`, xradio data and attrs) hash-equal to
+  `afa59cf`.

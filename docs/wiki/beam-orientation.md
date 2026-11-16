@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Beam orientation and (Y, X) map-order conventions
 description: The settled (Y, X) rotation-averaged map order, parallactic-angle rotation averaging, the still-provisional beam-orientation convention with its open M1 validation, and the katbeam comparison probe that corroborates the BDS transpose but not the sign flips.
 tags: [beam, orientation, conventions, rotation, parallactic, yx-order, katbeam]
-timestamp: 2026-11-16T16:55:18Z
-last_verified_commit: 6a350b7
+timestamp: 2026-11-16T17:00:34Z
+last_verified_commit: 594a9dd
 ---
 
 # Beam orientation and (Y, X) map-order conventions
@@ -359,7 +359,7 @@ with the command above), `pyproject.toml` (katbeam git-main pin in the `dev`
 and `test` groups), `src/meerkat_beams/core/mdv_beams_to_bds.py:86,118-123` (the
 `Y,X` assumption this probe tests),
 `src/meerkat_beams/utils.py:989-1016` (`get_source_coordinates`),
-`src/meerkat_beams/utils.py:1188-1472` (`get_rotation_averaged_beam`),
+`src/meerkat_beams/utils.py:1188-1474` (`get_rotation_averaged_beam`),
 `tests/test_beam_wizard.py` (tests listed above),
 `scripts/test_beam_orientation.py:1-55`,
 `scripts/beam_orientation/mueller.py:91-131` (`assemble_mueller`),
