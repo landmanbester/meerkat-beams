@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+, fits, eidos]
-timestamp: 2026-11-17T08:00:00Z
-last_verified_commit: df3d627
+timestamp: 2026-11-17T12:00:00Z
+last_verified_commit: 246d9cc
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -323,6 +323,14 @@ the `[[file]]` entry fought it. hip-cargo has the hook and no such entry.
   follow: a PR that breaks the `Dockerfile` is not caught until it is merged,
   and `pull_request_target` must not be used to bring PR images back (it
   would build a fork's Dockerfile with a write token).
+- **The image is multi-arch: `linux/amd64` and `linux/arm64` under one tag**
+  (#43), so container dispatch works unchanged on arm hosts. The arm64 half
+  is built under QEMU emulation in the same job. That is cheap only because
+  every `[full]` dependency ships an aarch64 wheel; a dependency that has to
+  compile under emulation would make the build very slow, and is the signal
+  to move to a native `ubuntu-24.04-arm` build with a manifest merge. CI's
+  arm64 test job (`Tests (3.12, arm64)`, one Python version by design)
+  catches a missing aarch64 wheel in the locked environment first.
 - **Do not restore the `[[file]]` entry for `_container_image.py`,** and do not
   "fix" that file to a version number on `main`. Both re-break `tbump`.
 - **`CHANGELOG.md` is generated and hand edits do not survive.** `git-cliff -o`

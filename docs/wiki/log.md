@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-17T08:00:00Z
+timestamp: 2026-11-17T12:00:00Z
 ---
 
 # Wiki changelog
@@ -625,3 +625,10 @@ descriptions are still accurate).
 - `test_pixel_stepping_upsample_is_bilinear` pins `order=1` in
   `_upsample_planes`, the gap the rotation-kernel review left open;
   `beamwizard.md` says so. All five stamped pages re-stamped at `df3d627`.
+
+## 2026-11-17 — arm64 test job and multi-arch container (verified at `246d9cc`)
+
+- #43: `ci.yml` gained one arm64 test job (`ubuntu-24.04-arm`, Python 3.12)
+  and `publish-container.yml` builds `linux/amd64` + `linux/arm64` under one
+  tag via QEMU. Recorded as a D10 consequence in `design-decisions.md`,
+  re-stamped at `246d9cc`.
