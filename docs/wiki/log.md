@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-16T17:43:51Z
+timestamp: 2026-11-16T17:55:14Z
 ---
 
 # Wiki changelog
@@ -680,6 +680,36 @@ Issue #57, first PR (exact path; the stored-map resampler follows separately).
   explicit pointing, `partition_mueller`, xradio data and attrs) hash-equal to
   `afa59cf`.
 
+## 2026-11-16 — beam_on_grid, the numba resampler for stored maps (verified at `f9d3120`)
+
+Issue #57, second PR.
+
+- `beamwizard.md`: new "beam_on_grid" section (interface, edge and coverage rules,
+  lazy numba import, the measured error-vs-stored-step table at L band, tests);
+  Sources extended. The D21 pointer now names `beam_on_grid`.
+- `design-decisions.md`: D22 (numba vs numpy benchmark table, module-level,
+  lazy import, bilinear only); intro now D1–D22.
+- `index.md`: beamwizard row mentions `beam_on_grid`.
+- `utils.py` line references in all four content pages re-mapped through the
+  `594a9dd..f9d3120` diff (`beam_on_grid` inserted at line 282); `data-model.md`
+  and `beam-orientation.md` re-stamped for that reason alone, content unchanged.
+- `CLAUDE.md` architecture tree gains `_resample.py`; README lists `phase_centre=`
+  and `beam_on_grid`.
+
+## 2026-11-16 — beam_on_grid concurrency fix, accuracy rule (verified at `689f453`)
+
+- `beamwizard.md` "beam_on_grid": serial `nogil` kernel for `nthreads=1`,
+  parallel kernel under `PARALLEL_LOCK` otherwise (numba's `workqueue` layer,
+  used in our slim container, aborts on concurrent parallel launches); hand-hoisted
+  invariants; new timings; the error rule measured at 1700 MHz too and stated as
+  `(h/(λ/D))²`, matching pfb-imaging's `beam_grid` sizing (the earlier "1024²
+  over ±4°" and "1.8× at 1712 MHz" lines were inferred and are replaced).
+- `design-decisions.md` D22: the two-kernel decision and its concurrency
+  consequence; the error rule.
+- `utils.py` line references re-mapped through `f9d3120..689f453`; all five
+  stamped pages re-stamped (`data-model.md`, `beam-orientation.md`, `index.md`
+  for the shift only).
+
 ## 2026-11-16 — Greptile review of #58 (verified at `43ca7a5`)
 
 - `beamwizard.md` (`enrich_bds_xradio`): the direction reference is the
@@ -687,4 +717,19 @@ Issue #57, first PR (exact path; the stored-map resampler follows separately).
   wizard's; the record is consumed.
 - `data-model.md`: `--pointing-centre` refuses mixed-unit forms too.
 - `utils.py` line references re-mapped through `594a9dd..43ca7a5`; all five
+  stamped pages re-stamped.
+
+## 2026-11-16 — merge of the #58 Greptile fixes into the beam_on_grid branch (verified at `b0d64db`)
+
+- No content change. `utils.py` line references re-mapped through the merge;
+  all five stamped pages re-stamped at the merge commit.
+
+## 2026-11-16 — Greptile review of #60 (verified at `0935424`)
+
+- `beamwizard.md` "beam_on_grid": the edge rule now has a 1e-6 pixel rounding
+  tolerance (a strict bound zeroed the last row and column when resampling onto
+  the beam grid itself); `out=beam` is allowed and copied first; uniform-axis
+  check uses the end-point step and the axis's own precision (float32 axes were
+  rejected); the three regression tests named.
+- `utils.py` line references re-mapped through `84a0110..0935424`; all five
   stamped pages re-stamped.

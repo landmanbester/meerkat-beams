@@ -39,6 +39,7 @@ src/meerkat_beams/
 ├── utils.py                # shared: BeamWizard, Jones/Mueller algebra, group assembly, logging, zarr helpers
 ├── cache.py                # on-demand download + BDS cache (keyed on product name)
 ├── katbeam_bds.py          # synthesize a BDS-shaped dataset from katbeam (analytic)
+├── _resample.py            # numba kernel behind utils.beam_on_grid (imported lazily)
 ├── _container_image.py     # container image tag (do not edit; see Conventions)
 ├── cabs/<cmd>.yml          # Stimela cab definitions (one per command)
 ├── cli/<cmd>.py            # hip-cargo-generated Typer + container dispatch
@@ -77,7 +78,8 @@ xradio zarr), and distinguishes the pointing centre (where the dishes track)
 from the phase centre (the image/model grid's tangent point). It provides beam
 interpolation, time-variable beam gain, rotation-averaged beam maps,
 per-partition Mueller blocks (`partition_mueller`) and full time/frequency zarr
-rendering. Downstream packages (`pfb-imaging`,
+rendering. The module-level `beam_on_grid` places stored beam maps onto a
+phase-centre grid (numba). Downstream packages (`pfb-imaging`,
 `QuartiCal`) call its public methods, so a method with no in-repo caller is not
 dead code. Read these before touching it:
 

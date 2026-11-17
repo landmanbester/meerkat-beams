@@ -279,6 +279,140 @@ def phase_to_pointing_lm(l, m, rotation: np.ndarray) -> Tuple[np.ndarray, np.nda
     return np.where(valid, lp, OFF_SKY_DEG), np.where(valid, mp, OFF_SKY_DEG), valid
 
 
+def _uniform_axis(axis, name: str) -> Tuple[float, float]:
+    """``(start, step)`` of a uniform 1-D axis with at least two points; raises otherwise.
+
+    The step spans the whole axis, ``(last - first) / (n - 1)``, so the end points
+    land on integer indices. Uniformity is judged against that line, allowing for
+    the axis's own storage precision: a float32 ``linspace`` is uniform even though
+    its rounded intervals differ by ~1e-7 (Greptile review of #60).
+    """
+    raw = np.asarray(axis)
+    values = raw.astype(float)
+    if values.ndim != 1 or values.size < 2:
+        raise ValueError(f"{name} must be 1-D with at least two points, got shape {values.shape}")
+    step = (values[-1] - values[0]) / (values.size - 1)
+    if step == 0:
+        raise ValueError(f"{name} must be uniformly spaced: its end points are equal")
+    eps = np.finfo(raw.dtype if np.issubdtype(raw.dtype, np.floating) else float).eps
+    tolerance = 1e-6 * abs(step) + 4 * eps * np.abs(values).max()
+    if np.abs(values - (values[0] + step * np.arange(values.size))).max() > tolerance:
+        raise ValueError(f"{name} must be uniformly spaced: bilinear indexing assumes a regular grid")
+    return float(values[0]), float(step)
+
+
+def beam_on_grid(
+    beam: np.ndarray,
+    l_beam: np.ndarray,
+    m_beam: np.ndarray,
+    pointing_centre: SkyCoord,
+    phase_centre: SkyCoord,
+    l_out: np.ndarray,
+    m_out: np.ndarray,
+    out: Optional[np.ndarray] = None,
+    nthreads: int = 1,
+) -> np.ndarray:
+    """Place stored beam maps about the pointing centre onto an image grid about the phase centre.
+
+    The fast path for beams that already exist as arrays: a rotation-averaged
+    map stored per partition, or one evaluated once on a small grid. Each output
+    pixel is mapped through ``sky_rotation_matrix(pointing_centre,
+    phase_centre)`` onto the beam grid and bilinearly interpolated there. When
+    the beam must be exact at every pixel, evaluate it on the image grid instead
+    with ``BeamWizard.get_rotation_averaged_beam(phase_centre=...)``; this
+    function's error is bilinear in the stored grid's spacing (see
+    ``docs/wiki/beamwizard.md``, "beam_on_grid").
+
+    Args:
+        beam: ``(..., NYb, NXb)`` maps in **(Y, X)** order, real or complex, on
+              the axes ``m_beam`` x ``l_beam``. Every leading plane is resampled.
+        l_beam: ``(NXb,)`` uniform, degrees, East positive, about the pointing
+                centre. Ascending or descending.
+        m_beam: ``(NYb,)`` uniform, degrees, North positive, about the pointing
+                centre.
+        pointing_centre: Where the dishes point (the centre of ``beam``).
+        phase_centre: Tangent point of the output grid.
+        l_out: ``(NX,)`` degrees, East positive, about the phase centre, any order
+               (e.g. pfb-model-spec's ``pixel_lm``, ``--target`` offsets
+               included, converted to degrees).
+        m_out: ``(NY,)`` degrees, North positive, about the phase centre.
+        out: Optional caller-owned ``(..., NY, NX)`` C-contiguous buffer to write
+             into, with ``beam``'s leading shape and a dtype that holds
+             ``beam``'s values (complex for a complex beam). Returned. It may be
+             ``beam`` itself (the input is then copied first).
+        nthreads: Threads over output rows (default 1, clamped to numba's
+                  maximum). With 1 the kernel runs on the calling thread and
+                  many Python threads may call at once. Above 1 it launches a
+                  numba parallel region; concurrent such calls are serialised
+                  by a process-wide lock, because numba's ``workqueue``
+                  threading layer (the fallback without TBB or OpenMP, as in
+                  this package's slim container) aborts the process otherwise.
+
+    Returns:
+        ``(..., NY, NX)`` in (Y, X) order and ``beam``'s dtype (or ``out``).
+        Degrees are ``rad2deg`` of the SIN direction cosine throughout. A pixel
+        is 0 where it is off the sky, on the pointing's far hemisphere, or
+        outside the beam grid (fractional index outside ``[0, n - 1]`` by more
+        than 1e-6 pixel, so rounding never drops an edge sample), as the
+        wizard's off-cube policy (D2). No ``1/n`` term: that is the caller's.
+    """
+    from meerkat_beams import _resample
+
+    beam = np.asarray(beam)
+    if beam.ndim < 2:
+        raise ValueError(f"beam must be (..., NY, NX), got shape {beam.shape}")
+    nyb, nxb = beam.shape[-2:]
+    l0b, dlb = _uniform_axis(l_beam, "l_beam")
+    m0b, dmb = _uniform_axis(m_beam, "m_beam")
+    if (np.size(l_beam), np.size(m_beam)) != (nxb, nyb):
+        raise ValueError(
+            f"beam's trailing shape {beam.shape[-2:]} must be (len(m_beam), len(l_beam)) = "
+            f"({np.size(m_beam)}, {np.size(l_beam)}): maps are (Y, X)"
+        )
+    l_out = np.asarray(l_out, dtype=float)
+    m_out = np.asarray(m_out, dtype=float)
+    if l_out.ndim != 1 or m_out.ndim != 1:
+        raise ValueError("l_out and m_out must be 1-D axes; the output grid is their outer product")
+    if nthreads < 1:
+        raise ValueError(f"nthreads must be at least 1, got {nthreads}")
+
+    lead = beam.shape[:-2]
+    shape = lead + (m_out.size, l_out.size)
+    if out is None:
+        out = np.empty(shape, dtype=beam.dtype)
+    else:
+        if out.shape != shape:
+            raise ValueError(f"out has shape {out.shape}, expected {shape}")
+        if not out.flags.c_contiguous:
+            raise ValueError("out must be C-contiguous")
+        if np.iscomplexobj(beam) and not np.iscomplexobj(out):
+            raise ValueError("out must be complex for a complex beam: the imaginary part would be dropped")
+
+    planes = np.ascontiguousarray(beam.reshape((-1, nyb, nxb)))
+    target = out.reshape((-1, m_out.size, l_out.size))  # a view: out is C-contiguous
+    if np.shares_memory(planes, target):
+        # out=beam: writing a pixel could overwrite a beam sample a later pixel reads
+        planes = planes.copy()
+    rotation = sky_rotation_matrix(pointing_centre, phase_centre)
+
+    args = (planes, l0b, dlb, m0b, dmb, rotation, np.deg2rad(l_out), np.deg2rad(m_out), target)
+    nthreads = min(nthreads, _resample.numba.config.NUMBA_NUM_THREADS)
+    if nthreads == 1:
+        # no parallel region: safe from any number of concurrent Python threads
+        _resample.bilinear_serial(*args)
+        return out
+    numba = _resample.numba
+    # numba's workqueue layer aborts the process on concurrent parallel launches
+    with _resample.PARALLEL_LOCK:
+        previous = numba.get_num_threads()
+        numba.set_num_threads(nthreads)
+        try:
+            _resample.bilinear_parallel(*args)
+        finally:
+            numba.set_num_threads(previous)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # BeamWizard
 # ---------------------------------------------------------------------------
