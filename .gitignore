@@ -51,6 +51,7 @@ Thumbs.db
 
 # Ephemeral brainstorming/planning scratch (folded into docs/wiki/)
 docs/superpowers/
+docs/beam_orientation_diagram.pdf
 
 # Generated analysis products (plots + metrics.json), e.g. from
 # scripts/compare_katbeam.py. Large and regenerable from the cached BDS.
