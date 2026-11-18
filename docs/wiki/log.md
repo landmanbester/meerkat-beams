@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-16T17:55:14Z
+timestamp: 2026-11-18T07:57:15Z
 ---
 
 # Wiki changelog
@@ -733,3 +733,12 @@ Issue #57, second PR.
   rejected); the three regression tests named.
 - `utils.py` line references re-mapped through `84a0110..0935424`; all five
   stamped pages re-stamped.
+
+## 2026-11-18 — interim `flip_y` default (verified at `0496366`)
+
+- `beam-orientation.md`: new "Interim default: `flip_y`" paragraph (what is
+  flipped, the ESO137-006 evidence, what is not flipped, how to turn it off);
+  the convention stays provisional and #9-#12 open.
+- `beamwizard.md`: `lm_to_pixel` code block, its line range and the pinning
+  tests updated for `flip_y`; `_parallactic_angles`/`_resolve_times` line
+  references re-mapped.
