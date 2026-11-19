@@ -1,8 +1,8 @@
-from pathlib import Path
-from typing import Annotated, Literal, NewType
+from typing import Annotated, Literal
 
 import typer
 from hip_cargo import (
+    Directory,
     ListFloat,
     ListStr,
     StimelaMeta,
@@ -12,9 +12,6 @@ from hip_cargo import (
     stimela_cab,
     stimela_output,
 )
-
-Directory = NewType("Directory", Path)
-File = NewType("File", Path)
 
 
 @stimela_cab(
@@ -133,47 +130,39 @@ def bds_to_fits(
     """
     Renders a beam dataset (BDS) to eidos-compatible FITS beam cubes
     """
+    params = dict(
+        bds_path=bds_path,
+        beam_type=beam_type,
+        elements=elements,
+        output_eight=output_eight,
+        pixels=pixels,
+        diameter=diameter,
+        freqs=freqs,
+        num_freq=num_freq,
+        freq_extrapolation=freq_extrapolation,
+        prefix=prefix,
+    )
+
     if backend == "native" or backend == "auto":
+        # Only a missing install falls back to the container, so only the
+        # imports and the pre-flight are guarded; the core call is not.
         try:
-            # Pre-flight must_exist for remote URIs before dispatching.
             from hip_cargo.utils.runner import preflight_remote_must_exist  # noqa: E402
 
-            preflight_remote_must_exist(
-                bds_to_fits,
-                dict(
-                    bds_path=bds_path,
-                    beam_type=beam_type,
-                    elements=elements,
-                    output_eight=output_eight,
-                    pixels=pixels,
-                    diameter=diameter,
-                    freqs=freqs,
-                    num_freq=num_freq,
-                    freq_extrapolation=freq_extrapolation,
-                    prefix=prefix,
-                ),
-            )
-
-            # Lazy import the core implementation
             from meerkat_beams.core.bds_to_fits import bds_to_fits as bds_to_fits_core  # noqa: E402
 
-            # Call the core function with all parameters
-            bds_to_fits_core(
-                bds_path,
-                prefix,
-                beam_type=beam_type,
-                elements=elements,
-                output_eight=output_eight,
-                pixels=pixels,
-                diameter=diameter,
-                freqs=freqs,
-                num_freq=num_freq,
-                freq_extrapolation=freq_extrapolation,
-            )
-            return
-        except ImportError:
-            if backend == "native":
+            # Pre-flight must_exist for remote URIs before dispatching.
+            preflight_remote_must_exist(bds_to_fits, params)
+        except ImportError as exc:
+            # A failed import from this package is a bug, not a missing install.
+            if backend == "native" or (exc.name or "").split(".")[0] == "meerkat_beams":
                 raise
+            import typer  # a parameter may be named typer
+
+            typer.echo(f"Cannot run natively ({exc!r}); falling back to a container.", err=True)
+        else:
+            bds_to_fits_core(**params)
+            return
 
     # Resolve container image from installed package metadata
     from hip_cargo.utils.config import get_container_image  # noqa: E402
@@ -185,18 +174,7 @@ def bds_to_fits(
 
     run_in_container(
         bds_to_fits,
-        dict(
-            bds_path=bds_path,
-            beam_type=beam_type,
-            elements=elements,
-            output_eight=output_eight,
-            pixels=pixels,
-            diameter=diameter,
-            freqs=freqs,
-            num_freq=num_freq,
-            freq_extrapolation=freq_extrapolation,
-            prefix=prefix,
-        ),
+        params,
         image=image,
         backend=backend,
         always_pull_images=always_pull_images,

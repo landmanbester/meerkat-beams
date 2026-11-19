@@ -256,13 +256,21 @@ def test_raw_zarr_render_is_not_guarded(tmp_path, incompatible_stack):
 @pytest.mark.unit
 @pytest.mark.parametrize("backend", ["auto", "native"])
 def test_cli_auto_backend_falls_back_to_container(tmp_path, monkeypatch, incompatible_stack, backend):
-    """The generated CLI catches ImportError from the core call: auto runs the container, native re-raises."""
+    """The core module's import-time guard raises: auto runs the container, native re-raises.
+
+    The generated CLI (hip-cargo>=0.5.0) falls back only on an ImportError raised
+    while importing core, so the guard must also fire at import (D18). Drop the
+    cached module so the wrapper's import re-runs it under the patched stack.
+    """
+    import sys
+
     import hip_cargo.utils.config
     import hip_cargo.utils.runner
     from typer.testing import CliRunner
 
     from meerkat_beams.cli import app
 
+    monkeypatch.delitem(sys.modules, "meerkat_beams.core.mdv_beams_to_bds", raising=False)
     ran = []
     monkeypatch.setattr(hip_cargo.utils.config, "get_container_image", lambda pkg: "example/meerkat-beams:test")
     monkeypatch.setattr(hip_cargo.utils.runner, "run_in_container", lambda *a, **k: ran.append(k["backend"]))

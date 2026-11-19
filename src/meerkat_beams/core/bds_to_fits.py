@@ -53,7 +53,18 @@ import numpy as np
 from astropy.io import fits
 from upath import UPath
 
-from meerkat_beams.utils import FREQ_MATCH_ATOL_HZ, BeamWizard, log, resolve_elements
+from meerkat_beams.utils import (
+    FREQ_MATCH_ATOL_HZ,
+    BeamWizard,
+    log,
+    require_zarr_xarray_compat,
+    resolve_elements,
+)
+
+# Raised here as well as inside the command: since hip-cargo 0.5.0 the generated
+# CLI falls back to the container (--backend auto) only on an ImportError raised
+# while importing core, not on one raised during the call (D18).
+require_zarr_xarray_compat()
 
 _JONES_TYPES = ("jones", "njones")
 # eidos's -o8 default: every element of the 2x2 Jones matrix, row-major.

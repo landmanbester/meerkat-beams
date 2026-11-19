@@ -1,11 +1,7 @@
-from pathlib import Path
-from typing import Annotated, Literal, NewType
+from typing import Annotated, Literal
 
 import typer
-from hip_cargo import StimelaMeta, parse_upath, stimela_cab, stimela_output
-
-Directory = NewType("Directory", Path)
-File = NewType("File", Path)
+from hip_cargo import Directory, File, StimelaMeta, parse_upath, stimela_cab, stimela_output
 
 
 @stimela_cab(
@@ -69,33 +65,32 @@ def mdv_beams_to_bds(
     """
     Converts MdV-format primary beams to a beam dataset (BDS)
     """
+    params = dict(
+        mdv_beams=mdv_beams,
+        compress=compress,
+        bds=bds,
+    )
+
     if backend == "native" or backend == "auto":
+        # Only a missing install falls back to the container, so only the
+        # imports and the pre-flight are guarded; the core call is not.
         try:
-            # Pre-flight must_exist for remote URIs before dispatching.
             from hip_cargo.utils.runner import preflight_remote_must_exist  # noqa: E402
 
-            preflight_remote_must_exist(
-                mdv_beams_to_bds,
-                dict(
-                    mdv_beams=mdv_beams,
-                    compress=compress,
-                    bds=bds,
-                ),
-            )
-
-            # Lazy import the core implementation
             from meerkat_beams.core.mdv_beams_to_bds import mdv_beams_to_bds as mdv_beams_to_bds_core  # noqa: E402
 
-            # Call the core function with all parameters
-            mdv_beams_to_bds_core(
-                mdv_beams,
-                bds,
-                compress=compress,
-            )
-            return
-        except ImportError:
-            if backend == "native":
+            # Pre-flight must_exist for remote URIs before dispatching.
+            preflight_remote_must_exist(mdv_beams_to_bds, params)
+        except ImportError as exc:
+            # A failed import from this package is a bug, not a missing install.
+            if backend == "native" or (exc.name or "").split(".")[0] == "meerkat_beams":
                 raise
+            import typer  # a parameter may be named typer
+
+            typer.echo(f"Cannot run natively ({exc!r}); falling back to a container.", err=True)
+        else:
+            mdv_beams_to_bds_core(**params)
+            return
 
     # Resolve container image from installed package metadata
     from hip_cargo.utils.config import get_container_image  # noqa: E402
@@ -107,11 +102,7 @@ def mdv_beams_to_bds(
 
     run_in_container(
         mdv_beams_to_bds,
-        dict(
-            mdv_beams=mdv_beams,
-            compress=compress,
-            bds=bds,
-        ),
+        params,
         image=image,
         backend=backend,
         always_pull_images=always_pull_images,

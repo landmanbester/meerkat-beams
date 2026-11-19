@@ -2,7 +2,18 @@
 
 from typing import List, Optional
 
-from meerkat_beams.utils import ZARR_COMPRESSOR, BeamWizard, enrich_bds_xradio, resolve_elements
+from meerkat_beams.utils import (
+    ZARR_COMPRESSOR,
+    BeamWizard,
+    enrich_bds_xradio,
+    require_zarr_xarray_compat,
+    resolve_elements,
+)
+
+# Raised here as well as inside the command: since hip-cargo 0.5.0 the generated
+# CLI falls back to the container (--backend auto) only on an ImportError raised
+# while importing core, not on one raised during the call (D18).
+require_zarr_xarray_compat()
 
 
 def parse_pointing_centre(text: str):
