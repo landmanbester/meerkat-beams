@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-18T07:57:15Z
+timestamp: 2026-11-19T14:45:10Z
 ---
 
 # Wiki changelog
@@ -742,3 +742,19 @@ Issue #57, second PR.
 - `beamwizard.md`: `lm_to_pixel` code block, its line range and the pinning
   tests updated for `flip_y`; `_parallactic_angles`/`_resolve_times` line
   references re-mapped.
+
+## 2026-11-19 — hip-cargo 0.5.0 conformance, #61 (verified at `7490eb2`)
+
+- `design-decisions.md`: D5 (test matrix bracketed to 3.11/3.13); D7 (0.5.0
+  wrapper — `**params`, fallback only on an `ImportError` while importing
+  core, re-raise for `meerkat_beams` errors; template `test_roundtrip.py`);
+  D8 (transitional hip-cargo git pin with the must-fix-before-release floor,
+  lock-based image with `git` back because of the hip-cargo and katbeam
+  `git+` export lines); D10 (native per-arch container build + manifest
+  merge, PR-only CI, `[skip checks]` gate gone, `publish.yml` tests the
+  release commit); D18 (module-scope `require_zarr_xarray_compat()` is what
+  triggers the container fallback now). `utils.py` line references re-mapped
+  through the `flip_y` insertions (`0935424..0496366`), which had shifted
+  every reference past line 763. Stamped `7490eb2`.
+- `data-model.md`: the container image now gets git-main katbeam (S-band)
+  from the lock. Stamped `f322dac`.

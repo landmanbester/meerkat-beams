@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, phase-centre, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+, fits, eidos]
-timestamp: 2026-11-16T17:55:14Z
-last_verified_commit: 0935424
+timestamp: 2026-11-19T14:45:10Z
+last_verified_commit: 7490eb2
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -22,13 +22,13 @@ elsewhere.
 (once per source/time), so filtering on every call would be wasteful, and
 double-filtering would silently corrupt the interpolated values.
 
-**Decision:** `_get_prefilter` (`src/meerkat_beams/utils.py:1043-1080`) runs
+**Decision:** `_get_prefilter` (`src/meerkat_beams/utils.py:1052-1089`) runs
 `scipy.ndimage.spline_filter` once per `(var, i, j, order)` key and caches
-the result; `interpolate_beam` (`utils.py:1194-1241`) then calls
+the result; `interpolate_beam` (`utils.py:1210-1257`) then calls
 `map_coordinates` against that cached array with `prefilter=False`
-(`utils.py:1234-1241`). The cache's output dtype is **not** unconditionally
+(`utils.py:1250-1257`). The cache's output dtype is **not** unconditionally
 `float32` — it is chosen per variable kind: `np.complex64 if
-np.iscomplexobj(da) else np.float32` (`utils.py:1069-1073`). Complex
+np.iscomplexobj(da) else np.float32` (`utils.py:1078-1082`). Complex
 variables (`jones`, `njones`, `mueller`, `nmueller`) cache as `complex64`;
 real variables (`stokes`, `nstokes`) cache as `float32`. Passing a real
 dtype for complex input would make scipy implicitly promote it (a
@@ -48,7 +48,7 @@ their imaginary part without raising. See `beamwizard.md` for the full
 prefilter contract, including how the dtype rule propagates through
 `get_time_freq_beam`'s zarr writes.
 
-**Source:** `utils.py:1043-1080,1234-1241`; `test_subpixel_matches_direct_scipy`,
+**Source:** `utils.py:1052-1089,1250-1257`; `test_subpixel_matches_direct_scipy`,
 `test_prefilter_complex_var_is_complex64_without_warning`
 (`tests/test_beam_wizard.py`); commit `0f2a4f4` ("test: add tests for
 complex Mueller term" — landed the dtype-aware cache).
@@ -62,14 +62,14 @@ leaving it implicit means a future scipy version or a copy-pasted call
 site could silently change behavior (e.g. to nearest-edge extrapolation).
 
 **Decision:** `interpolate_beam` passes `mode="constant", cval=0.0`
-explicitly (`utils.py:1239-1240`) rather than relying on the scipy default.
+explicitly (`utils.py:1255-1256`) rather than relying on the scipy default.
 Out-of-cube coordinates return `0`, not a nearest-edge value or `NaN`.
 
 **Consequences:** Callers requesting positions well outside the beam
 support get zero gain, not an error or an extrapolated guess — relevant
 for sources near the edge of a wide field.
 
-**Source:** `utils.py:1239-1240`; `test_out_of_range_xy_returns_zero`
+**Source:** `utils.py:1255-1256`; `test_out_of_range_xy_returns_zero`
 (`tests/test_beam_wizard.py`).
 
 ## D3 — `get_time_freq_beam` accepts only canonical `dim_names`
@@ -81,7 +81,7 @@ array to match an arbitrary `dim_names` ordering is not implemented.
 
 **Decision:** Only the canonical xradio order
 `("time", "frequency", "polarization", "l", "m")` is accepted; any other
-tuple raises `ValueError` (`utils.py:1877-1882`).
+tuple raises `ValueError` (`utils.py:1893-1898`).
 
 **Rationale:** A non-canonical tuple would relabel the dims without
 reordering the underlying array — silent data corruption, not a
@@ -92,7 +92,7 @@ without implementing real permutation of the array first; a caller
 wanting a different axis order must transpose the opened dataset
 themselves after the fact.
 
-**Source:** `utils.py:1877-1882`; `test_time_freq_beam_rejects_non_canonical_dim_names`
+**Source:** `utils.py:1893-1898`; `test_time_freq_beam_rejects_non_canonical_dim_names`
 (`tests/test_beam_wizard.py`).
 
 ## D4 — Rotation-averaged maps are `(Y, X)` (FITS) order
@@ -106,7 +106,7 @@ hidden elsewhere because the MeerKAT rotation-averaged beam is nearly
 circularly symmetric, so a transpose barely changes it.
 
 **Decision:** `np.meshgrid(l, m)` (default `"xy"` indexing, not `"ij"`,
-`utils.py:1478`) now returns `(NY, NX)`-shaped maps natively, matching
+`utils.py:1494`) now returns `(NY, NX)`-shaped maps natively, matching
 FITS convention (axis 0 = m/north, axis 1 = l/east). Settled at commit
 `616906b`.
 
@@ -120,7 +120,7 @@ between this settled index-order question and the still-provisional
 physical orientation convention (D9-adjacent, not in this ledger's
 numbered list — see `beam-orientation.md`).
 
-**Source:** `utils.py:1470-1478`; `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
+**Source:** `utils.py:1486-1494`; `test_rotation_averaged_beam_1d_lm_returns_y_x_order`,
 `test_rotation_averaged_beam_map_indexes_as_y_x` (`tests/test_beam_wizard.py`);
 `beam-orientation.md`.
 
@@ -135,7 +135,8 @@ pinning for a base install.
 **Decision:** 3.10 is supported only for the lightweight base install
 (CLI + hip-cargo container dispatch, no `[full]`); it is deliberately
 excluded from the CI test matrix (`.github/workflows/ci.yml`
-`matrix.python-version = ["3.11", "3.12", "3.13"]`) and instead pinned by
+`matrix.python-version = ["3.11", "3.13"]`, the oldest and newest full-install
+Python, as in hip-cargo's template since 0.5.0; #61) and instead pinned by
 a dedicated `lightweight` CI job that installs only the base package and
 checks `mbeams --help` on 3.10. Test-group deps in `pyproject.toml` carry
 `python_version >= '3.11'` markers for the same reason
@@ -145,8 +146,8 @@ checks `mbeams --help` on 3.10. Test-group deps in `pyproject.toml` carry
 change intended to work on 3.10 should be smoke-tested against the base
 install, not the full test suite.
 
-**Source:** `pyproject.toml:6-9,125-136`; `.github/workflows/ci.yml:221-244`
-(the `lightweight` job); CLAUDE.md ("Conventions" section).
+**Source:** `pyproject.toml:6-9`; `.github/workflows/ci.yml` (the `test`
+matrix and the `lightweight` job); CLAUDE.md ("Conventions" section).
 
 ## D6 — Band cache under `MBEAMS_CACHE_DIR`
 
@@ -198,7 +199,11 @@ from the cab YAML — it is **not** hand-written and must not be
 hand-edited. The pre-commit `generate-cabs` hook runs
 `hip-cargo generate-cabs` on every commit to regenerate cab YAML from
 `cli/*.py`; the inverse direction (`cab → cli`) is manual via
-`scripts/genfuncs.sh`.
+`scripts/genfuncs.sh`. Since hip-cargo 0.5.0 (#61) the generated wrapper
+calls `<cmd>_core(**params)`, so core parameter names must equal the CLI's,
+and it falls back to the container only on an `ImportError` raised while
+*importing* core (not during the call), re-raising one that names a
+`meerkat_beams` module. D18 depends on that distinction.
 
 **Rationale:** `cli → cab → cli` must compose to the identity, or the
 generated CLI and the cab YAML silently diverge over time.
@@ -206,14 +211,19 @@ generated CLI and the cab YAML silently diverge over time.
 **Consequences:** If a CLI signature needs to change, edit the cab YAML
 and run `scripts/genfuncs.sh` (or edit `cli/*.py`'s core-adjacent logic
 only in `core/*.py`, which is plain Python and free to hand-edit).
-`tests/test_roundtrip.py` fails the build if `cli/*.py` drifts from what
-hip-cargo would regenerate from `cabs/*.yml` — treat that failure as "cab
+`tests/test_roundtrip.py` (hip-cargo's template since #61; commands are
+discovered) fails the build if `cli/*.py` drifts from what hip-cargo would
+regenerate from `cabs/*.yml`, or a committed cab from what `generate-cabs`
+emits; it also checks that `**params` binds to each core signature and that
+every cab command is registered on the app — treat a round-trip failure as "cab
 YAML needs a fix" or "hip-cargo regen is non-idempotent (upstream bug)",
 never as license to hand-patch `cli/*.py`.
 
 **Source:** CLAUDE.md ("CLI ↔ cab generation" section);
-`tests/test_roundtrip.py` (confirmed present via
-`ls tests/test_roundtrip.py`); `test_cli_cab_cli_roundtrip`.
+`tests/test_roundtrip.py` (`test_the_committed_cli_is_what_generate_function_emits`,
+`test_the_committed_cab_is_what_generate_cabs_emits`,
+`test_the_core_function_accepts_what_the_wrapper_passes`,
+`test_every_cab_command_is_registered_on_the_cli`); `src/meerkat_beams/cli/*.py`.
 
 ## D8 — hip-cargo git dependency retired
 
@@ -233,21 +243,37 @@ emits the unquoted form, so the cab had to be regenerated to keep
 `test_roundtrip.py` green. What D8 settles is the *source* (PyPI, not git);
 the floor itself is expected to keep moving.
 
+**Transitional exception (#61, open).** Conforming to hip-cargo 0.5.0 needs
+its generator before 0.5.0 is on PyPI, so `[tool.uv.sources]` pins hip-cargo
+to a git-main commit (`13d2f43`). Git main still reports `0.4.0`, so the
+floor reads `>=0.4.0` although the regenerated `cli/*.py` imports
+`Directory`/`File` from `hip_cargo`, which 0.4.0 lacks. **Before any
+release:** raise the floor to `>=0.5.0` and delete the `[tool.uv.sources]`
+entry. A wheel ignores `[tool.uv.sources]`, so releasing with the pin would
+resolve PyPI 0.4.0 and break every lightweight install's CLI.
+
 **Consequences:** The `git` install layer in the Dockerfile, present
 *solely* for the git dependency, has been removed (commit `2a15cbb`): the
 `[full]` extra the image installs has no git dependencies, and the image
 builds and runs `mbeams --help` without `git`. Issue #16 tracked the re-pin
 and was closed on 2026-07-27. The only git dependency left in
-`pyproject.toml` is the dev/test-only `katbeam` pin (D11), which the image
-never installs — if a git dependency ever enters `[full]`, the image needs
-`git` again.
+`pyproject.toml` was the dev/test-only `katbeam` pin (D11).
+
+Since #61 the image installs the locked `[full]` stack (`uv export --locked
+--no-dev --extra full`, then the package with `--no-deps`), and `git` is
+back. Two `git+` requirements reach that export: the transitional hip-cargo
+pin above, and `katbeam` — uv keeps one source per package, so the dev/test
+git pin also replaces the `[full]` extra's PyPI requirement in the lock.
+The image therefore carries git-main katbeam (S-band model included), unlike
+a `pip install meerkat-beams[full]`. Drop the `git` layer once neither
+export line is `git+` (`uv export --no-dev --extra full | grep git+`).
 
 **Source:** `pyproject.toml:22`; commits `3bb9b3d` ("build: depend on
 hip-cargo>=0.3.0") and `4b07822` ("build: upgrade hip-cargo >= 0.4.0");
 `uv.lock` (`hip-cargo` package entry, `source =
 { registry = ... }`); issue #16 ("M2: Re-pin from hip-cargo git main to
 the next tagged release", closed 2026-07-27); `Dockerfile`; commit
-`2a15cbb`.
+`2a15cbb`; issue #61 (`[tool.uv.sources]` in `pyproject.toml`).
 
 ## D9 — "No PyPI release" decision reversed
 
@@ -324,13 +350,26 @@ the `[[file]]` entry fought it. hip-cargo has the hook and no such entry.
   and `pull_request_target` must not be used to bring PR images back (it
   would build a fork's Dockerfile with a write token).
 - **The image is multi-arch: `linux/amd64` and `linux/arm64` under one tag**
-  (#43), so container dispatch works unchanged on arm hosts. The arm64 half
-  is built under QEMU emulation in the same job. That is cheap only because
-  every `[full]` dependency ships an aarch64 wheel; a dependency that has to
-  compile under emulation would make the build very slow, and is the signal
-  to move to a native `ubuntu-24.04-arm` build with a manifest merge. CI's
-  arm64 test job (`Tests (3.12, arm64)`, one Python version by design)
-  catches a missing aarch64 wheel in the locked environment first.
+  (#43), so container dispatch works unchanged on arm hosts. Since #61 each
+  architecture builds on a native runner (`ubuntu-latest`,
+  `ubuntu-24.04-arm`) and pushes by digest; a `merge` job stitches the
+  digests into one manifest under the tags from a shared `meta` job (which
+  also supplies each image's OCI labels) and fails if a built architecture is
+  missing. This replaced a single QEMU job, which was cheap only while every
+  `[full]` dependency shipped an aarch64 wheel. A per-ref `concurrency` group
+  lets the `update-cabs` push cancel the superseded `main` build, so `latest`
+  comes from the newest commit. Both architectures install from `uv.lock`
+  (D8). CI's arm64 test job (`Tests (3.13, arm64)`, one Python version by
+  design) catches a missing aarch64 wheel in the locked environment first.
+- **CI runs on pull requests, not on pushes** (#61, hip-cargo 0.5.0): PRs
+  into `main` or a `dev-*` branch, the twice-weekly cron (the only run on
+  `main` itself), and `workflow_dispatch` for anything else, e.g. a stacked
+  PR (`gh workflow run ci.yml --ref <branch>`). The `[skip checks]` gate is
+  gone from CI; only `update-cabs` still reads the tag, to avoid re-triggering
+  on its own push. The tbump release commit reaches `main` without a PR, so
+  `publish.yml` runs the test suite (3.11, 3.13) before uploading to PyPI.
+  `publish-container.yml` publishes `:X.Y.Z` on the tag independently, so a
+  release whose tests fail can leave an image with no PyPI release.
 - **Do not restore the `[[file]]` entry for `_container_image.py`,** and do not
   "fix" that file to a version number on `main`. Both re-break `tbump`.
 - **`CHANGELOG.md` is generated and hand edits do not survive.** `git-cliff -o`
@@ -359,8 +398,9 @@ the `[[file]]` entry fought it. hip-cargo has the hook and no such entry.
   `v0.0.1` and `v0.1.0` (see D9).
 
 **Source:** `tbump.toml`; `cliff.toml`; `.pre-commit-config.yaml`;
-`.github/workflows/publish-container.yml`; `~/software/hip-cargo` at v0.3.0
-(reference implementation).
+`.github/workflows/publish-container.yml`, `ci.yml`, `publish.yml`;
+`~/software/hip-cargo` at v0.3.0 (reference implementation), and its
+templates at `13d2f43` for the #61 changes.
 
 ## Recurring gotchas
 
@@ -613,17 +653,17 @@ you touch the fixtures.
 
 ## Sources
 
-- `src/meerkat_beams/utils.py:1043-1080,1194-1241` (`_get_prefilter`,
+- `src/meerkat_beams/utils.py:1052-1089,1210-1257` (`_get_prefilter`,
   `interpolate_beam`)
-- `src/meerkat_beams/utils.py:1332-1618` (`get_rotation_averaged_beam`)
-- `src/meerkat_beams/utils.py:1802-1882` (`get_time_freq_beam`,
+- `src/meerkat_beams/utils.py:1348-1634` (`get_rotation_averaged_beam`)
+- `src/meerkat_beams/utils.py:1818-1898` (`get_time_freq_beam`,
   `_CANONICAL_DIM_NAMES` guard)
 - `src/meerkat_beams/cache.py` (cache layout, `BAND_GDRIVE_IDS`,
   `ensure_band_bds`, `.partial` atomicity)
 - `pyproject.toml:6-9,22,125-136` (Python support policy, hip-cargo
   dependency, test-group markers)
 - `.github/workflows/ci.yml:58-244` (test matrix, `latest`, `zarr2` and `lightweight` jobs)
-- `Dockerfile` (no `git` layer since commit `2a15cbb`)
+- `Dockerfile` (`git` layer removed in `2a15cbb`, transitionally back for #61; D8)
 - `tests/test_beam_wizard.py`: `test_subpixel_matches_direct_scipy`,
   `test_prefilter_complex_var_is_complex64_without_warning`,
   `test_out_of_range_xy_returns_zero`,
@@ -634,7 +674,7 @@ you touch the fixtures.
 - `tests/test_cache.py`: `test_registry_contains_expected_bands`,
   `test_ensure_band_bds_rejects_unknown_band`,
   `test_ensure_band_bds_clears_stale_partials`
-- `tests/test_roundtrip.py`: `test_cli_cab_cli_roundtrip`
+- `tests/test_roundtrip.py`: the round-trip, signature and registration tests (D7)
 - commit `0f2a4f4` ("test: add tests for complex Mueller term")
 - commit `616906b` ("fix(utils)!: get_rotation_averaged_beam returns
   (Y, X)-ordered maps")
@@ -754,14 +794,21 @@ cap cannot be made conditional on the zarr major, and a blanket
 `require_zarr_xarray_compat()` raises `IncompatibleZarrStackError` naming the
 fix (pin `xarray<2026.9` or move to `zarr>=3`) whenever zarr-python 2 meets
 xarray>=`XARRAY_ZARR2_CAP`, pre-releases included (it compares release
-tuples). The error subclasses `ImportError` because the hip-cargo-generated
-CLIs wrap the core call in `except ImportError`: under `--backend auto` the
-broken native stack falls back to the container, whose stack is consistent,
-while `--backend native` re-raises. The generated code needed no change. The
-guard runs before every **xarray** zarr call and before any download feeding
-one: `require_readable_zarr`, both `BeamWizard` BDS branches (ahead of
-`cache.ensure_band_bds`/`ensure_group_bds`, so a cold cache does not download
-inputs only to fail), and the top of `mdv_beams_to_bds`.
+tuples). The error subclasses `ImportError` so that the hip-cargo-generated
+CLIs fall back to the container under `--backend auto`, whose stack is
+consistent, while `--backend native` re-raises. Since hip-cargo 0.5.0 (#61)
+the wrapper catches `ImportError` only while *importing* core; the core call
+itself runs outside the guard, so an error raised inside the command
+propagates. Every `core/` module therefore also calls
+`require_zarr_xarray_compat()` at **module scope**: that is what triggers the
+fallback, and the error carries no `name`, so the wrapper's re-raise for
+errors naming `meerkat_beams` does not catch it. A consequence for library
+callers: with a broken stack, `import meerkat_beams.core.<cmd>` itself raises.
+Within the code the guard still runs before every **xarray** zarr call and
+before any download feeding one: `require_readable_zarr`, both `BeamWizard`
+BDS branches (ahead of `cache.ensure_band_bds`/`ensure_group_bds`, so a cold
+cache does not download inputs only to fail), and the top of
+`mdv_beams_to_bds`.
 Raw zarr calls (`zarr_open_group`, `zarr_create_array`, `zarr.open`) are not
 guarded: they work under zarr-python 2 on any xarray, so a katbeam wizard on a
 FITS image still renders there. The same xarray
@@ -810,8 +857,10 @@ valid v2 codec under both majors, so it did not change.
   lossless, and `test_compressed_bds_is_lossless` /
   `test_compressed_partial_edge_chunk_round_trips` must stay green.
 
-**Source:** `utils.py:58-169`; `core/mdv_beams_to_bds.py:36,131-134`;
-`tests/test_zarr_format.py`; `.github/workflows/ci.yml`
+**Source:** `utils.py:58-169`; the module-scope guard in each of
+`core/mdv_beams_to_bds.py`, `core/bds_to_xradio.py` and `core/bds_to_fits.py`;
+`tests/test_zarr_format.py` (`test_cli_auto_backend_falls_back_to_container`
+drops the cached core module so the wrapper's import re-runs the guard); `.github/workflows/ci.yml`
 (`latest` and `zarr2` jobs); `pyproject.toml` `[full]`; xarray `whats-new.rst`
 (v2026.04.0 and v2026.09.0 breaking changes).
 
@@ -931,9 +980,9 @@ leakage terms the chord still helps (about 1.5×) and the λ/D slope does not.
 - D2 is the spatial counterpart: off-cube in X/Y returns 0, off-cube in
   frequency raises, or scales within the margin when asked.
 
-**Source:** `utils.py:782-793` (constructor validation), `utils.py:855-858`
-(default margin), `utils.py:1162-1192` (`freq_range`, `check_freqs`),
-`utils.py:1206-1228` (scaling); `tests/test_freq_extrapolation.py`,
+**Source:** `utils.py:791-802` (constructor validation), `utils.py:864-867`
+(default margin), `utils.py:1178-1208` (`freq_range`, `check_freqs`),
+`utils.py:1222-1244` (scaling); `tests/test_freq_extrapolation.py`,
 `tests/test_freq_extrapolation_integration.py`; issue #41.
 
 ## D20 — FITS output matches eidos's layout, with corrected CTYPEs
