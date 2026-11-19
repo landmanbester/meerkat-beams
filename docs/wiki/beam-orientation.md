@@ -3,8 +3,8 @@ type: Subsystem Notes
 title: Beam orientation and (Y, X) map-order conventions
 description: The settled (Y, X) rotation-averaged map order, parallactic-angle rotation averaging, the still-provisional beam-orientation convention with its open M1 validation, and the katbeam comparison probe that corroborates the BDS transpose but not the sign flips.
 tags: [beam, orientation, conventions, rotation, parallactic, yx-order, katbeam]
-timestamp: 2026-11-16T17:55:14Z
-last_verified_commit: 0935424
+timestamp: 2026-11-18T07:57:15Z
+last_verified_commit: 0496366
 ---
 
 # Beam orientation and (Y, X) map-order conventions
@@ -158,6 +158,26 @@ is that `flip_x`/`flip_y`/`swap_xy` must look **visibly worse** than `none`
 not yet been confirmed for all fields. Pinned (propagation of `signs`/`swap`
 through `assemble_mueller`, not the physical-correctness question):
 `tests/test_beam_orientation_mueller.py::test_assemble_mueller_signs_swap_propagate`.
+
+**Interim default: `flip_y` (November 2026).** `BeamWizard.flip_y` (default
+`True`) negates the beam-frame `m` inside `lm_to_pixel`'s `angle` path, after
+the parallactic rotation: the supplied patterns are flipped vertically, as
+`docs/beam_orientation_diagram.pdf` says they must be ("Upward side of beam
+(i.e. flip patterns vertically)"). The evidence is pfb-imaging's ESO137-006
+MeerKAT+ residual diagnostic: with a fixed deconvolved model, re-evaluating
+the per-scan beams with this flip lowered the residual around the brightest
+sources (by 14-19% around the worst of them) where `flip_x` was neutral. That
+model was deconvolved under the unflipped beam, so the comparison favoured the
+old orientation and the flip still won near sources. It is a stop-gap until
+the reference beams are regenerated in the right orientation, not a
+validation of the convention: issues #9-#12 stay open.
+
+Only the renders take the flip (`get_rotation_averaged_beam`,
+`get_time_freq_beam`, and through them every pfb-imaging consumer).
+`get_source_coordinates` (and so `get_time_variable_beamgain`) derives its
+offsets separately with its own `signs`/`swap` and is **not** flipped, and
+neither is `bds_to_fits` (the BDS's own frame). Set `wizard.flip_y = False`
+for the previous behaviour.
 
 **Convention knobs still under investigation** (per PR #8's M1 checklist):
 phase-rotation exponent sign, w-term sign — `scripts/beam_orientation/phase_rotate.py`'s

@@ -1217,20 +1217,34 @@ def test_lm_to_pixel_maps_degrees_onto_the_bds_grid(bw):
 
 @pytest.mark.unit
 def test_lm_to_pixel_with_an_angle_pins_the_sky_to_beam_transform(bw):
-    """Literal values of (l, m) -> (m sin a - l cos a, l sin a + m cos a).
+    """Literal values of (l, m) -> (m sin a - l cos a, -(l sin a + m cos a)), the default flip_y.
 
     One pixel east of the centre lands one pixel *west* at angle 0 (the
-    transform flips l, so angle=0 differs from angle=None) and one pixel north
-    at 90 degrees; one pixel north stays put at 0 and lands one pixel east at
-    90 degrees. A sign change, an axis swap or a proper rotation all fail here.
+    transform flips l, so angle=0 differs from angle=None) and one pixel south
+    at 90 degrees; one pixel north lands one pixel south at 0 (flip_y) and one
+    pixel east at 90 degrees. A sign change, an axis swap or a proper rotation
+    all fail here. angle=None is never flipped.
     """
+    assert bw.flip_y
     x0, y0, dx, dy = (bw.bds.attrs[k] for k in ("x0", "y0", "dx", "dy"))
     east, north = (np.array([dx]), np.array([0.0])), (np.array([0.0]), np.array([dy]))
     np.testing.assert_allclose(bw.lm_to_pixel(*east, angle=0.0), [[x0 - 1], [y0]], atol=1e-12)
-    np.testing.assert_allclose(bw.lm_to_pixel(*east, angle=np.pi / 2), [[x0], [y0 + dx / dy]], atol=1e-12)
-    np.testing.assert_allclose(bw.lm_to_pixel(*north, angle=0.0), [[x0], [y0 + 1]], atol=1e-12)
+    np.testing.assert_allclose(bw.lm_to_pixel(*east, angle=np.pi / 2), [[x0], [y0 - dx / dy]], atol=1e-12)
+    np.testing.assert_allclose(bw.lm_to_pixel(*north, angle=0.0), [[x0], [y0 - 1]], atol=1e-12)
     np.testing.assert_allclose(bw.lm_to_pixel(*north, angle=np.pi / 2), [[x0 + dy / dx], [y0]], atol=1e-12)
     np.testing.assert_allclose(bw.lm_to_pixel(*east), [[x0 + 1], [y0]], atol=1e-12)
+    np.testing.assert_allclose(bw.lm_to_pixel(*north), [[x0], [y0 + 1]], atol=1e-12)
+
+
+@pytest.mark.unit
+def test_flip_y_off_restores_the_unflipped_transform(bw, monkeypatch):
+    """flip_y=False is (l, m) -> (m sin a - l cos a, l sin a + m cos a), the pre-flip_y behaviour."""
+    monkeypatch.setattr(bw, "flip_y", False)
+    x0, y0, dx, dy = (bw.bds.attrs[k] for k in ("x0", "y0", "dx", "dy"))
+    east, north = (np.array([dx]), np.array([0.0])), (np.array([0.0]), np.array([dy]))
+    np.testing.assert_allclose(bw.lm_to_pixel(*east, angle=np.pi / 2), [[x0], [y0 + dx / dy]], atol=1e-12)
+    np.testing.assert_allclose(bw.lm_to_pixel(*north, angle=0.0), [[x0], [y0 + 1]], atol=1e-12)
+    assert BeamWizard.flip_y  # the instance override does not leak into the class
 
 
 @pytest.mark.unit

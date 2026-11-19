@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+  # Re-run the cab/tag reset by hand, e.g. after a failed run.
+  workflow_dispatch:
 
 jobs:
   update-cabs:

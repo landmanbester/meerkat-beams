@@ -16,6 +16,11 @@ from meerkat_beams.utils import (
     zarr_compressor_encoding,
 )
 
+# Raised here as well as inside the command: since hip-cargo 0.5.0 the generated
+# CLI falls back to the container (--backend auto) only on an ImportError raised
+# while importing core, not on one raised during the call (D18).
+require_zarr_xarray_compat()
+
 # Attrs copied from an MdV mean-beam zarr onto the BDS it produces. BeamWizard
 # reads `telescope` to verify a baseline group pairs the right two stores; the
 # rest are provenance for a human reading the store. Keys absent from the input

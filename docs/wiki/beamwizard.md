@@ -3,8 +3,8 @@ type: reference
 title: BeamWizard interpolation and rendering internals
 description: beam_model (mdv/katbeam), group (MM/MPM/MPMP) and average (pa/azimuth) selectors, interpolate_beam prefilter/off-cube/spline-order/freq-guard semantics and the freq_extrapolation policy, get_source_coordinates transforms, the lm_to_pixel rotation kernel, optional-image paths, get_time_freq_beam canonical dim_names, enrich_bds_xradio, partition_mueller and the pointing_centre= override, phase centre vs pointing centre (phase_centre=, sky_rotation_matrix, phase_to_pointing_lm), the numba beam_on_grid resampler for stored maps with its accuracy-vs-spacing table, and the nthreads/pa_tolerance/order speed options of get_rotation_averaged_beam.
 tags: [beamwizard, phase-centre, pointing-centre, interpolation, scipy, zarr, xradio, utils, katbeam, baseline-groups, meerkat+, partition-mueller, mueller]
-timestamp: 2026-11-16T17:55:14Z
-last_verified_commit: 0935424
+timestamp: 2026-11-18T07:57:15Z
+last_verified_commit: 0496366
 ---
 
 # BeamWizard interpolation and rendering internals
@@ -157,17 +157,23 @@ source exactly at the pointing centre resolves to `(x0, y0)` with `sep=0`).
 def lm_to_pixel(self, l, m, angle=None) -> Tuple[np.ndarray, np.ndarray]:
     if angle is not None:
         l, m = m * np.sin(angle) - l * np.cos(angle), l * np.sin(angle) + m * np.cos(angle)
+        if self.flip_y:
+            m = -m
     xp = l / self.bds.attrs["dx"] + self.bds.attrs["x0"]
     yp = m / self.bds.attrs["dy"] + self.bds.attrs["y0"]
     return xp, yp
 ```
 
-(`utils.py:1082-1106`). Public. It maps `(l, m)` offsets from the pointing
+(`utils.py:1091-1122`). Public. It maps `(l, m)` offsets from the pointing
 centre, in degrees, to BDS pixel coordinates. With `angle` (the parallactic
 angle, radians) the sky-frame offsets are first taken into the beam frame.
 That transform is a rotation **combined with a flip of `l`** (determinant
 −1): `angle=0` gives `(-l, m)`, so it is not the same as `angle=None`, which
-applies no transform. The two renders (`get_rotation_averaged_beam`,
+applies no transform. **`flip_y`** (a class attribute, default `True`,
+`utils.py:773`) then negates the beam-frame `m`, flipping the supplied pattern
+vertically, so by default `angle=0` gives `(-l, -m)`. It is the interim
+orientation fix described in `beam-orientation.md`; `angle=None` is never
+flipped. The two renders (`get_rotation_averaged_beam`,
 `get_time_freq_beam`) use the `angle` path; `core/bds_to_fits.py` and
 `get_source_coordinates` use the plain scaling.
 
@@ -183,11 +189,11 @@ returns a tuple rather than a stacked array because `bds_to_fits` passes 1-D
 
 Three private helpers complete the kernel:
 
-- `_parallactic_angles(times, loc=None, pointing_centre=None)` (`utils.py:1118-1131`) —
+- `_parallactic_angles(times, loc=None, pointing_centre=None)` (`utils.py:1134-1147`) —
   the position angle from the pointing centre to the north celestial pole in
   `AltAz`, in radians. `pointing_centre=None` is the wizard's own; a supplied
   one is used for that call only (see `pointing_centre=` below).
-- `_resolve_times(times)` (`utils.py:1108-1116`) — `times`, else the attached
+- `_resolve_times(times)` (`utils.py:1124-1132`) — `times`, else the attached
   image's time axis, else the documented `RuntimeError`.
 - `_coarsen_grid` / `_upsample_planes` (`utils.py:177-205`, module level) —
   `pixel_stepping`: subsample the l/m grid, then bilinearly interpolate the
@@ -201,7 +207,8 @@ owns is its `meshgrid` indexing — `"xy"` in `get_rotation_averaged_beam`
 
 Pinned by `test_lm_to_pixel_maps_degrees_onto_the_bds_grid` (the scaling),
 `test_lm_to_pixel_with_an_angle_pins_the_sky_to_beam_transform` (literal
-values of the transform, including the `l` flip) and
+values of the transform, including the `l` flip and the default `flip_y`),
+`test_flip_y_off_restores_the_unflipped_transform` and
 `test_rotation_angle_is_the_textbook_parallactic_angle` (the angle against
 the closed form, at two sites). Before these, negating the angle, swapping
 the rotated axes or substituting a proper rotation passed the whole unit

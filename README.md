@@ -98,7 +98,7 @@ mbeams bds-to-fits --bds-path MeerKAT_L.bds.zarr --prefix beam_l8 --pixels 256 -
 
 ```bash
 uv sync --group dev --group test --extra full   # always pass --extra full: without it uv removes the scientific stack
-pre-commit install && pre-commit install --hook-type commit-msg
+uv run pre-commit install                       # wires both the pre-commit and commit-msg hooks
 uv run ruff check . && uv run ruff format --check .
 MBEAMS_OFFLINE=1 uv run pytest                  # what CI runs: hermetic, ~20 s
 uv run pytest                                   # online: L-band cache warm-up and live IERS tables
@@ -115,7 +115,7 @@ bash scripts/genfuncs.sh                        # regenerate cli/*.py from cabs/
 
 There are three tiers.
 
-**CI** runs `MBEAMS_OFFLINE=1 uv run pytest` on Python 3.11–3.13 (x86-64, plus one arm64 job on 3.12), on the newest xarray and zarr releases, on xarray at its declared floor, and on zarr-python 2 with the newest `xarray<2026.9`. `MBEAMS_OFFLINE=1` makes the run hermetic:
+**CI** runs on pull requests and a twice-weekly cron. It runs `MBEAMS_OFFLINE=1 uv run pytest` on Python 3.11 and 3.13 (x86-64, plus one arm64 job on 3.13), on the newest xarray and zarr releases, on xarray at its declared floor, and on zarr-python 2 with the newest `xarray<2026.9`. `MBEAMS_OFFLINE=1` makes the run hermetic:
 
 - it skips the L-band cache warm-up in `tests/conftest.py`, so tests that need real beams skip;
 - it stops astropy downloading IERS Earth-orientation tables and uses the copy bundled with astropy, which is ample for parallactic angles. Without this, a failed download is retried by every test that computes a parallactic angle, at 30–75 s each, so an IERS outage stretches a one-minute CI run to hours.

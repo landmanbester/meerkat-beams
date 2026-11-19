@@ -1,8 +1,8 @@
-from pathlib import Path
-from typing import Annotated, Literal, NewType
+from typing import Annotated, Literal
 
 import typer
 from hip_cargo import (
+    Directory,
     ListStr,
     StimelaMeta,
     parse_list_str,
@@ -10,8 +10,6 @@ from hip_cargo import (
     stimela_cab,
     stimela_output,
 )
-
-Directory = NewType("Directory", Path)
 
 
 @stimela_cab(
@@ -161,59 +159,43 @@ def bds_to_xradio(
     """
     Renders a beam dataset (BDS) to an xradio-compatible zarr image
     """
+    params = dict(
+        bds_path=bds_path,
+        image_path=image_path,
+        pointing_centre=pointing_centre,
+        output_var=output_var,
+        pixel_stepping=pixel_stepping,
+        time_stepping=time_stepping,
+        num_freq=num_freq,
+        chunks_time=chunks_time,
+        chunks_freq=chunks_freq,
+        chunks_x=chunks_x,
+        chunks_y=chunks_y,
+        elements=elements,
+        output_pol=output_pol,
+        beam_type=beam_type,
+        compress=compress,
+        output=output,
+    )
+
     if backend == "native" or backend == "auto":
+        # Only a missing install falls back to the container, so only the
+        # imports and the pre-flight are guarded; the core call is not.
         try:
-            # Pre-flight must_exist for remote URIs before dispatching.
             from hip_cargo.utils.runner import preflight_remote_must_exist  # noqa: E402
 
-            preflight_remote_must_exist(
-                bds_to_xradio,
-                dict(
-                    bds_path=bds_path,
-                    image_path=image_path,
-                    pointing_centre=pointing_centre,
-                    output_var=output_var,
-                    pixel_stepping=pixel_stepping,
-                    time_stepping=time_stepping,
-                    num_freq=num_freq,
-                    chunks_time=chunks_time,
-                    chunks_freq=chunks_freq,
-                    chunks_x=chunks_x,
-                    chunks_y=chunks_y,
-                    elements=elements,
-                    output_pol=output_pol,
-                    beam_type=beam_type,
-                    compress=compress,
-                    output=output,
-                ),
-            )
-
-            # Lazy import the core implementation
             from meerkat_beams.core.bds_to_xradio import bds_to_xradio as bds_to_xradio_core  # noqa: E402
 
-            # Call the core function with all parameters
-            bds_to_xradio_core(
-                bds_path,
-                image_path,
-                output,
-                pointing_centre=pointing_centre,
-                output_var=output_var,
-                pixel_stepping=pixel_stepping,
-                time_stepping=time_stepping,
-                num_freq=num_freq,
-                chunks_time=chunks_time,
-                chunks_freq=chunks_freq,
-                chunks_x=chunks_x,
-                chunks_y=chunks_y,
-                elements=elements,
-                output_pol=output_pol,
-                beam_type=beam_type,
-                compress=compress,
-            )
-            return
-        except ImportError:
-            if backend == "native":
+            # Pre-flight must_exist for remote URIs before dispatching.
+            preflight_remote_must_exist(bds_to_xradio, params)
+        except ImportError as exc:
+            # A failed import from this package is a bug, not a missing install.
+            if backend == "native" or (exc.name or "").split(".")[0] == "meerkat_beams":
                 raise
+            typer.echo(f"Cannot run natively ({exc!r}); falling back to a container.", err=True)
+        else:
+            bds_to_xradio_core(**params)
+            return
 
     # Resolve container image from installed package metadata
     from hip_cargo.utils.config import get_container_image  # noqa: E402
@@ -225,24 +207,7 @@ def bds_to_xradio(
 
     run_in_container(
         bds_to_xradio,
-        dict(
-            bds_path=bds_path,
-            image_path=image_path,
-            pointing_centre=pointing_centre,
-            output_var=output_var,
-            pixel_stepping=pixel_stepping,
-            time_stepping=time_stepping,
-            num_freq=num_freq,
-            chunks_time=chunks_time,
-            chunks_freq=chunks_freq,
-            chunks_x=chunks_x,
-            chunks_y=chunks_y,
-            elements=elements,
-            output_pol=output_pol,
-            beam_type=beam_type,
-            compress=compress,
-            output=output,
-        ),
+        params,
         image=image,
         backend=backend,
         always_pull_images=always_pull_images,

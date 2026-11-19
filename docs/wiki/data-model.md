@@ -3,8 +3,8 @@ type: reference
 title: Data model — MdV npz, BDS zarr, xradio zarr, eidos FITS
 description: The beam formats and their conversions — MdV .npz structure, the BDS zarr schema (jones/njones/stokes/nstokes/mueller/nmueller, fits_header, scalar attrs), the MM/MPM/MPMP baseline-group datasets, the xradio primary-beam schema, and the eidos-compatible FITS output.
 tags: [mdv, bds, xradio, fits, eidos, zarr, schema, data-model, katbeam, meerkat+, mke, baseline-groups, mueller]
-timestamp: 2026-11-16T17:55:14Z
-last_verified_commit: 0935424
+timestamp: 2026-11-19T15:14:26Z
+last_verified_commit: 18c32fa
 ---
 
 # Data model — MdV npz, BDS zarr, xradio zarr, eidos FITS
@@ -220,9 +220,9 @@ exact axis is always available in `attrs["freqs"]` and the `FREQ` coordinate.
 
 **Which katbeam you have changes the default L axis.** `uv.lock` resolves both
 the `[full]` extra and the dev/test groups to the git pin, so a `uv sync` gets
-git main (856–1712 MHz for L, and the S model). A non-lock install —
-`pip install meerkat-beams[full]`, or the `Dockerfile`'s `.[full]` — gets PyPI
-0.1 instead, whose L table spans only 900–1650 MHz and which has no S model at
+git main (856–1712 MHz for L, and the S model), and so does the container
+image, which installs from the lock since #61 (design-decisions D8). A non-lock
+install — `pip install meerkat-beams[full]` — gets PyPI 0.1 instead, whose L table spans only 900–1650 MHz and which has no S model at
 all. So on that path the default frequency axis differs and the
 "pixel-identical with MdV" property does not extend to the frequency axis.
 

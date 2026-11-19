@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-16T17:55:14Z
+timestamp: 2026-11-19T15:14:26Z
 ---
 
 # Wiki changelog
@@ -733,3 +733,36 @@ Issue #57, second PR.
   rejected); the three regression tests named.
 - `utils.py` line references re-mapped through `84a0110..0935424`; all five
   stamped pages re-stamped.
+
+## 2026-11-18 — interim `flip_y` default (verified at `0496366`)
+
+- `beam-orientation.md`: new "Interim default: `flip_y`" paragraph (what is
+  flipped, the ESO137-006 evidence, what is not flipped, how to turn it off);
+  the convention stays provisional and #9-#12 open.
+- `beamwizard.md`: `lm_to_pixel` code block, its line range and the pinning
+  tests updated for `flip_y`; `_parallactic_angles`/`_resolve_times` line
+  references re-mapped.
+
+## 2026-11-19 — hip-cargo 0.5.0 conformance, #61 (verified at `7490eb2`)
+
+- `design-decisions.md`: D5 (test matrix bracketed to 3.11/3.13); D7 (0.5.0
+  wrapper — `**params`, fallback only on an `ImportError` while importing
+  core, re-raise for `meerkat_beams` errors; template `test_roundtrip.py`);
+  D8 (transitional hip-cargo git pin with the must-fix-before-release floor,
+  lock-based image with `git` back because of the hip-cargo and katbeam
+  `git+` export lines); D10 (native per-arch container build + manifest
+  merge, PR-only CI, `[skip checks]` gate gone, `publish.yml` tests the
+  release commit); D18 (module-scope `require_zarr_xarray_compat()` is what
+  triggers the container fallback now). `utils.py` line references re-mapped
+  through the `flip_y` insertions (`0935424..0496366`), which had shifted
+  every reference past line 763. Stamped `7490eb2`.
+- `data-model.md`: the container image now gets git-main katbeam (S-band)
+  from the lock. Stamped `f322dac`.
+
+## 2026-11-19 — hip-cargo pin moved past #136 (verified at `18c32fa`)
+
+- `design-decisions.md` D8/D10: the transitional hip-cargo pin is now
+  `9e29a01` (main after hip-cargo#136, which drops the wrapper's local
+  `import typer` unless shadowed); `cli/*.py` regenerated with it.
+- `data-model.md`: re-verified (katbeam still resolves from git in the lock)
+  and restamped, since `uv.lock` changed.

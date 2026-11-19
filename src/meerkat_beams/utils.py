@@ -761,7 +761,16 @@ class BeamWizard(object):
     band edges of every MdV product); further out it still raises. ``"scale"``
     is refused for ``beam_model="katbeam"``. ``freq_range`` and ``check_freqs``
     expose the evaluable range so callers can validate up front.
+
+    ``flip_y`` (class attribute, default ``True``) flips the supplied beam
+    patterns vertically in the beam frame, after the parallactic rotation, as
+    ``docs/beam_orientation_diagram.pdf`` says the MdV patterns must be. It is
+    an interim fix until the reference beams are regenerated in the right
+    orientation; set ``wizard.flip_y = False`` for the previous behaviour.
+    See ``docs/wiki/beam-orientation.md``.
     """
+
+    flip_y: bool = True
 
     def __init__(
         self,
@@ -1087,6 +1096,11 @@ class BeamWizard(object):
         l sin a + m cos a)``. That map is a rotation combined with a flip of
         ``l`` (its determinant is -1), so ``angle=0`` gives ``(-l, m)`` and is
         NOT the same as ``angle=None``, which applies no transform at all.
+        With ``flip_y`` (the default) the beam-frame ``m`` is then negated,
+        flipping the supplied pattern vertically, so ``angle=0`` gives
+        ``(-l, -m)``. ``angle=None`` is never flipped: it is the plain
+        degrees-to-pixel scaling that ``get_source_coordinates`` and
+        ``bds_to_fits`` use in the BDS's own frame.
 
         This is the only place the sky-to-beam transform of the rendered beams
         (``get_rotation_averaged_beam``, ``get_time_freq_beam``) and the
@@ -1101,6 +1115,8 @@ class BeamWizard(object):
         """
         if angle is not None:
             l, m = m * np.sin(angle) - l * np.cos(angle), l * np.sin(angle) + m * np.cos(angle)
+            if self.flip_y:
+                m = -m
         xp = l / self.bds.attrs["dx"] + self.bds.attrs["x0"]
         yp = m / self.bds.attrs["dy"] + self.bds.attrs["y0"]
         return xp, yp
