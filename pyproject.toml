@@ -150,4 +150,4 @@ test = [
 # Transitional (#61): hip-cargo 0.5.0 templates and generator, ahead of the
 # PyPI release. See design-decisions.md D8; remove when 0.5.0 is published.
 [tool.uv.sources]
-hip-cargo = { git = "https://github.com/landmanbester/hip-cargo", rev = "13d2f43cb0876f59d171309d55489c9353c5f410" }
+hip-cargo = { git = "https://github.com/landmanbester/hip-cargo", rev = "9e29a0106aee9f7f54b5859e61d98b6e09fa46ae" }
