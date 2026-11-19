@@ -2,7 +2,7 @@
 type: log
 title: Wiki changelog
 description: Chronological record of wiki updates.
-timestamp: 2026-11-19T14:45:10Z
+timestamp: 2026-11-19T15:14:26Z
 ---
 
 # Wiki changelog
@@ -758,3 +758,11 @@ Issue #57, second PR.
   every reference past line 763. Stamped `7490eb2`.
 - `data-model.md`: the container image now gets git-main katbeam (S-band)
   from the lock. Stamped `f322dac`.
+
+## 2026-11-19 — hip-cargo pin moved past #136 (verified at `18c32fa`)
+
+- `design-decisions.md` D8/D10: the transitional hip-cargo pin is now
+  `9e29a01` (main after hip-cargo#136, which drops the wrapper's local
+  `import typer` unless shadowed); `cli/*.py` regenerated with it.
+- `data-model.md`: re-verified (katbeam still resolves from git in the lock)
+  and restamped, since `uv.lock` changed.

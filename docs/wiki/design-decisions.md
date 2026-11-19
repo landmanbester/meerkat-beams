@@ -3,8 +3,8 @@ type: Design Ledger
 title: Design decisions, conventions, and recurring gotchas
 description: Context/Decision/Rationale/Consequences ledger for meerkat-beams' load-bearing choices, plus the interpolation gotchas and the settled/reversed conventions.
 tags: [design, phase-centre, zarr, decisions, conventions, gotchas, cache, hip-cargo, release, versioning, changelog, katbeam, baseline-groups, meerkat+, fits, eidos]
-timestamp: 2026-11-19T14:45:10Z
-last_verified_commit: 7490eb2
+timestamp: 2026-11-19T15:14:26Z
+last_verified_commit: 18c32fa
 ---
 
 # Design decisions, conventions, and recurring gotchas
@@ -245,7 +245,7 @@ the floor itself is expected to keep moving.
 
 **Transitional exception (#61, open).** Conforming to hip-cargo 0.5.0 needs
 its generator before 0.5.0 is on PyPI, so `[tool.uv.sources]` pins hip-cargo
-to a git-main commit (`13d2f43`). Git main still reports `0.4.0`, so the
+to a git-main commit (`9e29a01`, after hip-cargo#136). Git main still reports `0.4.0`, so the
 floor reads `>=0.4.0` although the regenerated `cli/*.py` imports
 `Directory`/`File` from `hip_cargo`, which 0.4.0 lacks. **Before any
 release:** raise the floor to `>=0.5.0` and delete the `[tool.uv.sources]`
@@ -400,7 +400,7 @@ the `[[file]]` entry fought it. hip-cargo has the hook and no such entry.
 **Source:** `tbump.toml`; `cliff.toml`; `.pre-commit-config.yaml`;
 `.github/workflows/publish-container.yml`, `ci.yml`, `publish.yml`;
 `~/software/hip-cargo` at v0.3.0 (reference implementation), and its
-templates at `13d2f43` for the #61 changes.
+templates at `9e29a01` for the #61 changes.
 
 ## Recurring gotchas
 
