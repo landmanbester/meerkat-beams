@@ -40,10 +40,12 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      # Starts at 3.11 to match ci.yml: 3.10 supports only the lightweight
-      # base install, not the [full] scientific stack the tests need.
+      # The same oldest/newest bracket as ci.yml: 3.10 supports only the
+      # lightweight base install, not the [full] scientific stack the tests
+      # need. This is the only run that tests the tbump release commit, which
+      # goes straight to main without a PR.
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.13"]
 
     steps:
       - name: Check out code

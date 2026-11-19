@@ -1,9 +1,14 @@
 name: CI
 
+# Pull requests into main or a long-lived dev-* integration branch, plus the
+# cron below (the only run that tests main itself) and manual runs. A merge is
+# not re-tested: its PR already passed. A PR into any other branch (e.g. a
+# stacked PR) runs only on demand:
+#   gh workflow run ci.yml --ref <branch>
+# The tbump release commit goes straight to main and is tested by publish.yml.
 on:
-  push:
-    branches: [ main ]
   pull_request:
+    branches: [ main, 'dev-*' ]
   schedule:
     - cron: '30 2 * * 1,4' # Every Monday and Thursday @ 2h30am UTC
   workflow_dispatch:
@@ -13,23 +18,10 @@ jobs:
     name: Code Quality
     runs-on: ubuntu-latest
     steps:
-      - name: Check for skip checks
-        env:
-          GH_TOKEN: ${{ github.token }}
-          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          MSG=$(gh api repos/${{ github.repository }}/commits/$COMMIT_SHA --jq '.commit.message')
-          if echo "$MSG" | grep -qF '[skip checks]'; then
-            echo "SKIP_CHECKS=true" >> "$GITHUB_ENV"
-            echo "Skipping checks because [skip checks] was found in the commit message."
-          fi
-
       - name: Check out code
-        if: env.SKIP_CHECKS != 'true'
         uses: actions/checkout@v7
 
       - name: Set up Python
-        if: env.SKIP_CHECKS != 'true'
         uses: actions/setup-python@v7
         with:
           python-version: "3.10"
@@ -38,25 +30,21 @@ jobs:
       # Python version, and hashes of uv.lock / pyproject.toml, so a separate
       # actions/cache step on ~/.cache/uv would just duplicate it.
       - name: Set up uv
-        if: env.SKIP_CHECKS != 'true'
         uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
 
       - name: Install dependencies
-        if: env.SKIP_CHECKS != 'true'
         run: uv sync --group dev
 
       - name: Check code formatting
-        if: env.SKIP_CHECKS != 'true'
         run: uv run ruff format --check .
 
       - name: Lint code
-        if: env.SKIP_CHECKS != 'true'
         run: uv run ruff check .
 
   test:
-    # Spelled out so the x86 jobs keep their names ("Tests (3.12)") now that
+    # Spelled out so the x86 jobs keep their names ("Tests (3.13)") now that
     # the matrix has a second axis; branch protection refers to them by name.
     name: Tests (${{ matrix.python-version }}${{ matrix.arch-label }})
     runs-on: ${{ matrix.os }}
@@ -67,53 +55,38 @@ jobs:
         # 3.10 is deliberately absent: it is supported only for the
         # lightweight base install (see the lightweight job below), not for
         # the [full] scientific stack the tests exercise. Do not add it back.
-        python-version: ["3.11", "3.12", "3.13"]
+        # Oldest and newest Python the full install supports: code that passes
+        # both rarely breaks in between.
+        python-version: ["3.11", "3.13"]
         include:
           # One arm64 job, not a second matrix: it is there to catch a
           # dependency without an aarch64 wheel or an architecture-dependent
           # numerical difference, which one Python version is enough for (#43).
           - os: ubuntu-24.04-arm
-            python-version: "3.12"
+            python-version: "3.13"
             arch-label: ", arm64"
 
     steps:
-      - name: Check for skip checks
-        env:
-          GH_TOKEN: ${{ github.token }}
-          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          MSG=$(gh api repos/${{ github.repository }}/commits/$COMMIT_SHA --jq '.commit.message')
-          if echo "$MSG" | grep -qF '[skip checks]'; then
-            echo "SKIP_CHECKS=true" >> "$GITHUB_ENV"
-            echo "Skipping checks because [skip checks] was found in the commit message."
-          fi
-
       - name: Check out code
-        if: env.SKIP_CHECKS != 'true'
         uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
-        if: env.SKIP_CHECKS != 'true'
         uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Set up uv
-        if: env.SKIP_CHECKS != 'true'
         uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
 
       - name: Install dependencies
-        if: env.SKIP_CHECKS != 'true'
         run: uv sync --group test --extra full
 
       - name: Smoke test CLI
-        if: env.SKIP_CHECKS != 'true'
         run: uv run mbeams --help
 
       - name: Run tests
-        if: env.SKIP_CHECKS != 'true'
         # MBEAMS_OFFLINE=1 skips the L-band cache warm-up (a Google Drive
         # download) so CI stays hermetic; integration tests needing data skip.
         env:
@@ -127,35 +100,20 @@ jobs:
     name: Tests (newest xarray + zarr)
     runs-on: ubuntu-latest
     steps:
-      - name: Check for skip checks
-        env:
-          GH_TOKEN: ${{ github.token }}
-          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          MSG=$(gh api repos/${{ github.repository }}/commits/$COMMIT_SHA --jq '.commit.message')
-          if echo "$MSG" | grep -qF '[skip checks]'; then
-            echo "SKIP_CHECKS=true" >> "$GITHUB_ENV"
-            echo "Skipping checks because [skip checks] was found in the commit message."
-          fi
-
       - name: Check out code
-        if: env.SKIP_CHECKS != 'true'
         uses: actions/checkout@v7
 
       - name: Set up Python 3.13
-        if: env.SKIP_CHECKS != 'true'
         uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
       - name: Set up uv
-        if: env.SKIP_CHECKS != 'true'
         uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
 
       - name: Install dependencies with the newest xarray and zarr
-        if: env.SKIP_CHECKS != 'true'
         run: |
           uv sync --group test --extra full
           # --upgrade-package, not --upgrade: only xarray and zarr move past the
@@ -165,7 +123,6 @@ jobs:
           uv run --no-sync python -c "import xarray, zarr; print('xarray', xarray.__version__, 'zarr', zarr.__version__)"
 
       - name: Run tests
-        if: env.SKIP_CHECKS != 'true'
         env:
           MBEAMS_OFFLINE: "1"
         # --no-sync: a plain `uv run` would re-sync the lock and restore the pinned versions.
@@ -180,35 +137,20 @@ jobs:
     name: Tests (xarray floor)
     runs-on: ubuntu-latest
     steps:
-      - name: Check for skip checks
-        env:
-          GH_TOKEN: ${{ github.token }}
-          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          MSG=$(gh api repos/${{ github.repository }}/commits/$COMMIT_SHA --jq '.commit.message')
-          if echo "$MSG" | grep -qF '[skip checks]'; then
-            echo "SKIP_CHECKS=true" >> "$GITHUB_ENV"
-            echo "Skipping checks because [skip checks] was found in the commit message."
-          fi
-
       - name: Check out code
-        if: env.SKIP_CHECKS != 'true'
         uses: actions/checkout@v7
 
       - name: Set up Python 3.12
-        if: env.SKIP_CHECKS != 'true'
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: Set up uv
-        if: env.SKIP_CHECKS != 'true'
         uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
 
       - name: Install dependencies with xarray at its floor
-        if: env.SKIP_CHECKS != 'true'
         run: |
           uv sync --group test --extra full
           uv pip install 'xarray==2025.8.0'
@@ -216,7 +158,6 @@ jobs:
           uv run --no-sync python -c "import pandas, xarray; print('xarray', xarray.__version__, 'pandas', pandas.__version__); assert xarray.__version__ == '2025.8.0'; assert int(pandas.__version__.split('.')[0]) >= 3, pandas.__version__"
 
       - name: Run tests
-        if: env.SKIP_CHECKS != 'true'
         env:
           MBEAMS_OFFLINE: "1"
         # --no-sync: a plain `uv run` would re-sync the lock and restore the locked xarray.
@@ -232,35 +173,20 @@ jobs:
     name: Tests (zarr-python 2)
     runs-on: ubuntu-latest
     steps:
-      - name: Check for skip checks
-        env:
-          GH_TOKEN: ${{ github.token }}
-          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          MSG=$(gh api repos/${{ github.repository }}/commits/$COMMIT_SHA --jq '.commit.message')
-          if echo "$MSG" | grep -qF '[skip checks]'; then
-            echo "SKIP_CHECKS=true" >> "$GITHUB_ENV"
-            echo "Skipping checks because [skip checks] was found in the commit message."
-          fi
-
       - name: Check out code
-        if: env.SKIP_CHECKS != 'true'
         uses: actions/checkout@v7
 
       - name: Set up Python 3.11
-        if: env.SKIP_CHECKS != 'true'
         uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
       - name: Set up uv
-        if: env.SKIP_CHECKS != 'true'
         uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
 
       - name: Install dependencies with zarr<3
-        if: env.SKIP_CHECKS != 'true'
         run: |
           uv sync --group test --extra full
           # 2026.9 is utils.XARRAY_ZARR2_CAP; keep the two in step.
@@ -269,7 +195,6 @@ jobs:
           uv run --no-sync python -c "import xarray, zarr; print('xarray', xarray.__version__); assert zarr.__version__.startswith('2.'), zarr.__version__"
 
       - name: Run tests
-        if: env.SKIP_CHECKS != 'true'
         env:
           MBEAMS_OFFLINE: "1"
         # --no-sync: a plain `uv run` would re-sync the lock and restore zarr 3.
