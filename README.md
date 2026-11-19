@@ -98,7 +98,7 @@ mbeams bds-to-fits --bds-path MeerKAT_L.bds.zarr --prefix beam_l8 --pixels 256 -
 
 ```bash
 uv sync --group dev --group test --extra full   # always pass --extra full: without it uv removes the scientific stack
-pre-commit install && pre-commit install --hook-type commit-msg
+uv run pre-commit install                       # wires both the pre-commit and commit-msg hooks
 uv run ruff check . && uv run ruff format --check .
 MBEAMS_OFFLINE=1 uv run pytest                  # what CI runs: hermetic, ~20 s
 uv run pytest                                   # online: L-band cache warm-up and live IERS tables

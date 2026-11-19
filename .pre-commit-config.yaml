@@ -6,9 +6,17 @@
 # Simply run `git add -u && git commit` again. The second attempt will succeed
 # because the files are already correctly formatted/updated.
 
+# Wire both stages so a plain `pre-commit install` also installs the commit-msg
+# hook that conventional-pre-commit needs.
+default_install_hook_types: [pre-commit, commit-msg]
+# Hooks that do not name their stages run at pre-commit only. Without this they
+# run at every installed stage, so the commit-msg stage re-ran generate-cabs and
+# ruff on every commit.
+default_stages: [pre-commit]
+
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.13.2
+    rev: v0.15.10
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -51,7 +59,7 @@ repos:
 
       - id: generate-cabs
         name: Generate Stimela cab definitions
-        entry: hip-cargo generate-cabs --module 'src/meerkat_beams/cli/*.py' --output-dir src/meerkat_beams/cabs
+        entry: uv run --no-sync hip-cargo generate-cabs --module 'src/meerkat_beams/cli/*.py' --output-dir src/meerkat_beams/cabs
         language: system
         always_run: true
         pass_filenames: false
